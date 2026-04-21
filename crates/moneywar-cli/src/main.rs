@@ -590,7 +590,17 @@ impl App {
 
         // İnsan komutları önce (sıra fark etmez ama insan kararını önce
         // göstermek log'da daha okunur).
-        let mut cmds: Vec<Command> = self.pending_human_cmds.drain(..).collect();
+        let human_cmds: Vec<Command> = self.pending_human_cmds.drain(..).collect();
+        // Tick sonrası feedback için sadece insanın yolladığı emirleri sakla.
+        let human_orders: Vec<MarketOrder> = human_cmds
+            .iter()
+            .filter_map(|c| match c {
+                Command::SubmitOrder(o) if o.player == HUMAN_ID => Some(o.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let mut cmds = human_cmds;
         cmds.extend(npc_cmds);
 
         let Ok((new_state, report)) = advance_tick(&self.state, &cmds) else {
@@ -610,6 +620,133 @@ impl App {
         self.harvest_news();
         // Eski status mesajı varsa temizle (yeni tick'in kendi mesajı olsun).
         self.status = None;
+        // İnsanın bu tick'teki emirleri için "ne oldu" özeti — kritik UX
+        // ipucu, kullanıcı "neden hiçbir şey olmadı" demesin.
+        self.report_order_outcomes(&report, &human_orders);
+    }
+
+    /// İnsanın bu tick'te yolladığı her market emri için sonuç özeti.
+    /// MarketCleared ve OrderMatched event'lerini tarar, kullanıcıya somut
+    /// geri bildirim üretir.
+    fn report_order_outcomes(
+        &mut self,
+        report: &moneywar_engine::TickReport,
+        human_orders: &[MarketOrder],
+    ) {
+        if human_orders.is_empty() {
+            return;
+        }
+        let mut messages: Vec<String> = Vec::new();
+        for order in human_orders {
+            // Bu emir için eşleşmeleri topla (OrderMatched event'lerinden).
+            let matched_qty: u32 = report
+                .entries
+                .iter()
+                .filter_map(|e| match &e.event {
+                    LogEvent::OrderMatched {
+                        buy_order_id,
+                        sell_order_id,
+                        quantity,
+                        ..
+                    } if *buy_order_id == order.id || *sell_order_id == order.id => Some(*quantity),
+                    _ => None,
+                })
+                .sum();
+            // Aynı bucket'ın MarketCleared özetinden clearing fiyatı + karşı taraf var mıydı
+            let cleared = report.entries.iter().find_map(|e| match &e.event {
+                LogEvent::MarketCleared {
+                    city,
+                    product,
+                    clearing_price,
+                    submitted_buy_qty,
+                    submitted_sell_qty,
+                    ..
+                } if *city == order.city && *product == order.product => {
+                    Some((*clearing_price, *submitted_buy_qty, *submitted_sell_qty))
+                }
+                _ => None,
+            });
+            let side_name = if matches!(order.side, OrderSide::Buy) {
+                "AL"
+            } else {
+                "SAT"
+            };
+            let header = format!(
+                "{side_name} {} {} @ {} ({})",
+                order.quantity,
+                order.product,
+                order.unit_price,
+                city_short(order.city),
+            );
+            if matched_qty > 0 {
+                if let Some((Some(clearing_price), _, _)) = cleared {
+                    let leftover = order.quantity.saturating_sub(matched_qty);
+                    if leftover == 0 {
+                        messages.push(format!(
+                            "✓ {header} → {matched_qty} eşleşti @ {clearing_price}"
+                        ));
+                    } else {
+                        messages.push(format!(
+                            "✓ {header} → {matched_qty} eşleşti @ {clearing_price}, kalan {leftover} çöpe"
+                        ));
+                    }
+                } else {
+                    messages.push(format!("✓ {header} → {matched_qty} eşleşti"));
+                }
+            } else {
+                let reason = match cleared {
+                    Some((_, _, sell_qty))
+                        if matches!(order.side, OrderSide::Buy) && sell_qty == 0 =>
+                    {
+                        format!(
+                            "kimse {} pazarında {} satmıyor (NPC'ler diğer ürün/şehirde)",
+                            city_short(order.city),
+                            order.product
+                        )
+                    }
+                    Some((_, buy_qty, _))
+                        if matches!(order.side, OrderSide::Sell) && buy_qty == 0 =>
+                    {
+                        format!(
+                            "kimse {} pazarında {} almıyor",
+                            city_short(order.city),
+                            order.product
+                        )
+                    }
+                    Some((Some(clearing_price), _, _)) => {
+                        if matches!(order.side, OrderSide::Buy) {
+                            format!(
+                                "fiyatın {} düşük — clearing {} oldu, daha yüksek teklif lazım",
+                                order.unit_price, clearing_price
+                            )
+                        } else {
+                            format!(
+                                "fiyatın {} yüksek — clearing {} oldu, daha düşük teklif lazım",
+                                order.unit_price, clearing_price
+                            )
+                        }
+                    }
+                    Some((None, _, _)) => "spread oldu, kimse kesişmedi".into(),
+                    None => "bu pazarda hiç hareket yok".into(),
+                };
+                messages.push(format!("✗ {header} → eşleşme yok: {reason}"));
+            }
+        }
+        // İlk mesajı status bar'a (kompakt), tümünü Son Tick log'unun başına ekle.
+        if let Some(first) = messages.first() {
+            // OK ya da err'a göre renk ayır.
+            if first.starts_with('✓') {
+                self.set_status_ok(first.clone());
+            } else {
+                self.set_status_err(first.clone());
+            }
+        }
+        // Tüm sonuçları Son Tick log'unun en üstüne ekle.
+        let mut prepend = vec!["── 🧾 Senin emirlerin ──".to_string()];
+        prepend.extend(messages);
+        prepend.push("── ── ──".to_string());
+        prepend.append(&mut self.last_tick_log);
+        self.last_tick_log = prepend;
     }
 
     fn harvest_news(&mut self) {
@@ -1146,9 +1283,38 @@ fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  1) `:` ile komut yaz (buy/sell/...) — tick içinde biriker, kilitli"),
+        Line::from("  1) Tek tuş aksiyon (b/S/f/c/d/...) → wizard'da seç → komut queue'ya"),
         Line::from("  2) SPACE bas → komutlar uygulanır, NPC'ler hamle yapar, piyasa temizlenir"),
         Line::from("  3) Üretim / kervan varış / kontrat / kredi otomatik işlenir"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Lojistik akışı (önemli!)",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  • Hal Pazarı = AYNI ŞEHİR içi alım/satım. Eşleşince mal anında envantere."),
+        Line::from("  • Şehirler arası = KERVAN gerek. Akış:"),
+        Line::from(Span::styled(
+            "      İstanbul[al] → kervan dispatch → Ankara[varış 3 tick sonra] → sat",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from("  • İstanbul'da pamuk istiyorsan → istanbul pazarında al."),
+        Line::from("  • Ankara'da satmak istiyorsan → kervan ile götür, varınca sat."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Emir mantığı",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(
+            "  • LIMIT order: AL emrinde max ödemek istediğin fiyat. Daha düşüğüne deniyor.",
+        ),
+        Line::from(
+            "  • Karşı taraf YOKSA emir tick sonunda çöpe atılır. \"Son Tick\" panelinde sonuç.",
+        ),
+        Line::from("  • Yüksek fiyat ver → daha çok eşleşme şansı. Çok düşük → boşa düşer."),
         Line::from(""),
         Line::from(Span::styled(
             "Haber katmanları",
@@ -2436,7 +2602,7 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let table = Table::new(rows, widths).header(header_row).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Pazar (fiyatlar / tick) ")
+            .title(" Pazar — her hücre o ŞEHİRDEKİ fiyat (şehirler arası: kervan!) ")
             .border_style(Style::default().fg(Color::Yellow)),
     );
     f.render_widget(table, area);
