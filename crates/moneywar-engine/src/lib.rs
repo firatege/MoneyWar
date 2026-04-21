@@ -25,6 +25,7 @@
 //! sorgular (en çok reddedilen komut, rol bazlı `PnL`, balance tuning)
 //! bu tablo üzerinden koşar.
 
+mod contracts;
 mod error;
 mod market;
 mod production;

@@ -11,7 +11,8 @@
 //! hangi komutun reddedildiğini ölçebilirsin, rol bazlı `PnL` çıkarabilirsin.
 
 use moneywar_domain::{
-    CaravanId, CityId, Command, FactoryId, Money, OrderId, PlayerId, ProductKind, Tick,
+    CaravanId, CityId, Command, ContractId, ContractState, FactoryId, ListingKind, Money, OrderId,
+    PlayerId, ProductKind, Tick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -273,6 +274,96 @@ impl LogEntry {
         }
     }
 
+    /// Yeni kontrat önerildi, satıcı kaporası escrow'a kilitlendi.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn contract_proposed(
+        tick: Tick,
+        seller: PlayerId,
+        contract_id: ContractId,
+        listing: ListingKind,
+        product: ProductKind,
+        quantity: u32,
+        unit_price: Money,
+        delivery_city: CityId,
+        delivery_tick: Tick,
+        seller_deposit: Money,
+        buyer_deposit: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(seller),
+            event: LogEvent::ContractProposed {
+                contract_id,
+                seller,
+                listing,
+                product,
+                quantity,
+                unit_price,
+                delivery_city,
+                delivery_tick,
+                seller_deposit,
+                buyer_deposit,
+            },
+        }
+    }
+
+    /// Kontrat kabul edildi, alıcı kaporası escrow'a kilitlendi → Active.
+    #[must_use]
+    pub fn contract_accepted(
+        tick: Tick,
+        acceptor: PlayerId,
+        contract_id: ContractId,
+        buyer_deposit: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(acceptor),
+            event: LogEvent::ContractAccepted {
+                contract_id,
+                acceptor,
+                buyer_deposit,
+            },
+        }
+    }
+
+    /// Kontrat önerisi geri çekildi (sadece `Proposed` state'te).
+    /// Satıcı kaporası iade edildi.
+    #[must_use]
+    pub fn contract_cancelled(
+        tick: Tick,
+        seller: PlayerId,
+        contract_id: ContractId,
+        refunded_deposit: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(seller),
+            event: LogEvent::ContractCancelled {
+                contract_id,
+                seller,
+                refunded_deposit,
+            },
+        }
+    }
+
+    /// Kontrat durum geçişi (5B — delivery settlement).
+    #[must_use]
+    pub fn contract_settled(
+        tick: Tick,
+        contract_id: ContractId,
+        final_state: ContractState,
+    ) -> Self {
+        Self {
+            tick,
+            actor: None,
+            event: LogEvent::ContractSettled {
+                contract_id,
+                final_state,
+            },
+        }
+    }
+
     /// Kervan vardı — cargo hedef şehir envanterine yatırıldı, `Idle` oldu.
     #[must_use]
     pub fn caravan_arrived(
@@ -461,6 +552,41 @@ pub enum LogEvent {
         caravan_id: CaravanId,
         city: CityId,
         cargo_total: u64,
+    },
+
+    /// Yeni kontrat önerildi, satıcı kaporası escrow'a kilitlendi (§2 Katman 2).
+    ContractProposed {
+        contract_id: ContractId,
+        seller: PlayerId,
+        listing: ListingKind,
+        product: ProductKind,
+        quantity: u32,
+        unit_price: Money,
+        delivery_city: CityId,
+        delivery_tick: Tick,
+        seller_deposit: Money,
+        buyer_deposit: Money,
+    },
+
+    /// Kontrat kabul edildi → `Active`. Alıcı kaporası da escrow'da artık.
+    ContractAccepted {
+        contract_id: ContractId,
+        acceptor: PlayerId,
+        buyer_deposit: Money,
+    },
+
+    /// Kontrat önerisi satıcı tarafından geri çekildi (yalnız `Proposed`'ta).
+    ContractCancelled {
+        contract_id: ContractId,
+        seller: PlayerId,
+        refunded_deposit: Money,
+    },
+
+    /// Teslimat tick'inde kontrat kapandı — `Fulfilled` veya `Breached`.
+    /// Breach'te breacher'ın kaporası karşı tarafa tazminat olarak gider.
+    ContractSettled {
+        contract_id: ContractId,
+        final_state: ContractState,
     },
 }
 

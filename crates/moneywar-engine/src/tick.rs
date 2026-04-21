@@ -21,11 +21,16 @@
 //! | **3C** ✅ | Settlement (cash/inventory), saturation eşiği, `price_history` |
 //! | **4A** ✅ | `process_build_factory` + `production::advance_production` — fabrika + üretim |
 //! | **4B** ✅ | `process_buy_caravan`/`process_dispatch_caravan` + `transport::advance_caravans` |
-//! | 5 | `process_propose_contract`, `process_accept_contract`, `process_cancel_contract` |
+//! | **5** ✅ | `contracts::{process_propose/accept/cancel + advance_contracts}` — Anlaşma Masası |
 //! | 5.5 | `process_take_loan`, `process_repay_loan` |
 //! | 6 | `process_subscribe_news` + sistem eventleri |
 
 use crate::{
+    contracts::{
+        advance_contracts, process_accept_contract as accept_contract_impl,
+        process_cancel_contract as cancel_contract_impl,
+        process_propose_contract as propose_contract_impl,
+    },
     error::EngineError,
     market::clear_markets,
     production::{advance_production, process_build_factory as build_factory_impl},
@@ -37,8 +42,8 @@ use crate::{
     },
 };
 use moneywar_domain::{
-    CityId, Command, ContractId, ContractProposal, DomainError, GameState, LoanId, MarketOrder,
-    Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
+    CityId, Command, DomainError, GameState, LoanId, MarketOrder, Money, NewsTier, OrderId,
+    PlayerId, ProductKind, Tick,
 };
 
 /// Motoru bir tick ileri sarar.
@@ -78,12 +83,14 @@ pub fn advance_tick(
         }
     }
 
-    // Tick kapanışı sırası (Faz 4):
+    // Tick kapanışı sırası (Faz 5):
     //   1. Üretim — biten batch'ler envantere, yeni batch'ler başlar.
     //   2. Taşıma — varış zamanı gelen kervanlar hedef envanter'e boşalır.
-    //   3. Hal Pazarı clearing — post-production/transport envanteri kullanır.
+    //   3. Kontratlar — delivery_tick'i gelenler fulfill/breach.
+    //   4. Hal Pazarı clearing — post-production/transport/contract envanteri.
     advance_production(&mut new_state, &mut report, next_tick);
     advance_caravans(&mut new_state, &mut report, next_tick);
+    advance_contracts(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
@@ -118,15 +125,15 @@ fn dispatch(
             order_id,
             requester,
         } => process_cancel_order(state, *order_id, *requester),
-        Command::ProposeContract(proposal) => process_propose_contract(state, proposal, tick),
+        Command::ProposeContract(proposal) => propose_contract_impl(state, report, tick, proposal),
         Command::AcceptContract {
             contract_id,
             acceptor,
-        } => process_accept_contract(state, *contract_id, *acceptor, tick),
+        } => accept_contract_impl(state, report, tick, *contract_id, *acceptor),
         Command::CancelContractProposal {
             contract_id,
             requester,
-        } => process_cancel_contract(state, *contract_id, *requester),
+        } => cancel_contract_impl(state, report, tick, *contract_id, *requester),
         Command::BuildFactory {
             owner,
             city,
@@ -227,37 +234,6 @@ fn process_cancel_order(
     if orders.is_empty() {
         state.order_book.remove(&key);
     }
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_propose_contract(
-    _state: &mut GameState,
-    _proposal: &ContractProposal,
-    _tick: Tick,
-) -> Result<(), EngineError> {
-    // FAZ 5: escrow kilitle, contracts'a ekle, ID üret.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_accept_contract(
-    _state: &mut GameState,
-    _contract_id: ContractId,
-    _acceptor: PlayerId,
-    _tick: Tick,
-) -> Result<(), EngineError> {
-    // FAZ 5: karşı taraf kaporası kilitle, state'i Active'e al.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_cancel_contract(
-    _state: &mut GameState,
-    _contract_id: ContractId,
-    _requester: PlayerId,
-) -> Result<(), EngineError> {
-    // FAZ 5: escrow iade, state Cancelled.
     Ok(())
 }
 
