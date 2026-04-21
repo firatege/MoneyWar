@@ -25,6 +25,7 @@
 //! | **5.5** ✅ | `loans::{process_take_loan, process_repay_loan, advance_loans}` — NPC banka |
 //! | **6** ✅ | `news::process_subscribe_news` + `events::advance_events` — haber + olay motoru |
 //! | **7** ✅ | `scoring::{score_player, leaderboard}` — skor formülü + sıralama |
+//! | **8** ✅ | `moneywar-npc::{NpcBehavior, MarketMaker, decide_all_npcs}` — NPC iskelet |
 
 use crate::{
     contracts::{

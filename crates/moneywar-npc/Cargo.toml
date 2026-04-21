@@ -13,3 +13,5 @@ workspace = true
 moneywar-domain.workspace = true
 moneywar-engine.workspace = true
 thiserror.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true

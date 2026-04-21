@@ -212,6 +212,8 @@ version = "0.1.0"
 dependencies = [
  "moneywar-domain",
  "moneywar-engine",
+ "rand",
+ "rand_chacha",
  "thiserror",
 ]
 
