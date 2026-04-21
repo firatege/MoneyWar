@@ -40,7 +40,10 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-          - os: macos-13
+          # Apple Silicon runner üstünde Intel'e cross-compile — macos-13
+          # (Intel) runner havuzu genelde kuyrukta bekliyor, bu şekilde
+          # tek Mac runner hem ARM hem x64 binary üretir.
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
           - os: windows-latest
