@@ -17,3 +17,6 @@ workspace = true
 moneywar-domain.workspace = true
 moneywar-engine.workspace = true
 moneywar-npc.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+anyhow.workspace = true
