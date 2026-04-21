@@ -26,6 +26,7 @@
 //! bu tablo üzerinden koşar.
 
 mod error;
+mod market;
 mod report;
 mod rng;
 mod tick;

@@ -17,7 +17,8 @@
 //! | Faz | Durum |
 //! |---|---|
 //! | **3A** ✅ | `process_submit_order`, `process_cancel_order` — order book yönetimi |
-//! | 3B | Tick sonu batch auction + uniform clearing price + settlement |
+//! | **3B** ✅ | Tick sonu batch auction — `market::clear_markets` + uniform clearing |
+//! | 3C | Settlement (cash/inventory), saturation eşiği, `price_history` |
 //! | 4 | `process_build_factory`, `process_buy_caravan`, `process_dispatch_caravan` |
 //! | 5 | `process_propose_contract`, `process_accept_contract`, `process_cancel_contract` |
 //! | 5.5 | `process_take_loan`, `process_repay_loan` |
@@ -31,6 +32,7 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::{
     error::EngineError,
+    market::clear_markets,
     report::{LogEntry, TickReport},
     rng::rng_for,
 };
@@ -68,6 +70,10 @@ pub fn advance_tick(
             )),
         }
     }
+
+    // Tick kapanışı: her (city, product) bucket'ı için uniform batch auction.
+    // Bucket'lar boşaltılır, fills/clearing event'leri report'a eklenir.
+    clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
     Ok((new_state, report))
@@ -367,40 +373,62 @@ mod tests {
         assert_eq!(s3.current_tick, Tick::new(3));
     }
 
+    /// `submitted_buy_qty` toplamını raporun son `MarketCleared` event'inden okur.
+    fn first_market_cleared(report: &crate::report::TickReport) -> &crate::report::LogEvent {
+        report
+            .entries
+            .iter()
+            .map(|e| &e.event)
+            .find(|ev| matches!(ev, crate::report::LogEvent::MarketCleared { .. }))
+            .expect("a MarketCleared event is expected")
+    }
+
     #[test]
-    fn submit_order_adds_to_book_and_logs_accepted() {
+    fn submit_order_is_accepted_and_bucket_is_cleared_same_tick() {
         let s0 = state();
         let cmd = submit_order(7, 1);
         let (s1, report) = advance_tick(&s0, std::slice::from_ref(&cmd)).unwrap();
         assert_eq!(report.accepted_count(), 1);
-        assert_eq!(report.rejected_count(), 0);
         assert_eq!(report.entries[0].actor, Some(PlayerId::new(7)));
 
-        let bucket = s1
-            .order_book
-            .get(&(CityId::Istanbul, ProductKind::Pamuk))
-            .expect("bucket exists after submit");
-        assert_eq!(bucket.len(), 1);
-        assert_eq!(bucket[0].id, OrderId::new(1));
+        // Tick bitince book temizlenir (§2: eşleşmeyen çöpe).
+        assert!(s1.order_book.is_empty());
+
+        // MarketCleared event emit edilmiş ve submitted_buy_qty=10 görüyor.
+        match first_market_cleared(&report) {
+            crate::report::LogEvent::MarketCleared {
+                submitted_buy_qty,
+                matched_qty,
+                clearing_price,
+                ..
+            } => {
+                assert_eq!(*submitted_buy_qty, 10);
+                assert_eq!(*matched_qty, 0);
+                assert_eq!(*clearing_price, None);
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
-    fn submit_orders_accumulate_in_same_bucket() {
+    fn multiple_submits_accumulate_into_clearing_totals() {
         let s0 = state();
         let cmds = vec![submit_order(1, 1), submit_order(2, 2), submit_order(3, 3)];
-        let (s1, _) = advance_tick(&s0, &cmds).unwrap();
-        let bucket = s1
-            .order_book
-            .get(&(CityId::Istanbul, ProductKind::Pamuk))
-            .unwrap();
-        assert_eq!(bucket.len(), 3);
-        // Insertion order preserved.
-        let ids: Vec<_> = bucket.iter().map(|o| o.id.value()).collect();
-        assert_eq!(ids, vec![1, 2, 3]);
+        let (s1, report) = advance_tick(&s0, &cmds).unwrap();
+        assert!(s1.order_book.is_empty());
+        match first_market_cleared(&report) {
+            crate::report::LogEvent::MarketCleared {
+                submitted_buy_qty, ..
+            } => {
+                // Her emir 10 birim, toplam 30.
+                assert_eq!(*submitted_buy_qty, 30);
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
-    fn submit_orders_to_different_pairs_split_buckets() {
+    fn different_city_product_buckets_clear_independently() {
         let s0 = state();
         let istanbul_pamuk = Command::SubmitOrder(
             MarketOrder::new(
@@ -428,44 +456,39 @@ mod tests {
             )
             .unwrap(),
         );
-        let (s1, _) = advance_tick(&s0, &[istanbul_pamuk, ankara_bugday]).unwrap();
-        assert_eq!(s1.order_book.len(), 2);
-        assert_eq!(
-            s1.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
-            1
-        );
-        assert_eq!(
-            s1.order_book[&(CityId::Ankara, ProductKind::Bugday)].len(),
-            1
-        );
+        let (s1, report) = advance_tick(&s0, &[istanbul_pamuk, ankara_bugday]).unwrap();
+        assert!(s1.order_book.is_empty());
+
+        // İki bucket → iki MarketCleared event.
+        let cleared_count = report
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::MarketCleared { .. }))
+            .count();
+        assert_eq!(cleared_count, 2);
     }
 
     #[test]
-    fn duplicate_order_id_is_rejected() {
+    fn duplicate_order_id_in_same_tick_is_rejected() {
         let s0 = state();
-        let (s1, _) = advance_tick(&s0, &[submit_order(1, 42)]).unwrap();
-        // Tick 2'de aynı order_id'yi tekrar gönder → reddedilmeli.
-        let (s2, report) = advance_tick(&s1, &[submit_order(1, 42)]).unwrap();
-        assert_eq!(report.accepted_count(), 0);
+        // Aynı tick içinde aynı order_id'nin ikinci gönderimi reddedilmeli
+        // (ilki book'ta iken duplicate check devreye girer).
+        let cmds = vec![submit_order(1, 42), submit_order(1, 42)];
+        let (s1, report) = advance_tick(&s0, &cmds).unwrap();
+        assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.rejected_count(), 1);
-        // Book değişmemeli: hâlâ tek kayıt.
-        assert_eq!(
-            s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
-            1
-        );
+        // Book yine clearing'te temizleniyor.
+        assert!(s1.order_book.is_empty());
     }
 
     #[test]
-    fn order_book_persists_across_ticks() {
+    fn order_book_is_empty_after_each_tick() {
         let s0 = state();
         let (s1, _) = advance_tick(&s0, &[submit_order(1, 1)]).unwrap();
-        // Bir sonraki tick boş komutlarla geçer — book hâlâ dolu olmalı
-        // (clearing Faz 3B'de gelecek).
+        assert!(s1.order_book.is_empty());
+        // Bir sonraki tick de boş başlar (state'ten gelen boş book).
         let (s2, _) = advance_tick(&s1, &[]).unwrap();
-        assert_eq!(
-            s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
-            1
-        );
+        assert!(s2.order_book.is_empty());
     }
 
     fn cancel_order(requester: u64, order_id: u64) -> Command {
@@ -476,39 +499,54 @@ mod tests {
     }
 
     #[test]
-    fn cancel_order_removes_and_cleans_empty_bucket() {
+    fn cancel_same_tick_removes_order_before_clearing() {
         let s0 = state();
-        let (s1, _) = advance_tick(&s0, &[submit_order(7, 1)]).unwrap();
-        let (s2, report) = advance_tick(&s1, &[cancel_order(7, 1)]).unwrap();
-        assert_eq!(report.accepted_count(), 1);
-        // Bucket boş kalınca map'ten silinmeli.
-        assert!(s2.order_book.is_empty());
+        // Aynı tick: submit sonra cancel → clearing'e emir girmez.
+        let cmds = vec![submit_order(7, 1), cancel_order(7, 1)];
+        let (s1, report) = advance_tick(&s0, &cmds).unwrap();
+        assert_eq!(report.accepted_count(), 2);
+        assert!(s1.order_book.is_empty());
+        // MarketCleared yok (book boşken clearing noop).
+        let cleared = report
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::MarketCleared { .. }))
+            .count();
+        assert_eq!(cleared, 0);
     }
 
     #[test]
-    fn cancel_order_preserves_other_orders_in_bucket() {
+    fn cancel_one_of_two_keeps_the_other_in_clearing() {
         let s0 = state();
-        let (s1, _) = advance_tick(&s0, &[submit_order(1, 1), submit_order(2, 2)]).unwrap();
-        let (s2, report) = advance_tick(&s1, &[cancel_order(1, 1)]).unwrap();
-        assert_eq!(report.accepted_count(), 1);
-        let bucket = &s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)];
-        assert_eq!(bucket.len(), 1);
-        assert_eq!(bucket[0].id, OrderId::new(2));
-        assert_eq!(bucket[0].player, PlayerId::new(2));
+        let cmds = vec![submit_order(1, 1), submit_order(2, 2), cancel_order(1, 1)];
+        let (s1, report) = advance_tick(&s0, &cmds).unwrap();
+        assert!(s1.order_book.is_empty());
+        match first_market_cleared(&report) {
+            crate::report::LogEvent::MarketCleared {
+                submitted_buy_qty, ..
+            } => {
+                // Sadece 2. emir (10 birim) clearing'e girdi.
+                assert_eq!(*submitted_buy_qty, 10);
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
-    fn cancel_order_wrong_owner_is_rejected() {
+    fn cancel_with_wrong_owner_is_rejected_same_tick() {
         let s0 = state();
-        let (s1, _) = advance_tick(&s0, &[submit_order(7, 1)]).unwrap();
-        // Başka oyuncu iptal etmeye çalışıyor.
-        let (s2, report) = advance_tick(&s1, &[cancel_order(99, 1)]).unwrap();
+        let cmds = vec![submit_order(7, 1), cancel_order(99, 1)];
+        let (s1, report) = advance_tick(&s0, &cmds).unwrap();
+        assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.rejected_count(), 1);
-        // Book değişmemeli.
-        assert_eq!(
-            s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
-            1
-        );
+        // Emir book'ta kaldı → clearing'te görünmeli.
+        assert!(s1.order_book.is_empty());
+        match first_market_cleared(&report) {
+            crate::report::LogEvent::MarketCleared {
+                submitted_buy_qty, ..
+            } => assert_eq!(*submitted_buy_qty, 10),
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -520,20 +558,22 @@ mod tests {
     }
 
     #[test]
-    fn multiple_commands_preserve_order() {
+    fn command_log_ordering_preserved_before_clearing() {
         let s0 = state();
         let cmds = vec![submit_order(1, 1), submit_order(2, 2), submit_order(3, 3)];
         let (_s1, report) = advance_tick(&s0, &cmds).unwrap();
-        assert_eq!(report.entries.len(), 3);
-        let actors: Vec<_> = report.entries.iter().map(|e| e.actor).collect();
+        // İlk üç entry CommandAccepted, sıra korunmuş.
+        let first_three: Vec<_> = report.entries.iter().take(3).map(|e| e.actor).collect();
         assert_eq!(
-            actors,
+            first_three,
             vec![
                 Some(PlayerId::new(1)),
                 Some(PlayerId::new(2)),
                 Some(PlayerId::new(3)),
             ]
         );
+        // Sonuncu entry sistem event (MarketCleared) → actor None.
+        assert_eq!(report.entries.last().unwrap().actor, None);
     }
 
     #[test]

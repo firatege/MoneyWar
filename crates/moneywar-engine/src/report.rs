@@ -10,7 +10,7 @@
 //! Analitik kullanım: SQL `WHERE event_kind = 'CommandRejected'` ile en çok
 //! hangi komutun reddedildiğini ölçebilirsin, rol bazlı `PnL` çıkarabilirsin.
 
-use moneywar_domain::{Command, PlayerId, Tick};
+use moneywar_domain::{CityId, Command, Money, OrderId, PlayerId, ProductKind, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Bir tick boyunca motor tarafından üretilmiş tüm gözlemler.
@@ -93,6 +93,62 @@ impl LogEntry {
             },
         }
     }
+
+    /// Tek bir eşleşme (iki emrin kesişimi). Sistem eventi → `actor = None`.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn order_matched(
+        tick: Tick,
+        city: CityId,
+        product: ProductKind,
+        buy_order_id: OrderId,
+        sell_order_id: OrderId,
+        buyer: PlayerId,
+        seller: PlayerId,
+        quantity: u32,
+        price: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: None,
+            event: LogEvent::OrderMatched {
+                city,
+                product,
+                buy_order_id,
+                sell_order_id,
+                buyer,
+                seller,
+                quantity,
+                price,
+            },
+        }
+    }
+
+    /// Bir `(city, product)` bucket'ının temizlenme özeti. `clearing_price`
+    /// `None` → hiç eşleşme yok (spread), tüm emirler çöpe atıldı.
+    #[must_use]
+    pub fn market_cleared(
+        tick: Tick,
+        city: CityId,
+        product: ProductKind,
+        clearing_price: Option<Money>,
+        matched_qty: u32,
+        submitted_buy_qty: u32,
+        submitted_sell_qty: u32,
+    ) -> Self {
+        Self {
+            tick,
+            actor: None,
+            event: LogEvent::MarketCleared {
+                city,
+                product,
+                clearing_price,
+                matched_qty,
+                submitted_buy_qty,
+                submitted_sell_qty,
+            },
+        }
+    }
 }
 
 /// Motor'un ürettiği semantik event'ler.
@@ -115,6 +171,32 @@ pub enum LogEvent {
     /// Oyuncu komutu reddedildi — reason insan okunur string (validation,
     /// insufficient funds, capacity, vb).
     CommandRejected { command: Command, reason: String },
+
+    /// Batch auction'da iki emir eşleşti. `price` = uniform clearing fiyatı
+    /// (`(marjinal_buy + marjinal_sell) / 2` midpoint). Faz 3C'de bu eventler
+    /// settlement (cash/inventory) için okunacak.
+    OrderMatched {
+        city: CityId,
+        product: ProductKind,
+        buy_order_id: OrderId,
+        sell_order_id: OrderId,
+        buyer: PlayerId,
+        seller: PlayerId,
+        quantity: u32,
+        price: Money,
+    },
+
+    /// Bir `(city, product)` pazarının tick kapanış özeti. `clearing_price`
+    /// `None` → eşleşme yok (spread). `matched_qty` total değişim, `submitted_*`
+    /// iptal sonrası tick'e giren toplam arz/talep (analitik için).
+    MarketCleared {
+        city: CityId,
+        product: ProductKind,
+        clearing_price: Option<Money>,
+        matched_qty: u32,
+        submitted_buy_qty: u32,
+        submitted_sell_qty: u32,
+    },
 }
 
 #[cfg(test)]
@@ -193,7 +275,7 @@ mod tests {
         );
         match entry.event {
             LogEvent::CommandRejected { reason, .. } => assert_eq!(reason, "bad state"),
-            LogEvent::CommandAccepted { .. } => panic!("expected rejected"),
+            other => panic!("expected rejected, got {other:?}"),
         }
     }
 

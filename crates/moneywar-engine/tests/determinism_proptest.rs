@@ -79,16 +79,16 @@ proptest! {
         prop_assert_eq!(s1.current_tick, report.tick);
     }
 
-    /// Rapor'daki entry sayısı komut sayısına eşittir (Faz 2 iskelet
-    /// invariantı: her komut log'a tek entry bırakır).
+    /// Komut sayısı = kabul + ret. Sistem event'leri (MarketCleared, OrderMatched)
+    /// ek entry oluşturur ama bu sayım dışıdır.
     #[test]
-    fn entry_count_equals_command_count(
+    fn accepted_plus_rejected_equals_command_count(
         room in arb_room_id(),
         cmds in arb_cmds(),
     ) {
         let s0 = GameState::new(room, RoomConfig::hizli());
         let cmd_count = cmds.len();
         let (_s1, report) = advance_tick(&s0, &cmds).unwrap();
-        prop_assert_eq!(report.entries.len(), cmd_count);
+        prop_assert_eq!(report.accepted_count() + report.rejected_count(), cmd_count);
     }
 }

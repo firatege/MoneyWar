@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ee78712a77ff27dc0e0833a0a7ca12fcd54934b8d9e5f47bbc1c8a96c3b9adcf # shrinks to room = RoomId(1), cmds = [SubmitOrder(MarketOrder { id: OrderId(1), player: PlayerId(1), city: Istanbul, product: Pamuk, side: Buy, quantity: 1, unit_price: Money(1), submitted_tick: Tick(1) })]
