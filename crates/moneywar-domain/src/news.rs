@@ -24,23 +24,25 @@ pub enum NewsTier {
 
 impl NewsTier {
     /// Olayın gerçekleştiği tick'ten kaç tick önce haber gelir.
+    /// Değer [`crate::balance`] üzerinden ayarlanır.
     #[must_use]
     pub const fn lead_time(self) -> u32 {
         match self {
-            Self::Bronze => 0,
-            Self::Silver => 1,
-            Self::Gold => 2,
+            Self::Bronze => crate::balance::NEWS_LEAD_BRONZE,
+            Self::Silver => crate::balance::NEWS_LEAD_SILVER,
+            Self::Gold => crate::balance::NEWS_LEAD_GOLD,
         }
     }
 
-    /// Sezon başı abonelik ücreti (varsayılan). Tüccar Gümüş'ü bedava alır,
-    /// bu ücret normal oyunculara uygulanır.
+    /// Sezon başı abonelik ücreti. Tüccar Gümüş'ü bedava alır —
+    /// bu ücret normal oyunculara uygulanır. Değerler [`crate::balance`]'tan.
     pub fn subscription_cost(self) -> Result<Money, DomainError> {
-        match self {
-            Self::Bronze => Ok(Money::ZERO),
-            Self::Silver => Money::from_lira(500),
-            Self::Gold => Money::from_lira(2_000),
-        }
+        let lira = match self {
+            Self::Bronze => crate::balance::NEWS_COST_BRONZE_LIRA,
+            Self::Silver => crate::balance::NEWS_COST_SILVER_LIRA,
+            Self::Gold => crate::balance::NEWS_COST_GOLD_LIRA,
+        };
+        Money::from_lira(lira)
     }
 
     #[must_use]

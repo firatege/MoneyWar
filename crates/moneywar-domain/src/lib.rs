@@ -3,6 +3,8 @@
 //! Saf veri modeli — I/O yok, global state yok. Tüm motor ve server
 //! katmanları bu crate üstüne oturur.
 
+pub mod balance;
+
 mod caravan;
 mod city;
 mod command;

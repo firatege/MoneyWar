@@ -164,14 +164,17 @@ impl RoomConfig {
         Ok(())
     }
 
-    /// Piyasa doygunluk eşiği: `40 + (player_count - 2) × 10` (§10).
+    /// Piyasa doygunluk eşiği: formül [`crate::balance`]'tan — default
+    /// `SATURATION_BASE + (player_count - SATURATION_MIN_PLAYERS) × SATURATION_PER_PLAYER`
+    /// = `40 + (n - 2) × 10` (§10).
     ///
-    /// Aşan miktar %50 fiyattan satılır (motor Faz 3'te uygular).
+    /// Aşan miktar %50 fiyattan satılır (motor Faz 3C'de uygular).
     /// `player_count` = insan + NPC toplamı.
     #[must_use]
     pub fn saturation_threshold(&self, player_count: u8) -> u32 {
-        let above_min = u32::from(player_count.saturating_sub(2));
-        40 + above_min * 10
+        let above_min =
+            u32::from(player_count.saturating_sub(crate::balance::SATURATION_MIN_PLAYERS));
+        crate::balance::SATURATION_BASE + above_min * crate::balance::SATURATION_PER_PLAYER
     }
 
     /// Toplam katılımcı kapasitesi (insan + NPC).

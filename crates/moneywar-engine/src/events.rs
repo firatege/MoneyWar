@@ -39,8 +39,8 @@ use crate::{
 };
 
 /// Motor tarafından olayın `event_tick`'e olan hazırlık süresi.
-/// `2` = Gold abonelerinin `lead_time`'ı; minimum emniyet için bu değer.
-const EVENT_LEAD_TICKS: u32 = 2;
+/// Değer [`moneywar_domain::balance::EVENT_LEAD_TICKS`]'ten gelir.
+const EVENT_LEAD_TICKS: u32 = moneywar_domain::balance::EVENT_LEAD_TICKS;
 
 /// Tick başı olay döngüsü. RNG ile olay tetikleme + haber dağıtımı.
 ///
@@ -73,11 +73,11 @@ fn roll_event(state: &GameState, rng: &mut ChaCha8Rng, tick: Tick) -> Option<Gam
         .unwrap_or(moneywar_domain::SeasonProgress::START);
 
     let prob_pct: u32 = if progress.is_late() {
-        20
+        moneywar_domain::balance::EVENT_PROB_LATE_PCT
     } else if progress.is_mid() {
-        10
+        moneywar_domain::balance::EVENT_PROB_MID_PCT
     } else {
-        5
+        moneywar_domain::balance::EVENT_PROB_EARLY_PCT
     };
     if rng.random_range(0..100) >= prob_pct {
         return None;

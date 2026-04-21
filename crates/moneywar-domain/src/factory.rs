@@ -34,11 +34,12 @@ pub struct Factory {
 
 impl Factory {
     /// Her fabrika tick başına bu kadar ham madde tüketir / bitmiş ürün üretir.
-    /// Tentatif parametre (§10).
-    pub const BATCH_SIZE: u32 = 10;
+    /// Değer [`crate::balance::FACTORY_BATCH_SIZE`]'tan gelir.
+    pub const BATCH_SIZE: u32 = crate::balance::FACTORY_BATCH_SIZE;
 
     /// Üretim süresi — batch başlatıldıktan kaç tick sonra biter.
-    pub const PRODUCTION_TICKS: u32 = 2;
+    /// Değer [`crate::balance::FACTORY_PRODUCTION_TICKS`]'ten gelir.
+    pub const PRODUCTION_TICKS: u32 = crate::balance::FACTORY_PRODUCTION_TICKS;
 
     /// Fabrika kurar. Ürün mutlaka bitmiş (finished) olmalı.
     pub fn new(
@@ -74,14 +75,9 @@ impl Factory {
     /// | 5+ | 30k |
     #[must_use]
     pub fn build_cost(existing_count: u32) -> Money {
-        let lira = match existing_count {
-            0 => 0,
-            1 => 10_000,
-            2 => 15_000,
-            3 => 22_000,
-            _ => 30_000,
-        };
-        Money::from_lira(lira).expect("fixed literal fits i64")
+        let table = &crate::balance::FACTORY_BUILD_COSTS_LIRA;
+        let idx = (existing_count as usize).min(table.len() - 1);
+        Money::from_lira(table[idx]).expect("fixed literal fits i64")
     }
 
     /// Bu fabrikanın ham madde girdisi (Kumaş → Pamuk vb).

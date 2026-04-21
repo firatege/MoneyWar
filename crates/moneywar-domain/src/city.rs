@@ -52,9 +52,15 @@ impl CityId {
             (Self::Istanbul, Self::Istanbul)
             | (Self::Ankara, Self::Ankara)
             | (Self::Izmir, Self::Izmir) => 0,
-            (Self::Istanbul, Self::Ankara) | (Self::Ankara, Self::Istanbul) => 3,
-            (Self::Ankara, Self::Izmir) | (Self::Izmir, Self::Ankara) => 2,
-            (Self::Istanbul, Self::Izmir) | (Self::Izmir, Self::Istanbul) => 4,
+            (Self::Istanbul, Self::Ankara) | (Self::Ankara, Self::Istanbul) => {
+                crate::balance::DIST_ISTANBUL_ANKARA
+            }
+            (Self::Ankara, Self::Izmir) | (Self::Izmir, Self::Ankara) => {
+                crate::balance::DIST_ANKARA_IZMIR
+            }
+            (Self::Istanbul, Self::Izmir) | (Self::Izmir, Self::Istanbul) => {
+                crate::balance::DIST_ISTANBUL_IZMIR
+            }
         }
     }
 

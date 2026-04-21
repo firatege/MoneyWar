@@ -31,11 +31,13 @@ pub struct PlayerScore {
     pub total: Money,
 }
 
-/// Atıl fabrika eşiği (§9) — son 10 tick'te üretim yoksa skora 0.
-pub const IDLE_FACTORY_THRESHOLD: u32 = 10;
+/// Atıl fabrika eşiği (§9) — son N tick'te üretim yoksa skora 0.
+/// Değer [`moneywar_domain::balance::IDLE_FACTORY_THRESHOLD`]'ten gelir.
+pub const IDLE_FACTORY_THRESHOLD: u32 = moneywar_domain::balance::IDLE_FACTORY_THRESHOLD;
 
-/// Skor hesaplaması için rolling avg penceresi (son 5 tick, §9).
-pub const PRICE_WINDOW: usize = 5;
+/// Skor hesaplaması için rolling avg penceresi (§9).
+/// Değer [`moneywar_domain::balance::PRICE_WINDOW`]'dan gelir.
+pub const PRICE_WINDOW: usize = moneywar_domain::balance::PRICE_WINDOW;
 
 /// Verilen oyuncunun mevcut durumdaki skorunu hesapla.
 ///
@@ -127,8 +129,11 @@ fn compute_factory_value(state: &GameState, player_id: PlayerId, current: Tick) 
             continue;
         }
         let build_cost = Factory::build_cost(u32::try_from(idx).unwrap_or(u32::MAX));
-        let half = build_cost.as_cents() / 2;
-        total = total.saturating_add(half);
+        let scored = build_cost
+            .as_cents()
+            .saturating_mul(moneywar_domain::balance::FACTORY_SCORE_NUM)
+            / moneywar_domain::balance::FACTORY_SCORE_DEN;
+        total = total.saturating_add(scored);
     }
     Money::from_cents(total)
 }

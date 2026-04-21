@@ -115,26 +115,23 @@ impl Caravan {
     #[must_use]
     pub const fn capacity_for(role: Role) -> u32 {
         match role {
-            Role::Sanayici => 20,
-            Role::Tuccar => 50,
+            Role::Sanayici => crate::balance::CARAVAN_CAPACITY_SANAYICI,
+            Role::Tuccar => crate::balance::CARAVAN_CAPACITY_TUCCAR,
         }
     }
 
     /// `§10` rol bazlı satın alma maliyet tablosu.
-    /// `existing_count` = sahip olunan mevcut kervan sayısı.
-    ///
-    /// Sanayici: 0, 5k, 10k, ... (3+ için 10k sabit).
-    /// Tüccar: 0, 6k, 10k, 15k, ... (4+ için 15k sabit).
+    /// `existing_count` = sahip olunan mevcut kervan sayısı. Tablo
+    /// [`crate::balance`]'ta (Sanayici ve Tüccar için ayrı dizi); index
+    /// tablonun uzunluğunu geçerse son değer kullanılır (sabit tavan).
     #[must_use]
     pub fn buy_cost(role: Role, existing_count: u32) -> Money {
-        let lira = match (role, existing_count) {
-            (_, 0) => 0,
-            (Role::Sanayici, 1) => 5_000,
-            (Role::Sanayici, _) | (Role::Tuccar, 2) => 10_000,
-            (Role::Tuccar, 1) => 6_000,
-            (Role::Tuccar, _) => 15_000,
+        let table: &[i64] = match role {
+            Role::Sanayici => &crate::balance::CARAVAN_COSTS_SANAYICI_LIRA,
+            Role::Tuccar => &crate::balance::CARAVAN_COSTS_TUCCAR_LIRA,
         };
-        Money::from_lira(lira).expect("fixed literal fits i64")
+        let idx = (existing_count as usize).min(table.len() - 1);
+        Money::from_lira(table[idx]).expect("fixed literal fits i64")
     }
 
     /// Yeni kervan. Başlangıç durumu `Idle` (belirtilen şehirde).

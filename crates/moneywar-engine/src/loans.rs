@@ -20,8 +20,9 @@ use crate::{
     report::{LogEntry, TickReport},
 };
 
-/// v1 sabit faiz oranı (tam sayı yüzde).
-pub const INTEREST_RATE_PERCENT: u32 = 15;
+/// v1 sabit faiz oranı (tam sayı yüzde). Değer
+/// [`moneywar_domain::balance::LOAN_INTEREST_RATE_PERCENT`]'ten gelir.
+pub const INTEREST_RATE_PERCENT: u32 = moneywar_domain::balance::LOAN_INTEREST_RATE_PERCENT;
 
 /// `TakeLoan` komutu. Principal borçlunun nakitine eklenir, `Loan` kaydı açılır.
 pub(crate) fn process_take_loan(

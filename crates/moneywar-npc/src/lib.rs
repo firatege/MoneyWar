@@ -64,7 +64,9 @@ impl NpcBehavior for MarketMaker {
 
         if have > 0 {
             let qty = rng.random_range(1u32..=have.min(20));
-            let sell_price = Money::from_cents(base.as_cents() * 110 / 100);
+            let sell_price = Money::from_cents(
+                base.as_cents() * moneywar_domain::balance::NPC_SELL_MARKUP_PCT / 100,
+            );
             if let Ok(order) = MarketOrder::new(
                 order_id,
                 self_id,
@@ -85,7 +87,9 @@ impl NpcBehavior for MarketMaker {
             return Vec::new();
         }
         let qty: u32 = rng.random_range(1u32..=10);
-        let buy_price = Money::from_cents(base.as_cents() * 90 / 100);
+        let buy_price = Money::from_cents(
+            base.as_cents() * moneywar_domain::balance::NPC_BUY_MARKDOWN_PCT / 100,
+        );
         MarketOrder::new(
             order_id,
             self_id,
@@ -127,10 +131,12 @@ fn pick_product(rng: &mut ChaCha8Rng) -> ProductKind {
 }
 
 /// §10 kaba baz fiyatları — iskelet likidite fiyatlandırması.
+/// Değerler [`moneywar_domain::balance`]'tan ayarlanır.
 fn base_price(product: ProductKind) -> Money {
-    let lira = match product {
-        ProductKind::Pamuk | ProductKind::Bugday | ProductKind::Zeytin => 6,
-        ProductKind::Kumas | ProductKind::Un | ProductKind::Zeytinyagi => 15,
+    let lira = if product.is_raw() {
+        moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+    } else {
+        moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
     };
     Money::from_lira(lira).expect("fixed literal fits i64")
 }
@@ -138,8 +144,7 @@ fn base_price(product: ProductKind) -> Money {
 /// NPC `OrderId`: insan oyuncu havuzu ile çakışmasın diye yüksek ofsetli,
 /// `(tick, player_id)`'den deterministik türetilir.
 fn npc_order_id(player_id: PlayerId, tick: Tick) -> u64 {
-    const NPC_ID_OFFSET: u64 = 10_000_000_000;
-    NPC_ID_OFFSET
+    moneywar_domain::balance::NPC_ORDER_ID_OFFSET
         .saturating_add(u64::from(tick.value()).saturating_mul(1_000))
         .saturating_add(player_id.value() % 1_000)
 }
