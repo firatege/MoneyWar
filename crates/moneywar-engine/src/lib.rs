@@ -31,6 +31,7 @@ mod production;
 mod report;
 mod rng;
 mod tick;
+mod transport;
 
 pub use error::EngineError;
 pub use report::{LogEntry, LogEvent, TickReport};

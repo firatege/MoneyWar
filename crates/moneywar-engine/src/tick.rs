@@ -20,7 +20,7 @@
 //! | **3B** ✅ | Tick sonu batch auction — `market::clear_markets` + uniform clearing |
 //! | **3C** ✅ | Settlement (cash/inventory), saturation eşiği, `price_history` |
 //! | **4A** ✅ | `process_build_factory` + `production::advance_production` — fabrika + üretim |
-//! | 4B | `process_buy_caravan`, `process_dispatch_caravan` + caravan arrival pass |
+//! | **4B** ✅ | `process_buy_caravan`/`process_dispatch_caravan` + `transport::advance_caravans` |
 //! | 5 | `process_propose_contract`, `process_accept_contract`, `process_cancel_contract` |
 //! | 5.5 | `process_take_loan`, `process_repay_loan` |
 //! | 6 | `process_subscribe_news` + sistem eventleri |
@@ -31,10 +31,14 @@ use crate::{
     production::{advance_production, process_build_factory as build_factory_impl},
     report::{LogEntry, TickReport},
     rng::rng_for,
+    transport::{
+        advance_caravans, process_buy_caravan as buy_caravan_impl,
+        process_dispatch_caravan as dispatch_caravan_impl,
+    },
 };
 use moneywar_domain::{
-    CaravanId, CityId, Command, ContractId, ContractProposal, DomainError, GameState, LoanId,
-    MarketOrder, Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
+    CityId, Command, ContractId, ContractProposal, DomainError, GameState, LoanId, MarketOrder,
+    Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
 };
 
 /// Motoru bir tick ileri sarar.
@@ -74,11 +78,12 @@ pub fn advance_tick(
         }
     }
 
-    // Tick kapanışı sırası (Faz 4+):
+    // Tick kapanışı sırası (Faz 4):
     //   1. Üretim — biten batch'ler envantere, yeni batch'ler başlar.
-    //   2. (4B) Taşıma — varış zamanı gelen kervanlar boşalır.
+    //   2. Taşıma — varış zamanı gelen kervanlar hedef envanter'e boşalır.
     //   3. Hal Pazarı clearing — post-production/transport envanteri kullanır.
     advance_production(&mut new_state, &mut report, next_tick);
+    advance_caravans(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
@@ -130,13 +135,13 @@ fn dispatch(
         Command::BuyCaravan {
             owner,
             starting_city,
-        } => process_buy_caravan(state, *owner, *starting_city),
+        } => buy_caravan_impl(state, report, tick, *owner, *starting_city),
         Command::DispatchCaravan {
             caravan_id,
             from,
             to,
             cargo,
-        } => process_dispatch_caravan(state, *caravan_id, *from, *to, cargo.clone(), tick),
+        } => dispatch_caravan_impl(state, report, tick, *caravan_id, *from, *to, cargo),
         Command::SubscribeNews { player, tier } => process_subscribe_news(state, *player, *tier),
         Command::TakeLoan {
             player,
@@ -257,29 +262,6 @@ fn process_cancel_contract(
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn process_buy_caravan(
-    _state: &mut GameState,
-    _owner: PlayerId,
-    _starting_city: CityId,
-) -> Result<(), EngineError> {
-    // FAZ 4: kervan satın alma, kapasite rol'e göre.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_dispatch_caravan(
-    _state: &mut GameState,
-    _caravan_id: CaravanId,
-    _from: CityId,
-    _to: CityId,
-    _cargo: moneywar_domain::CargoSpec,
-    _tick: Tick,
-) -> Result<(), EngineError> {
-    // FAZ 4: Idle → EnRoute geçişi, yol süresi hesapla.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
 fn process_subscribe_news(
     _state: &mut GameState,
     _player: PlayerId,
@@ -314,7 +296,7 @@ fn process_repay_loan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moneywar_domain::{CityId, MarketOrder, Money, OrderSide, RoomConfig, RoomId};
+    use moneywar_domain::{CaravanId, CityId, MarketOrder, Money, OrderSide, RoomConfig, RoomId};
 
     fn state() -> GameState {
         GameState::new(RoomId::new(1), RoomConfig::hizli())

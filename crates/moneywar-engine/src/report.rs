@@ -10,7 +10,9 @@
 //! Analitik kullanım: SQL `WHERE event_kind = 'CommandRejected'` ile en çok
 //! hangi komutun reddedildiğini ölçebilirsin, rol bazlı `PnL` çıkarabilirsin.
 
-use moneywar_domain::{CityId, Command, FactoryId, Money, OrderId, PlayerId, ProductKind, Tick};
+use moneywar_domain::{
+    CaravanId, CityId, Command, FactoryId, Money, OrderId, PlayerId, ProductKind, Tick,
+};
 use serde::{Deserialize, Serialize};
 
 /// Bir tick boyunca motor tarafından üretilmiş tüm gözlemler.
@@ -224,6 +226,73 @@ impl LogEntry {
         }
     }
 
+    /// Yeni kervan satın alındı.
+    #[must_use]
+    pub fn caravan_bought(
+        tick: Tick,
+        owner: PlayerId,
+        caravan_id: CaravanId,
+        starting_city: CityId,
+        capacity: u32,
+        cost: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::CaravanBought {
+                caravan_id,
+                owner,
+                starting_city,
+                capacity,
+                cost,
+            },
+        }
+    }
+
+    /// Kervan yola çıktı — cargo envanter'den çıkarıldı, `EnRoute` state'ine geçti.
+    #[must_use]
+    pub fn caravan_dispatched(
+        tick: Tick,
+        owner: PlayerId,
+        caravan_id: CaravanId,
+        from: CityId,
+        to: CityId,
+        arrival_tick: Tick,
+        cargo_total: u64,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::CaravanDispatched {
+                caravan_id,
+                from,
+                to,
+                arrival_tick,
+                cargo_total,
+            },
+        }
+    }
+
+    /// Kervan vardı — cargo hedef şehir envanterine yatırıldı, `Idle` oldu.
+    #[must_use]
+    pub fn caravan_arrived(
+        tick: Tick,
+        owner: PlayerId,
+        caravan_id: CaravanId,
+        city: CityId,
+        cargo_total: u64,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::CaravanArrived {
+                caravan_id,
+                city,
+                cargo_total,
+            },
+        }
+    }
+
     /// Fabrika bu tick atıl kaldı (ham madde yok, üretim başlamadı).
     #[must_use]
     pub fn factory_idle(
@@ -366,6 +435,32 @@ pub enum LogEvent {
         factory_id: FactoryId,
         city: CityId,
         reason: String,
+    },
+
+    /// Oyuncu yeni kervan satın aldı. Kapasite ve maliyet role'e bağlıdır (§10).
+    CaravanBought {
+        caravan_id: CaravanId,
+        owner: PlayerId,
+        starting_city: CityId,
+        capacity: u32,
+        cost: Money,
+    },
+
+    /// Kervan yola çıktı. `arrival_tick` deterministik varış zamanı (§4:
+    /// kayıp yok, süre riski var). `cargo_total` taşınan toplam birim.
+    CaravanDispatched {
+        caravan_id: CaravanId,
+        from: CityId,
+        to: CityId,
+        arrival_tick: Tick,
+        cargo_total: u64,
+    },
+
+    /// Kervan vardı — cargo hedef şehirde sahibin envanterine eklendi.
+    CaravanArrived {
+        caravan_id: CaravanId,
+        city: CityId,
+        cargo_total: u64,
     },
 }
 
