@@ -10,7 +10,7 @@ use moneywar_domain::{
     ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{advance_tick, rng_for};
-use moneywar_npc::decide_all_npcs;
+use moneywar_npc::{Difficulty, decide_all_npcs};
 
 fn init_world() -> GameState {
     let mut s = GameState::new(RoomId::new(42), RoomConfig::hizli());
@@ -73,7 +73,7 @@ fn twenty_tick_simulation_with_humans_and_npcs() {
     for t in 1..=20u32 {
         // NPC komutları RNG'den deterministik üretilir.
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
-        let npc_cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t));
+        let npc_cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Easy);
 
         // İnsan oyuncu bazı tick'lerde pamuk satıyor.
         let mut cmds = npc_cmds;

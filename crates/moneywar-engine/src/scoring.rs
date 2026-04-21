@@ -96,20 +96,32 @@ pub fn leaderboard(state: &GameState) -> Vec<PlayerScore> {
 }
 
 /// Stok değeri: her (şehir, ürün) için `miktar × son 5 tick ortalama fiyatı`.
-/// Tarihçe yoksa o kalem 0.
+/// Tarihçe yoksa fallback olarak [`balance::NPC_BASE_PRICE_RAW_LIRA`] /
+/// `NPC_BASE_PRICE_FINISHED_LIRA` kullanır — yoksa NPC'nin clearing
+/// olmamış stoğu skorda görünmezdi (UX bug).
 fn compute_stock_value(state: &GameState, player_id: PlayerId) -> Money {
     let Some(player) = state.players.get(&player_id) else {
         return Money::ZERO;
     };
     let mut total: i64 = 0;
     for (city, product, qty) in player.inventory.entries() {
-        let Some(avg) = state.rolling_avg_price(city, product, PRICE_WINDOW) else {
-            continue;
-        };
+        let avg = state
+            .rolling_avg_price(city, product, PRICE_WINDOW)
+            .unwrap_or_else(|| fallback_price(product));
         let line = avg.as_cents().saturating_mul(i64::from(qty));
         total = total.saturating_add(line);
     }
     Money::from_cents(total)
+}
+
+/// Tarihçe olmadığında baz fiyat fallback'i — `balance.rs`'ten gelir.
+fn fallback_price(product: moneywar_domain::ProductKind) -> Money {
+    let lira = if product.is_raw() {
+        moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+    } else {
+        moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+    };
+    Money::from_lira(lira).unwrap_or(Money::ZERO)
 }
 
 /// Fabrika değeri: atıl olmayan fabrikaların `build_cost × 0.5` toplamı.
@@ -204,7 +216,9 @@ mod tests {
     }
 
     #[test]
-    fn stock_without_price_history_contributes_zero() {
+    fn stock_without_price_history_uses_fallback_base_price() {
+        // Tarihçe yoksa baz fiyat (raw=6₺ / finished=15₺) ile değerlenir.
+        // 50 Pamuk × 6₺ = 300₺.
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Tuccar, 0);
         s.players
@@ -214,7 +228,7 @@ mod tests {
             .add(CityId::Istanbul, ProductKind::Pamuk, 50)
             .unwrap();
         let sc = score_player(&s, pid);
-        assert_eq!(sc.stock_value, Money::ZERO);
+        assert_eq!(sc.stock_value, Money::from_lira(300).unwrap());
     }
 
     #[test]

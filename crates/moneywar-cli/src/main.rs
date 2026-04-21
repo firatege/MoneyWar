@@ -48,7 +48,7 @@ use moneywar_domain::{
     PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{LogEvent, PlayerScore, advance_tick, leaderboard, rng_for, score_player};
-use moneywar_npc::decide_all_npcs;
+use moneywar_npc::{Difficulty, decide_all_npcs};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -132,6 +132,9 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('2') => app.start_game(Role::Tuccar),
             KeyCode::Char('p') => {
                 app.selected_preset = app.selected_preset.next();
+            }
+            KeyCode::Char('d') => {
+                app.difficulty = app.difficulty.next();
             }
             _ => {}
         },
@@ -467,6 +470,8 @@ struct App {
     mode: Mode,
     /// Startup ekranında seçilen preset (oyun başlayınca `state.config`'e yazılır).
     selected_preset: PresetChoice,
+    /// NPC zorluk — Easy (basit likidite) veya Hard (akıllı, rekabetçi).
+    difficulty: Difficulty,
     /// İnsan komutları — tick ilerledikçe NPC komutlarıyla birlikte advance'e iletilir.
     pending_human_cmds: Vec<Command>,
     /// Tek seferlik status satırı (başarı/hata). Bir sonraki tick'te temizlenir.
@@ -531,6 +536,7 @@ impl App {
             auto_sim: false,
             mode: Mode::Startup,
             selected_preset: PresetChoice::Hizli,
+            difficulty: Difficulty::Hard,
             pending_human_cmds: Vec::new(),
             status: None,
             next_human_order_id: 1,
@@ -586,7 +592,7 @@ impl App {
         }
         let next_tick = self.state.current_tick.next();
         let mut rng = rng_for(self.state.room_id, next_tick);
-        let npc_cmds = decide_all_npcs(&self.state, &mut rng, next_tick);
+        let npc_cmds = decide_all_npcs(&self.state, &mut rng, next_tick, self.difficulty);
 
         // İnsan komutları önce (sıra fark etmez ama insan kararını önce
         // göstermek log'da daha okunur).
@@ -966,6 +972,27 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::raw("   ("),
             Span::styled(
                 "p",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ile değiştir)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  🤖  NPC zorluğu: ", Style::default().fg(Color::White)),
+            Span::styled(
+                app.difficulty.label(),
+                Style::default()
+                    .fg(if matches!(app.difficulty, Difficulty::Hard) {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   ("),
+            Span::styled(
+                "d",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
