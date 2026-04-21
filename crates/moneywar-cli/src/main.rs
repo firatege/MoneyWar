@@ -302,13 +302,17 @@ impl App {
     fn start_game(&mut self, role: Role) {
         self.state = seed_world(role, self.selected_preset.config());
         self.mode = Mode::Normal;
-        let role_name = match role {
-            Role::Sanayici => "Sanayici",
-            Role::Tuccar => "Tüccar",
+        // Rol'e göre ilk hamle önerisi — terminal açılır açılmaz oyuncu
+        // ne yapacağını bilsin.
+        let first_move = match role {
+            Role::Sanayici => {
+                "İlk hamle ipucu: `:build istanbul kumas` (1. fabrika BEDAVA), sonra SPACE."
+            }
+            Role::Tuccar => {
+                "İlk hamle ipucu: `:caravan istanbul` (1. kervan BEDAVA), sonra `:ship`."
+            }
         };
-        self.set_status_ok(format!(
-            "Hoşgeldin {role_name}! `i` nasıl oynanır, `?` komutlar, SPACE tick."
-        ));
+        self.set_status_info(first_move);
     }
 
     fn next_order_id(&mut self) -> OrderId {
