@@ -18,7 +18,7 @@
 //! |---|---|
 //! | **3A** ✅ | `process_submit_order`, `process_cancel_order` — order book yönetimi |
 //! | **3B** ✅ | Tick sonu batch auction — `market::clear_markets` + uniform clearing |
-//! | 3C | Settlement (cash/inventory), saturation eşiği, `price_history` |
+//! | **3C** ✅ | Settlement (cash/inventory), saturation eşiği, `price_history` |
 //! | 4 | `process_build_factory`, `process_buy_caravan`, `process_dispatch_caravan` |
 //! | 5 | `process_propose_contract`, `process_accept_contract`, `process_cancel_contract` |
 //! | 5.5 | `process_take_loan`, `process_repay_loan` |

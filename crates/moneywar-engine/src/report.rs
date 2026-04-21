@@ -127,6 +127,7 @@ impl LogEntry {
     /// Bir `(city, product)` bucket'ının temizlenme özeti. `clearing_price`
     /// `None` → hiç eşleşme yok (spread), tüm emirler çöpe atıldı.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn market_cleared(
         tick: Tick,
         city: CityId,
@@ -135,6 +136,8 @@ impl LogEntry {
         matched_qty: u32,
         submitted_buy_qty: u32,
         submitted_sell_qty: u32,
+        saturation_threshold: u32,
+        saturation_qty: u32,
     ) -> Self {
         Self {
             tick,
@@ -146,6 +149,34 @@ impl LogEntry {
                 matched_qty,
                 submitted_buy_qty,
                 submitted_sell_qty,
+                saturation_threshold,
+                saturation_qty,
+            },
+        }
+    }
+
+    /// Bir fill settle edilemedi (buyer cash yetmiyor veya seller stok yetmiyor).
+    /// State dokunulmaz, para korunumu ihlal edilmez. Sadece log'a kayıt.
+    #[must_use]
+    pub fn fill_rejected(
+        tick: Tick,
+        city: CityId,
+        product: ProductKind,
+        buyer: PlayerId,
+        seller: PlayerId,
+        quantity: u32,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            tick,
+            actor: None,
+            event: LogEvent::FillRejected {
+                city,
+                product,
+                buyer,
+                seller,
+                quantity,
+                reason: reason.into(),
             },
         }
     }
@@ -189,6 +220,9 @@ pub enum LogEvent {
     /// Bir `(city, product)` pazarının tick kapanış özeti. `clearing_price`
     /// `None` → eşleşme yok (spread). `matched_qty` total değişim, `submitted_*`
     /// iptal sonrası tick'e giren toplam arz/talep (analitik için).
+    /// `saturation_threshold` = oyuncu sayısından türeyen şehir soğurma kapasitesi
+    /// (§10). `saturation_qty` = eşiği aştığı için `clearing_price / 2`'de
+    /// settle edilmiş birim sayısı.
     MarketCleared {
         city: CityId,
         product: ProductKind,
@@ -196,6 +230,19 @@ pub enum LogEvent {
         matched_qty: u32,
         submitted_buy_qty: u32,
         submitted_sell_qty: u32,
+        saturation_threshold: u32,
+        saturation_qty: u32,
+    },
+
+    /// Settlement aşamasında bir fill uygulanamadı (cash/stok yetmez, overflow).
+    /// State değişmez, para korunumu korunur. Fill analitik için hala kayıtlı.
+    FillRejected {
+        city: CityId,
+        product: ProductKind,
+        buyer: PlayerId,
+        seller: PlayerId,
+        quantity: u32,
+        reason: String,
     },
 }
 

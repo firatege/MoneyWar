@@ -91,4 +91,40 @@ proptest! {
         let (_s1, report) = advance_tick(&s0, &cmds).unwrap();
         prop_assert_eq!(report.accepted_count() + report.rejected_count(), cmd_count);
     }
+
+    /// Money conservation: tick başındaki toplam cash = tick sonundaki toplam
+    /// cash (clearing sadece oyuncular arası transfer yapar, para yaratmaz).
+    #[test]
+    fn total_cash_is_conserved_across_clearing(
+        room in arb_room_id(),
+        cmds in arb_cmds(),
+    ) {
+        use moneywar_domain::{Money, Player, PlayerId, Role};
+        let mut s0 = GameState::new(room, RoomConfig::hizli());
+        // Cömert oyuncular ki settlement reject olmasın.
+        for id in 1u64..=10 {
+            let mut p = Player::new(
+                PlayerId::new(id),
+                format!("p{id}"),
+                Role::Tuccar,
+                Money::from_lira(1_000_000).unwrap(),
+                false,
+            ).unwrap();
+            for city in moneywar_domain::CityId::ALL {
+                for product in moneywar_domain::ProductKind::ALL {
+                    p.inventory.add(city, product, 10_000).unwrap();
+                }
+            }
+            s0.players.insert(p.id, p);
+        }
+        let total_before: i64 = s0.players.values().map(|p| p.cash.as_cents()).sum();
+        let total_stock_before: u64 = s0.players.values().map(|p| p.inventory.total_units()).sum();
+
+        let (s1, _report) = advance_tick(&s0, &cmds).unwrap();
+
+        let total_after: i64 = s1.players.values().map(|p| p.cash.as_cents()).sum();
+        let total_stock_after: u64 = s1.players.values().map(|p| p.inventory.total_units()).sum();
+        prop_assert_eq!(total_before, total_after);
+        prop_assert_eq!(total_stock_before, total_stock_after);
+    }
 }

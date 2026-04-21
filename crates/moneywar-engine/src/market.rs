@@ -16,15 +16,18 @@
 //! 3. **Clearing price**
 //!    - `clearing_price = (son_match_buy + son_match_sell) / 2` (midpoint).
 //!    - Tüm fill'ler bu uniform fiyatta settle olur.
-//! 4. **Post-clearing**
-//!    - Event'ler emit edilir: her fill → `OrderMatched`, özet → `MarketCleared`.
+//! 4. **Post-clearing (3C)**
+//!    - `settle_fills` her fill'i saturation eşiğine göre full/half tier'a böler.
+//!      `threshold = 40 + (player_count - 2) × 10` (§10). Eşik üstü segment
+//!      `clearing_price / 2`'de settle — "çok döküyorsan marjinal satış yarı
+//!      fiyata" anti-snowball.
+//!    - `settle_segment` buyer'dan cash düşer + stok ekler, seller'a cash verir +
+//!      stok düşer. Pre-flight validation yetmezse `FillRejected` event; state
+//!      dokunulmaz, para korunumu ihlal edilmez.
+//!    - Event'ler: her settled segment → `OrderMatched`, başarısız → `FillRejected`,
+//!      bucket özeti → `MarketCleared` (threshold + saturation_qty alanlarıyla).
+//!    - `price_history[(city, product)]` tarihçesine `(tick, clearing_price)` eklenir.
 //!    - Bucket boşaltılır (eşleşmeyenler çöpe — tasarım §2).
-//!
-//! # 3C kapsamında gelecek
-//!
-//! - Cash/inventory settlement (bu dosyada değil, fills'i okuyan settle fn).
-//! - Saturation eşiği: eşik üstü qty `clearing_price / 2`'de settle.
-//! - `price_history` güncellemesi.
 
 use moneywar_domain::{CityId, GameState, MarketOrder, Money, OrderSide, ProductKind, Tick};
 
@@ -46,10 +49,11 @@ struct Fill {
 /// Bucket'ların işleme sırası `BTreeMap` iterasyon sırası — yani
 /// `(CityId, ProductKind)` doğal sıralaması. Determinism için kritik.
 pub(crate) fn clear_markets(state: &mut GameState, report: &mut TickReport, tick: Tick) {
-    // Tüm anahtarları topla — iterasyon sırasında book'u mutate edebilmek için.
     let keys: Vec<(CityId, ProductKind)> = state.order_book.keys().copied().collect();
+    // Saturation eşiği oda katılımcı sayısına bağlı (§10). Tüm bucket'lar için sabit.
+    let threshold = state.config.saturation_threshold(state.participant_count());
     for key in keys {
-        clear_bucket(state, report, tick, key);
+        clear_bucket(state, report, tick, key, threshold);
     }
 }
 
@@ -58,9 +62,9 @@ fn clear_bucket(
     report: &mut TickReport,
     tick: Tick,
     key: (CityId, ProductKind),
+    threshold: u32,
 ) {
     let (city, product) = key;
-    // Bucket'ı çıkar — temizleme sonrası zaten boşaltılıyor.
     let Some(orders) = state.order_book.remove(&key) else {
         return;
     };
@@ -69,14 +73,12 @@ fn clear_bucket(
         .into_iter()
         .partition(|o| matches!(o.side, OrderSide::Buy));
 
-    // Buy: price DESC → eğer aynı fiyat varsa (player_id, order_id) ASC.
     buys.sort_by(|a, b| {
         b.unit_price
             .cmp(&a.unit_price)
             .then_with(|| a.player.cmp(&b.player))
             .then_with(|| a.id.cmp(&b.id))
     });
-    // Sell: price ASC, tie-break (player_id, order_id) ASC.
     sells.sort_by(|a, b| {
         a.unit_price
             .cmp(&b.unit_price)
@@ -89,19 +91,21 @@ fn clear_bucket(
 
     let (fills, clearing_price, matched_qty) = match_orders(&buys, &sells);
 
-    for fill in &fills {
-        report.push(LogEntry::order_matched(
-            tick,
-            city,
-            product,
-            fill.buy_order_id,
-            fill.sell_order_id,
-            fill.buyer,
-            fill.seller,
-            fill.quantity,
-            clearing_price.expect("matches exist → price exists"),
-        ));
-    }
+    // Settlement: clearing_price varsa her fill'i (saturation split + cash/stock
+    // transfer). Başarılı transfer sayısı raporun değil, `matched_qty` zaten
+    // match aşamasında kaydedilmişti — settlement reject'leri ayrı event.
+    let saturation_qty = if let Some(price) = clearing_price {
+        let sat = settle_fills(state, report, tick, city, product, &fills, price, threshold);
+        // Eşleşme olduysa price history'ye ekle (rolling avg için).
+        state
+            .price_history
+            .entry(key)
+            .or_default()
+            .push((tick, price));
+        sat
+    } else {
+        0
+    };
 
     report.push(LogEntry::market_cleared(
         tick,
@@ -111,6 +115,172 @@ fn clear_bucket(
         matched_qty,
         submitted_buy_qty,
         submitted_sell_qty,
+        threshold,
+        saturation_qty,
+    ));
+}
+
+/// Fills'i settle et. Saturation eşiği cumulative qty'ye göre full/half tier'a
+/// böler: `cum ≤ threshold` kısmı `clearing_price`'ta, üstü `clearing_price/2`'de.
+/// Fill bir tier'a düşüyorsa tek segment, eşiği ortada aşıyorsa iki segment olur.
+/// Her segment için `OrderMatched` emit edilir (analitik için effective price belli).
+///
+/// Buyer cash yetmezse veya seller stok yetmezse segment iptal, `FillRejected`
+/// event'i yazılır, state değişmez (para korunumu bozulmaz).
+///
+/// Dönüş: half tier'a düşen toplam qty (analitik).
+#[allow(clippy::too_many_arguments)]
+fn settle_fills(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    city: CityId,
+    product: ProductKind,
+    fills: &[Fill],
+    clearing_price: Money,
+    threshold: u32,
+) -> u32 {
+    let half_price = Money::from_cents(clearing_price.as_cents() / 2);
+    let mut cum: u32 = 0;
+    let mut saturation_qty: u32 = 0;
+
+    for fill in fills {
+        let (full_qty, half_qty) = split_by_threshold(cum, fill.quantity, threshold);
+        cum = cum.saturating_add(fill.quantity);
+        saturation_qty = saturation_qty.saturating_add(half_qty);
+
+        if full_qty > 0 {
+            settle_segment(
+                state,
+                report,
+                tick,
+                city,
+                product,
+                fill,
+                full_qty,
+                clearing_price,
+            );
+        }
+        if half_qty > 0 {
+            settle_segment(
+                state, report, tick, city, product, fill, half_qty, half_price,
+            );
+        }
+    }
+
+    saturation_qty
+}
+
+/// Fill'in `qty`'sini saturation eşiğine göre (full, half) ikilisine böl.
+///
+/// - `cum + qty ≤ threshold` → hepsi full tier.
+/// - `cum ≥ threshold` → hepsi half tier.
+/// - Aksi halde `threshold - cum` full, kalan half.
+fn split_by_threshold(cum: u32, qty: u32, threshold: u32) -> (u32, u32) {
+    if cum >= threshold {
+        (0, qty)
+    } else if cum.saturating_add(qty) <= threshold {
+        (qty, 0)
+    } else {
+        let full = threshold - cum;
+        (full, qty - full)
+    }
+}
+
+/// Tek bir (fill, qty, price) segment'i settle et.
+///
+/// Validation pre-flight: her iki tarafın da yeterliliği kontrol edilir.
+/// Birinde eksiklik varsa segment iptal, `FillRejected` event yazılır.
+/// Self-trade (buyer == seller) izinlidir — net değişim sıfır.
+#[allow(clippy::too_many_arguments)]
+fn settle_segment(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    city: CityId,
+    product: ProductKind,
+    fill: &Fill,
+    qty: u32,
+    price: Money,
+) {
+    // Toplam değer = qty × price.
+    let Ok(total) = price.checked_mul_scalar(i64::from(qty)) else {
+        report.push(LogEntry::fill_rejected(
+            tick,
+            city,
+            product,
+            fill.buyer,
+            fill.seller,
+            qty,
+            "segment total overflow",
+        ));
+        return;
+    };
+
+    // Pre-flight: buyer/seller var mı, cash/stok yeterli mi?
+    let buyer_ok = state
+        .players
+        .get(&fill.buyer)
+        .is_some_and(|p| p.cash >= total);
+    let seller_ok = state
+        .players
+        .get(&fill.seller)
+        .is_some_and(|p| p.inventory.get(city, product) >= qty);
+
+    if !buyer_ok {
+        report.push(LogEntry::fill_rejected(
+            tick,
+            city,
+            product,
+            fill.buyer,
+            fill.seller,
+            qty,
+            "buyer insufficient funds",
+        ));
+        return;
+    }
+    if !seller_ok {
+        report.push(LogEntry::fill_rejected(
+            tick,
+            city,
+            product,
+            fill.buyer,
+            fill.seller,
+            qty,
+            "seller insufficient stock",
+        ));
+        return;
+    }
+
+    // Apply: seller önce (debit stok + credit cash), sonra buyer.
+    // İki ayrı mutable borrow — farklı BTreeMap anahtarları ama aynı self.
+    // get_mut'u sırayla çağırmak güvenli. Self-trade (same id) edge: iki
+    // sıralı mutasyon net sıfır sonuç verir.
+    if let Some(seller) = state.players.get_mut(&fill.seller) {
+        seller
+            .inventory
+            .remove(city, product, qty)
+            .expect("pre-flight validated");
+        seller.credit(total).expect("cash overflow on credit");
+    }
+    if let Some(buyer) = state.players.get_mut(&fill.buyer) {
+        buyer.debit(total).expect("pre-flight validated");
+        buyer
+            .inventory
+            .add(city, product, qty)
+            .expect("inventory overflow on add");
+    }
+
+    report.push(LogEntry::order_matched(
+        tick,
+        city,
+        product,
+        fill.buy_order_id,
+        fill.sell_order_id,
+        fill.buyer,
+        fill.seller,
+        qty,
+        price,
     ));
 }
 
@@ -183,12 +353,38 @@ fn match_orders(buys: &[MarketOrder], sells: &[MarketOrder]) -> (Vec<Fill>, Opti
 mod tests {
     use super::*;
     use moneywar_domain::{
-        CityId, GameState, MarketOrder, Money, OrderId, OrderSide, PlayerId, ProductKind,
-        RoomConfig, RoomId, Tick,
+        CityId, GameState, MarketOrder, Money, OrderId, OrderSide, Player, PlayerId, ProductKind,
+        Role, RoomConfig, RoomId, Tick,
     };
 
     fn state() -> GameState {
         GameState::new(RoomId::new(1), RoomConfig::hizli())
+    }
+
+    /// Cömert test oyuncusu: 1M₺ nakit, 10k birim stok herkes için hazır.
+    /// Settlement'ın cash/stock rejection yollarını ayrı testlerle sınıyoruz.
+    fn seed_player(state: &mut GameState, player_id: u64, role: Role) {
+        let mut p = Player::new(
+            PlayerId::new(player_id),
+            format!("P{player_id}"),
+            role,
+            Money::from_lira(1_000_000).unwrap(),
+            false,
+        )
+        .unwrap();
+        // Her şehir/ürün için 10k birim cömert stok.
+        for city in CityId::ALL {
+            for product in ProductKind::ALL {
+                p.inventory.add(city, product, 10_000).unwrap();
+            }
+        }
+        state.players.insert(p.id, p);
+    }
+
+    fn seed_players(state: &mut GameState, ids: &[u64]) {
+        for &id in ids {
+            seed_player(state, id, Role::Tuccar);
+        }
     }
 
     fn order(id: u64, player: u64, side: OrderSide, qty: u32, price_lira: i64) -> MarketOrder {
@@ -261,6 +457,7 @@ mod tests {
     #[test]
     fn single_match_uses_midpoint_price() {
         let mut s = state();
+        seed_players(&mut s, &[1, 2]);
         populate(
             &mut s,
             vec![
@@ -299,6 +496,7 @@ mod tests {
     #[test]
     fn partial_fill_matches_only_smaller_side() {
         let mut s = state();
+        seed_players(&mut s, &[1, 2]);
         populate(
             &mut s,
             vec![
@@ -334,6 +532,7 @@ mod tests {
         //  (b2,s4) 5 → her ikisi biter
         // Toplam matched = 10. Son match: buy=11, sell=10 → midpoint 10.5 = 1050 cents.
         let mut s = state();
+        seed_players(&mut s, &[1, 2, 3, 4]);
         populate(
             &mut s,
             vec![
@@ -378,6 +577,7 @@ mod tests {
     fn same_price_tie_breaks_by_player_then_order_id() {
         // İki buy aynı fiyatta: p2/o2 önce sıralanmalı (küçük player_id).
         let mut s = state();
+        seed_players(&mut s, &[1, 2, 9]);
         populate(
             &mut s,
             vec![
@@ -406,6 +606,7 @@ mod tests {
     #[test]
     fn book_is_emptied_after_clearing() {
         let mut s = state();
+        seed_players(&mut s, &[1, 2]);
         populate(
             &mut s,
             vec![
@@ -478,5 +679,261 @@ mod tests {
         // Her bucket için tek MarketCleared → 2 entry.
         assert_eq!(r.entries.len(), 2);
         assert!(s.order_book.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Faz 3C: Settlement + Saturation + price_history testleri
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settlement_transfers_cash_and_inventory() {
+        let mut s = state();
+        seed_players(&mut s, &[1, 2]);
+        let seller_stock_before = s.players[&PlayerId::new(2)]
+            .inventory
+            .get(CityId::Istanbul, ProductKind::Pamuk);
+        let buyer_cash_before = s.players[&PlayerId::new(1)].cash;
+        let seller_cash_before = s.players[&PlayerId::new(2)].cash;
+
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 10, 10),
+                order(2, 2, OrderSide::Sell, 10, 8),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        // Clearing price = 9₺ (midpoint). Toplam = 10 × 9 = 90₺.
+        let total = Money::from_lira(90).unwrap();
+        assert_eq!(
+            s.players[&PlayerId::new(1)].cash,
+            buyer_cash_before.checked_sub(total).unwrap()
+        );
+        assert_eq!(
+            s.players[&PlayerId::new(2)].cash,
+            seller_cash_before.checked_add(total).unwrap()
+        );
+        // Buyer 10 birim kazandı, seller 10 birim kaybetti.
+        assert_eq!(
+            s.players[&PlayerId::new(1)]
+                .inventory
+                .get(CityId::Istanbul, ProductKind::Pamuk),
+            10_000 + 10
+        );
+        assert_eq!(
+            s.players[&PlayerId::new(2)]
+                .inventory
+                .get(CityId::Istanbul, ProductKind::Pamuk),
+            seller_stock_before - 10
+        );
+    }
+
+    #[test]
+    fn money_conservation_holds_across_clearing() {
+        let mut s = state();
+        seed_players(&mut s, &[1, 2, 3, 4]);
+        let total_cash_before: i64 = s.players.values().map(|p| p.cash.as_cents()).sum();
+        let total_stock_before: u64 = s.players.values().map(|p| p.inventory.total_units()).sum();
+
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 5, 12),
+                order(2, 2, OrderSide::Buy, 7, 11),
+                order(3, 3, OrderSide::Sell, 5, 8),
+                order(4, 4, OrderSide::Sell, 5, 10),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        let total_cash_after: i64 = s.players.values().map(|p| p.cash.as_cents()).sum();
+        let total_stock_after: u64 = s.players.values().map(|p| p.inventory.total_units()).sum();
+
+        assert_eq!(
+            total_cash_before, total_cash_after,
+            "cash must be conserved"
+        );
+        assert_eq!(
+            total_stock_before, total_stock_after,
+            "stock must be conserved"
+        );
+    }
+
+    #[test]
+    fn price_history_receives_entry_on_match() {
+        let mut s = state();
+        seed_players(&mut s, &[1, 2]);
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 10, 10),
+                order(2, 2, OrderSide::Sell, 10, 8),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(5));
+        clear_markets(&mut s, &mut r, Tick::new(5));
+
+        let hist = s
+            .price_history
+            .get(&(CityId::Istanbul, ProductKind::Pamuk))
+            .expect("history entry created");
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0], (Tick::new(5), Money::from_lira(9).unwrap()));
+    }
+
+    #[test]
+    fn price_history_skipped_when_no_matches() {
+        let mut s = state();
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 10, 5), // spread
+                order(2, 2, OrderSide::Sell, 10, 8),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+        assert!(
+            !s.price_history
+                .contains_key(&(CityId::Istanbul, ProductKind::Pamuk))
+        );
+    }
+
+    #[test]
+    fn insufficient_buyer_cash_emits_fill_rejected() {
+        let mut s = state();
+        // Alıcı fakir (100₺), 10×10 = 100₺ gerekli ama midpoint ile 10×9 = 90₺.
+        // Tamamı alınabilir 90₺'lık. Cash eksik senaryosu için alıcı cash = 50₺.
+        let mut buyer = Player::new(
+            PlayerId::new(1),
+            "fakir",
+            Role::Tuccar,
+            Money::from_lira(50).unwrap(),
+            false,
+        )
+        .unwrap();
+        buyer
+            .inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+            .unwrap();
+        s.players.insert(buyer.id, buyer);
+        seed_player(&mut s, 2, Role::Tuccar);
+
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 10, 10),
+                order(2, 2, OrderSide::Sell, 10, 8),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        let rejected = r.entries.iter().any(|e| {
+            matches!(
+                e.event,
+                crate::report::LogEvent::FillRejected {
+                    reason: ref s,
+                    ..
+                } if s.contains("buyer insufficient funds")
+            )
+        });
+        assert!(rejected, "expected FillRejected for poor buyer");
+        // Alıcının nakti değişmemeli.
+        assert_eq!(
+            s.players[&PlayerId::new(1)].cash,
+            Money::from_lira(50).unwrap()
+        );
+    }
+
+    #[test]
+    fn insufficient_seller_stock_emits_fill_rejected() {
+        let mut s = state();
+        seed_player(&mut s, 1, Role::Tuccar);
+        // Satıcı stoksuz.
+        let seller = Player::new(
+            PlayerId::new(2),
+            "stoksuz",
+            Role::Tuccar,
+            Money::from_lira(1_000).unwrap(),
+            false,
+        )
+        .unwrap();
+        s.players.insert(seller.id, seller);
+
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 10, 10),
+                order(2, 2, OrderSide::Sell, 10, 8),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        let rejected = r.entries.iter().any(|e| {
+            matches!(
+                e.event,
+                crate::report::LogEvent::FillRejected {
+                    reason: ref s,
+                    ..
+                } if s.contains("seller insufficient stock")
+            )
+        });
+        assert!(rejected, "expected FillRejected for stockless seller");
+    }
+
+    #[test]
+    fn split_by_threshold_full_below() {
+        assert_eq!(split_by_threshold(0, 10, 40), (10, 0));
+        assert_eq!(split_by_threshold(30, 10, 40), (10, 0));
+    }
+
+    #[test]
+    fn split_by_threshold_half_above() {
+        assert_eq!(split_by_threshold(40, 10, 40), (0, 10));
+        assert_eq!(split_by_threshold(100, 10, 40), (0, 10));
+    }
+
+    #[test]
+    fn split_by_threshold_straddling() {
+        // cum=35, qty=10, threshold=40 → full=5, half=5
+        assert_eq!(split_by_threshold(35, 10, 40), (5, 5));
+    }
+
+    #[test]
+    fn saturation_reports_qty_over_threshold_at_half_price() {
+        // 10 oyuncu ekleyip threshold'ı 120'ye çıkar: 40 + (10-2)*10.
+        // Tek eşleşme 150 birim → 120 full, 30 half.
+        let mut s = state();
+        for i in 1..=10 {
+            seed_player(&mut s, i, Role::Tuccar);
+        }
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 150, 10),
+                order(2, 2, OrderSide::Sell, 150, 8),
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        match r.entries.last().map(|e| &e.event) {
+            Some(crate::report::LogEvent::MarketCleared {
+                saturation_threshold,
+                saturation_qty,
+                matched_qty,
+                ..
+            }) => {
+                assert_eq!(*saturation_threshold, 120);
+                assert_eq!(*saturation_qty, 30);
+                assert_eq!(*matched_qty, 150);
+            }
+            other => panic!("expected MarketCleared, got {other:?}"),
+        }
     }
 }
