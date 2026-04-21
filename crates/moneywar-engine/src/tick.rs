@@ -24,6 +24,7 @@
 //! | **5** ✅ | `contracts::{process_propose/accept/cancel + advance_contracts}` — Anlaşma Masası |
 //! | **5.5** ✅ | `loans::{process_take_loan, process_repay_loan, advance_loans}` — NPC banka |
 //! | **6** ✅ | `news::process_subscribe_news` + `events::advance_events` — haber + olay motoru |
+//! | **7** ✅ | `scoring::{score_player, leaderboard}` — skor formülü + sıralama |
 
 use crate::{
     contracts::{

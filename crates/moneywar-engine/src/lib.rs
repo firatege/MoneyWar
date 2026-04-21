@@ -34,10 +34,12 @@ mod news;
 mod production;
 mod report;
 mod rng;
+mod scoring;
 mod tick;
 mod transport;
 
 pub use error::EngineError;
 pub use report::{LogEntry, LogEvent, TickReport};
 pub use rng::{rng_for, seed_for};
+pub use scoring::{IDLE_FACTORY_THRESHOLD, PRICE_WINDOW, PlayerScore, leaderboard, score_player};
 pub use tick::advance_tick;
