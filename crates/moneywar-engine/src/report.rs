@@ -10,7 +10,7 @@
 //! Analitik kullanım: SQL `WHERE event_kind = 'CommandRejected'` ile en çok
 //! hangi komutun reddedildiğini ölçebilirsin, rol bazlı `PnL` çıkarabilirsin.
 
-use moneywar_domain::{CityId, Command, Money, OrderId, PlayerId, ProductKind, Tick};
+use moneywar_domain::{CityId, Command, FactoryId, Money, OrderId, PlayerId, ProductKind, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Bir tick boyunca motor tarafından üretilmiş tüm gözlemler.
@@ -155,6 +155,95 @@ impl LogEntry {
         }
     }
 
+    /// Yeni fabrika kuruldu.
+    #[must_use]
+    pub fn factory_built(
+        tick: Tick,
+        owner: PlayerId,
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        cost: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::FactoryBuilt {
+                factory_id,
+                owner,
+                city,
+                product,
+                cost,
+            },
+        }
+    }
+
+    /// Fabrika yeni bir batch başlattı (ham madde tüketildi).
+    #[must_use]
+    pub fn production_started(
+        tick: Tick,
+        owner: PlayerId,
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        units: u32,
+        completion_tick: Tick,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::ProductionStarted {
+                factory_id,
+                city,
+                product,
+                units,
+                completion_tick,
+            },
+        }
+    }
+
+    /// Fabrika batch'i tamamlandı, envantere eklendi.
+    #[must_use]
+    pub fn production_completed(
+        tick: Tick,
+        owner: PlayerId,
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        units: u32,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::ProductionCompleted {
+                factory_id,
+                city,
+                product,
+                units,
+            },
+        }
+    }
+
+    /// Fabrika bu tick atıl kaldı (ham madde yok, üretim başlamadı).
+    #[must_use]
+    pub fn factory_idle(
+        tick: Tick,
+        owner: PlayerId,
+        factory_id: FactoryId,
+        city: CityId,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::FactoryIdle {
+                factory_id,
+                city,
+                reason: reason.into(),
+            },
+        }
+    }
+
     /// Bir fill settle edilemedi (buyer cash yetmiyor veya seller stok yetmiyor).
     /// State dokunulmaz, para korunumu ihlal edilmez. Sadece log'a kayıt.
     #[must_use]
@@ -242,6 +331,40 @@ pub enum LogEvent {
         buyer: PlayerId,
         seller: PlayerId,
         quantity: u32,
+        reason: String,
+    },
+
+    /// Oyuncu yeni fabrika kurdu. Sanayici tekeli.
+    FactoryBuilt {
+        factory_id: FactoryId,
+        owner: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        cost: Money,
+    },
+
+    /// Fabrika bu tick yeni batch başlattı (ham madde consume + timer start).
+    ProductionStarted {
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        units: u32,
+        completion_tick: Tick,
+    },
+
+    /// Fabrika batch'i tamamlandı; bitmiş ürün sahibinin envanterine eklendi.
+    ProductionCompleted {
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        units: u32,
+    },
+
+    /// Fabrika bu tick atıl kaldı — çoğunlukla ham madde envanter'de yoktu.
+    /// §9 skor formülünde "10 tick atıl" fabrika değeri sıfıra düşer.
+    FactoryIdle {
+        factory_id: FactoryId,
+        city: CityId,
         reason: String,
     },
 }

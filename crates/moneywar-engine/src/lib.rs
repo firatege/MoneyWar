@@ -27,6 +27,7 @@
 
 mod error;
 mod market;
+mod production;
 mod report;
 mod rng;
 mod tick;

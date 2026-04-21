@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CaravanId, CityId, DomainError, PlayerId, ProductKind, Tick};
+use crate::{CaravanId, CityId, DomainError, Money, PlayerId, ProductKind, Role, Tick};
 
 /// Kervan yük siparişi — kervanı gönderirken ne yükleneceğini belirler.
 /// `Cargo` ile farkı: `CargoSpec` komut payload'ı (serde-friendly, hafif),
@@ -110,6 +110,33 @@ pub struct Caravan {
 }
 
 impl Caravan {
+    /// `§10` rol bazlı başlangıç kapasitesi.
+    /// Sanayici küçük (20), Tüccar büyük (50).
+    #[must_use]
+    pub const fn capacity_for(role: Role) -> u32 {
+        match role {
+            Role::Sanayici => 20,
+            Role::Tuccar => 50,
+        }
+    }
+
+    /// `§10` rol bazlı satın alma maliyet tablosu.
+    /// `existing_count` = sahip olunan mevcut kervan sayısı.
+    ///
+    /// Sanayici: 0, 5k, 10k, ... (3+ için 10k sabit).
+    /// Tüccar: 0, 6k, 10k, 15k, ... (4+ için 15k sabit).
+    #[must_use]
+    pub fn buy_cost(role: Role, existing_count: u32) -> Money {
+        let lira = match (role, existing_count) {
+            (_, 0) => 0,
+            (Role::Sanayici, 1) => 5_000,
+            (Role::Sanayici, _) | (Role::Tuccar, 2) => 10_000,
+            (Role::Tuccar, 1) => 6_000,
+            (Role::Tuccar, _) => 15_000,
+        };
+        Money::from_lira(lira).expect("fixed literal fits i64")
+    }
+
     /// Yeni kervan. Başlangıç durumu `Idle` (belirtilen şehirde).
     #[must_use]
     pub fn new(id: CaravanId, owner: PlayerId, capacity: u32, starting_city: CityId) -> Self {
@@ -366,6 +393,52 @@ mod tests {
         assert!(matches!(err, DomainError::InvalidTransition { .. }));
         // State must be preserved after failed arrive
         assert!(c.is_idle());
+    }
+
+    #[test]
+    fn capacity_matches_role() {
+        assert_eq!(Caravan::capacity_for(Role::Sanayici), 20);
+        assert_eq!(Caravan::capacity_for(Role::Tuccar), 50);
+    }
+
+    #[test]
+    fn buy_cost_sanayici_schedule() {
+        assert_eq!(Caravan::buy_cost(Role::Sanayici, 0), Money::ZERO);
+        assert_eq!(
+            Caravan::buy_cost(Role::Sanayici, 1),
+            Money::from_lira(5_000).unwrap()
+        );
+        assert_eq!(
+            Caravan::buy_cost(Role::Sanayici, 2),
+            Money::from_lira(10_000).unwrap()
+        );
+        // 3+ sabit 10k
+        assert_eq!(
+            Caravan::buy_cost(Role::Sanayici, 5),
+            Money::from_lira(10_000).unwrap()
+        );
+    }
+
+    #[test]
+    fn buy_cost_tuccar_schedule() {
+        assert_eq!(Caravan::buy_cost(Role::Tuccar, 0), Money::ZERO);
+        assert_eq!(
+            Caravan::buy_cost(Role::Tuccar, 1),
+            Money::from_lira(6_000).unwrap()
+        );
+        assert_eq!(
+            Caravan::buy_cost(Role::Tuccar, 2),
+            Money::from_lira(10_000).unwrap()
+        );
+        assert_eq!(
+            Caravan::buy_cost(Role::Tuccar, 3),
+            Money::from_lira(15_000).unwrap()
+        );
+        // 4+ sabit 15k
+        assert_eq!(
+            Caravan::buy_cost(Role::Tuccar, 10),
+            Money::from_lira(15_000).unwrap()
+        );
     }
 
     #[test]

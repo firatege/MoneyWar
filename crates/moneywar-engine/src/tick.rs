@@ -19,22 +19,22 @@
 //! | **3A** ✅ | `process_submit_order`, `process_cancel_order` — order book yönetimi |
 //! | **3B** ✅ | Tick sonu batch auction — `market::clear_markets` + uniform clearing |
 //! | **3C** ✅ | Settlement (cash/inventory), saturation eşiği, `price_history` |
-//! | 4 | `process_build_factory`, `process_buy_caravan`, `process_dispatch_caravan` |
+//! | **4A** ✅ | `process_build_factory` + `production::advance_production` — fabrika + üretim |
+//! | 4B | `process_buy_caravan`, `process_dispatch_caravan` + caravan arrival pass |
 //! | 5 | `process_propose_contract`, `process_accept_contract`, `process_cancel_contract` |
 //! | 5.5 | `process_take_loan`, `process_repay_loan` |
 //! | 6 | `process_subscribe_news` + sistem eventleri |
 
-use moneywar_domain::{
-    CaravanId, CityId, Command, ContractId, ContractProposal, DomainError, GameState, LoanId,
-    MarketOrder, Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
-};
-use rand_chacha::ChaCha8Rng;
-
 use crate::{
     error::EngineError,
     market::clear_markets,
+    production::{advance_production, process_build_factory as build_factory_impl},
     report::{LogEntry, TickReport},
     rng::rng_for,
+};
+use moneywar_domain::{
+    CaravanId, CityId, Command, ContractId, ContractProposal, DomainError, GameState, LoanId,
+    MarketOrder, Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
 };
 
 /// Motoru bir tick ileri sarar.
@@ -55,12 +55,15 @@ pub fn advance_tick(
 ) -> Result<(GameState, TickReport), EngineError> {
     let next_tick = state.current_tick.next();
     let mut new_state = state.clone();
-    let mut rng = rng_for(state.room_id, next_tick);
+    // RNG şimdilik kullanılmıyor; Faz 6 olay/haber tetikleyicileri devreye
+    // alındığında burada üretilip alt geçitlere iletilecek. Determinism
+    // garanti için seed'i burada tutuyoruz.
+    let _rng = rng_for(state.room_id, next_tick);
     let mut report = TickReport::new(next_tick);
 
     for cmd in commands {
         let actor = command_actor(&new_state, cmd);
-        match dispatch(&mut new_state, cmd, &mut rng, next_tick) {
+        match dispatch(&mut new_state, &mut report, cmd, next_tick) {
             Ok(()) => report.push(LogEntry::command_accepted(next_tick, actor, cmd.clone())),
             Err(err) => report.push(LogEntry::command_rejected(
                 next_tick,
@@ -71,8 +74,11 @@ pub fn advance_tick(
         }
     }
 
-    // Tick kapanışı: her (city, product) bucket'ı için uniform batch auction.
-    // Bucket'lar boşaltılır, fills/clearing event'leri report'a eklenir.
+    // Tick kapanışı sırası (Faz 4+):
+    //   1. Üretim — biten batch'ler envantere, yeni batch'ler başlar.
+    //   2. (4B) Taşıma — varış zamanı gelen kervanlar boşalır.
+    //   3. Hal Pazarı clearing — post-production/transport envanteri kullanır.
+    advance_production(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
@@ -94,14 +100,11 @@ fn command_actor(state: &GameState, cmd: &Command) -> PlayerId {
     }
 }
 
-/// Command variant'ına göre doğru `process_*` stub'ını seçer.
-///
-/// Her variant ayrı fonksiyona gider — ileride dolacak mantık izole olsun,
-/// test'te tek tek unit edilebilsin diye.
+/// Command variant'ına göre doğru `process_*` fonksiyonuna delege eder.
 fn dispatch(
     state: &mut GameState,
+    report: &mut TickReport,
     cmd: &Command,
-    rng: &mut ChaCha8Rng,
     tick: Tick,
 ) -> Result<(), EngineError> {
     match cmd {
@@ -123,7 +126,7 @@ fn dispatch(
             owner,
             city,
             product,
-        } => process_build_factory(state, *owner, *city, *product, rng, tick),
+        } => build_factory_impl(state, report, tick, *owner, *city, *product),
         Command::BuyCaravan {
             owner,
             starting_city,
@@ -250,19 +253,6 @@ fn process_cancel_contract(
     _requester: PlayerId,
 ) -> Result<(), EngineError> {
     // FAZ 5: escrow iade, state Cancelled.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_build_factory(
-    _state: &mut GameState,
-    _owner: PlayerId,
-    _city: CityId,
-    _product: ProductKind,
-    _rng: &mut ChaCha8Rng,
-    _tick: Tick,
-) -> Result<(), EngineError> {
-    // FAZ 4: maliyet düş, Factory kur, ID üret, Sanayici tekel kontrolü.
     Ok(())
 }
 

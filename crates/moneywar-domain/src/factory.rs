@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CityId, DomainError, FactoryId, PlayerId, ProductKind, Tick};
+use crate::{CityId, DomainError, FactoryId, Money, PlayerId, ProductKind, Tick};
 
 /// Üretim kuyruğundaki bir batch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +33,13 @@ pub struct Factory {
 }
 
 impl Factory {
+    /// Her fabrika tick başına bu kadar ham madde tüketir / bitmiş ürün üretir.
+    /// Tentatif parametre (§10).
+    pub const BATCH_SIZE: u32 = 10;
+
+    /// Üretim süresi — batch başlatıldıktan kaç tick sonra biter.
+    pub const PRODUCTION_TICKS: u32 = 2;
+
     /// Fabrika kurar. Ürün mutlaka bitmiş (finished) olmalı.
     pub fn new(
         id: FactoryId,
@@ -53,6 +60,28 @@ impl Factory {
             last_production_tick: None,
             batches: Vec::new(),
         })
+    }
+
+    /// `§10` kurulum maliyet tablosu. `existing_count` = sahip olunan mevcut
+    /// fabrika sayısı (yeni fabrika eklenmeden önce okunur).
+    ///
+    /// | Sıra | Maliyet |
+    /// |---|---|
+    /// | 1 (starter) | 0 |
+    /// | 2 | 10k |
+    /// | 3 | 15k |
+    /// | 4 | 22k |
+    /// | 5+ | 30k |
+    #[must_use]
+    pub fn build_cost(existing_count: u32) -> Money {
+        let lira = match existing_count {
+            0 => 0,
+            1 => 10_000,
+            2 => 15_000,
+            3 => 22_000,
+            _ => 30_000,
+        };
+        Money::from_lira(lira).expect("fixed literal fits i64")
     }
 
     /// Bu fabrikanın ham madde girdisi (Kumaş → Pamuk vb).
@@ -175,6 +204,24 @@ mod tests {
             units: 10,
         });
         assert_eq!(f.pending_units(), 20);
+    }
+
+    #[test]
+    fn build_cost_follows_design_schedule() {
+        assert_eq!(Factory::build_cost(0), Money::ZERO);
+        assert_eq!(Factory::build_cost(1), Money::from_lira(10_000).unwrap());
+        assert_eq!(Factory::build_cost(2), Money::from_lira(15_000).unwrap());
+        assert_eq!(Factory::build_cost(3), Money::from_lira(22_000).unwrap());
+        assert_eq!(Factory::build_cost(4), Money::from_lira(30_000).unwrap());
+        // 5+ hep 30k
+        assert_eq!(Factory::build_cost(5), Money::from_lira(30_000).unwrap());
+        assert_eq!(Factory::build_cost(10), Money::from_lira(30_000).unwrap());
+    }
+
+    #[test]
+    fn batch_size_and_duration_constants() {
+        assert_eq!(Factory::BATCH_SIZE, 10);
+        assert_eq!(Factory::PRODUCTION_TICKS, 2);
     }
 
     #[test]

@@ -25,7 +25,7 @@
 //!      stok düşer. Pre-flight validation yetmezse `FillRejected` event; state
 //!      dokunulmaz, para korunumu ihlal edilmez.
 //!    - Event'ler: her settled segment → `OrderMatched`, başarısız → `FillRejected`,
-//!      bucket özeti → `MarketCleared` (threshold + saturation_qty alanlarıyla).
+//!      bucket özeti → `MarketCleared` (threshold + `saturation_qty` alanlarıyla).
 //!    - `price_history[(city, product)]` tarihçesine `(tick, clearing_price)` eklenir.
 //!    - Bucket boşaltılır (eşleşmeyenler çöpe — tasarım §2).
 
