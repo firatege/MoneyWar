@@ -2446,26 +2446,120 @@ fn render_player_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ),
     ]));
 
-    // Satır 5+: en büyük 3 stok satırı (inline)
+    // Pending komutlar — SPACE'e basılınca işlenecek (henüz motor görmedi).
+    let pending: Vec<&Command> = app.pending_human_cmds.iter().collect();
+    if !pending.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("⏳ Bekleyen ({}) — SPACE'le yolla", pending.len()),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for cmd in pending.iter().take(3) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    describe_command_short(cmd),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+        }
+        if pending.len() > 3 {
+            lines.push(Line::from(Span::styled(
+                format!("  … +{} daha", pending.len() - 3),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+
+    // Açık emirler — book'ta, tick sonu clearing'e gidecek.
+    let mut my_open: Vec<&MarketOrder> = app
+        .state
+        .order_book
+        .values()
+        .flatten()
+        .filter(|o| o.player == HUMAN_ID)
+        .collect();
+    my_open.sort_by_key(|o| o.id);
+    if !my_open.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("📋 Açık emirler ({}) — bu tick clearing'e", my_open.len()),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for o in my_open.iter().take(3) {
+            let side_color = if matches!(o.side, OrderSide::Buy) {
+                Color::Green
+            } else {
+                Color::Red
+            };
+            let side_label = if matches!(o.side, OrderSide::Buy) {
+                "BUY"
+            } else {
+                "SELL"
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{}", o.id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:<4}", side_label),
+                    Style::default().fg(side_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:>3} ", o.quantity),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("{:<8}", o.product),
+                    Style::default().fg(product_color(o.product)),
+                ),
+                Span::raw("@"),
+                Span::styled(
+                    format!("{}", o.unit_price),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!(" {}", city_short(o.city)),
+                    Style::default().fg(Color::Blue),
+                ),
+            ]));
+        }
+        if my_open.len() > 3 {
+            lines.push(Line::from(Span::styled(
+                format!("  … +{} daha (m ile tam)", my_open.len() - 3),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+
+    // Stok — en sonda, daha az yer alsın
     let mut entries: Vec<(CityId, ProductKind, u32)> = player
         .inventory
         .entries()
         .filter(|(_, _, q)| *q > 0)
         .collect();
     entries.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
+    lines.push(Line::from(""));
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  (stok yok — :buy ile al)",
+            "📦 Stok yok",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
         lines.push(Line::from(Span::styled(
-            "  en çok stok:",
+            format!("📦 En çok stok ({}):", entries.len()),
             Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )));
-        for (city, product, qty) in entries.iter().take(3) {
+        for (city, product, qty) in entries.iter().take(2) {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
@@ -2485,9 +2579,9 @@ fn render_player_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 ),
             ]));
         }
-        if entries.len() > 3 {
+        if entries.len() > 2 {
             lines.push(Line::from(Span::styled(
-                format!("  … +{} satır ( m ile tam liste)", entries.len() - 3),
+                format!("  … +{} (m ile tam)", entries.len() - 2),
                 Style::default().fg(Color::DarkGray),
             )));
         }
@@ -3463,6 +3557,61 @@ fn parse_product(s: &str) -> Result<ProductKind, String> {
         "un" => Ok(ProductKind::Un),
         "zeytinyagi" | "zeytinyağı" | "yag" | "yağ" => Ok(ProductKind::Zeytinyagi),
         _ => Err(format!("bilinmeyen ürün: {s}")),
+    }
+}
+
+/// Pending komut için kompakt tek-satır gösterim.
+fn describe_command_short(cmd: &Command) -> String {
+    match cmd {
+        Command::SubmitOrder(o) => format!(
+            "{} {} {} @{} {}",
+            if matches!(o.side, OrderSide::Buy) {
+                "AL"
+            } else {
+                "SAT"
+            },
+            o.quantity,
+            o.product,
+            o.unit_price,
+            city_short(o.city),
+        ),
+        Command::CancelOrder { order_id, .. } => format!("emir iptal #{}", order_id.value()),
+        Command::BuildFactory { city, product, .. } => {
+            format!("fab kur {} {}", city_short(*city), product)
+        }
+        Command::BuyCaravan { starting_city, .. } => {
+            format!("kervan al @{}", city_short(*starting_city))
+        }
+        Command::DispatchCaravan {
+            caravan_id,
+            from,
+            to,
+            ..
+        } => format!(
+            "kervan #{} {}→{}",
+            caravan_id.value(),
+            city_short(*from),
+            city_short(*to)
+        ),
+        Command::TakeLoan {
+            amount,
+            duration_ticks,
+            ..
+        } => {
+            format!("kredi {} / {}t", amount, duration_ticks)
+        }
+        Command::RepayLoan { loan_id, .. } => format!("kredi öde #{}", loan_id.value()),
+        Command::SubscribeNews { tier, .. } => format!("haber {}", tier),
+        Command::ProposeContract(p) => format!(
+            "kontrat öner {} {} @{}",
+            p.quantity, p.product, p.unit_price
+        ),
+        Command::AcceptContract { contract_id, .. } => {
+            format!("kontrat kabul #{}", contract_id.value())
+        }
+        Command::CancelContractProposal { contract_id, .. } => {
+            format!("kontrat geri çek #{}", contract_id.value())
+        }
     }
 }
 
