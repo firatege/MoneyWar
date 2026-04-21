@@ -8,7 +8,39 @@ Tick-tabanlı ekonomi simülasyon oyunu. **Rust workspace** olarak yazıldı; sa
 
 ---
 
-## Hızlı başlangıç
+## 🎮 Oyunu dene
+
+### Seçenek 1 — Hazır binary indir (Rust gerekmez)
+
+[GitHub Releases](https://github.com/firatege/MoneyWar/releases) sayfasından sistemine uygun dosyayı indir, aç, çalıştır:
+
+| Sistem | İndir | Çalıştır |
+|---|---|---|
+| macOS (Apple Silicon) | `moneywar-aarch64-apple-darwin.tar.gz` | `./moneywar` |
+| macOS (Intel) | `moneywar-x86_64-apple-darwin.tar.gz` | `./moneywar` |
+| Linux (x64) | `moneywar-x86_64-unknown-linux-gnu.tar.gz` | `./moneywar` |
+| Windows (x64) | `moneywar-x86_64-pc-windows-msvc.zip` | `moneywar.exe` |
+
+### Seçenek 2 — Rust ile tek komut kurulum
+
+Rust kurulu ise ([`rustup`](https://rustup.rs)):
+
+```bash
+cargo install --git https://github.com/firatege/MoneyWar moneywar-cli
+moneywar
+```
+
+### Seçenek 3 — Kaynaktan derle
+
+```bash
+git clone https://github.com/firatege/MoneyWar.git
+cd MoneyWar
+cargo run -p moneywar-cli
+```
+
+---
+
+## Geliştirici hızlı başlangıç
 
 ```bash
 # Test + build

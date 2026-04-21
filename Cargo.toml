@@ -14,7 +14,11 @@ edition = "2024"
 rust-version = "1.85"
 license = "UNLICENSED"
 authors = ["firatege"]
+description = "Tick-tabanlı ekonomi simülasyon oyunu — motor + terminal TUI"
 repository = "https://github.com/firatege/MoneyWar"
+readme = "README.md"
+keywords = ["game", "simulation", "economy", "tui", "ratatui"]
+categories = ["games"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -1,0 +1,144 @@
+name: release
+
+# `v*` tag push'unda veya manuel tetiklemede multi-platform binary üretip
+# GitHub Release'e yükler.
+#
+# Kullanım:
+#   git tag v0.1.0
+#   git push --tags
+# veya: Actions → release → Run workflow
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag ismi (workflow_dispatch için)"
+        required: true
+        default: "v0.0.0-dev"
+
+permissions:
+  contents: write
+
+env:
+  BINARY: moneywar
+  CLI_CRATE: moneywar-cli
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release
+        run: cargo build --release -p ${{ env.CLI_CRATE }} --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          STAGING="moneywar-${{ matrix.target }}"
+          mkdir -p "$STAGING"
+          cp "target/${{ matrix.target }}/release/${{ env.BINARY }}" "$STAGING/"
+          cp README.md "$STAGING/" 2>/dev/null || true
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+          echo "ASSET=${STAGING}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $STAGING = "moneywar-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $STAGING -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY }}.exe" "$STAGING/"
+          if (Test-Path "README.md") { Copy-Item "README.md" "$STAGING/" }
+          Compress-Archive -Path "$STAGING/*" -DestinationPath "$STAGING.zip"
+          "ASSET=$STAGING.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: MoneyWar ${{ steps.tag.outputs.name }}
+          body: |
+            ## 🎮 MoneyWar ${{ steps.tag.outputs.name }}
+
+            ### Kurulum
+
+            Sistemine uygun arşivi indir, aç, `moneywar` (Windows'ta `moneywar.exe`) komutunu çalıştır.
+
+            | Sistem | Dosya |
+            |---|---|
+            | macOS (Apple Silicon) | `moneywar-aarch64-apple-darwin.tar.gz` |
+            | macOS (Intel) | `moneywar-x86_64-apple-darwin.tar.gz` |
+            | Linux (x64) | `moneywar-x86_64-unknown-linux-gnu.tar.gz` |
+            | Windows (x64) | `moneywar-x86_64-pc-windows-msvc.zip` |
+
+            Daha fazla: [README](https://github.com/firatege/MoneyWar#readme)
+          files: artifacts/*
+          fail_on_unmatched_files: true
