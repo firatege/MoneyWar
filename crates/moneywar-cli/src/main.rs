@@ -491,7 +491,13 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
 
     render_header(f, chunks[0], app);
     render_middle(f, chunks[1], app);
-    render_leaderboard(f, chunks[2], app);
+    // Command mode'dayken leaderboard yerine komut hint'i göster —
+    // oyuncu hangi parametreleri girmesi gerektiğini bilsin.
+    if matches!(app.mode, Mode::Command { .. }) {
+        render_command_hint(f, chunks[2], app);
+    } else {
+        render_leaderboard(f, chunks[2], app);
+    }
     render_footer(f, chunks[3], app);
 
     // Overlay'ler — ortada popup, arkaplanı temizle.
@@ -1644,49 +1650,6 @@ fn render_player_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         return;
     };
     let score = score_player(&app.state, HUMAN_ID);
-
-    let mut lines = Vec::new();
-    lines.push(Line::from(vec![
-        Span::styled(
-            player.name.clone(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  ("),
-        Span::styled(
-            format!("{}", player.role),
-            Style::default().fg(role_color(player.role)),
-        ),
-        Span::raw(")"),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(kv("Nakit", &format!("{}", player.cash), Color::Green));
-    lines.push(kv("Skor", &format!("{}", score.total), Color::Yellow));
-    lines.push(Line::from(vec![
-        Span::styled("  └ Nakit ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{}", score.cash), Style::default().fg(Color::Gray)),
-        Span::raw("  "),
-        Span::styled("Stok ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{}", score.stock_value),
-            Style::default().fg(Color::Gray),
-        ),
-        Span::raw("  "),
-        Span::styled("Fabrika ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{}", score.factory_value),
-            Style::default().fg(Color::Gray),
-        ),
-        Span::raw("  "),
-        Span::styled("Escrow ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{}", score.escrow_value),
-            Style::default().fg(Color::Gray),
-        ),
-    ]));
-
-    lines.push(Line::from(""));
     let factory_count = app
         .state
         .factories
@@ -1699,52 +1662,124 @@ fn render_player_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .values()
         .filter(|c| c.owner == HUMAN_ID)
         .count();
-    lines.push(kv("Fabrika", &format!("{factory_count}"), Color::Magenta));
-    lines.push(kv("Kervan", &format!("{caravan_count}"), Color::Magenta));
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Stok",
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    )));
-    let mut stock_lines = 0;
-    for (city, product, qty) in player.inventory.entries() {
-        if qty == 0 {
-            continue;
-        }
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                format!("{:<9}", city_short(city)),
-                Style::default().fg(Color::Blue),
-            ),
-            Span::styled(
-                format!("{:<10}", product),
-                Style::default().fg(product_color(product)),
-            ),
-            Span::styled(
-                format!("{qty:>5}"),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        stock_lines += 1;
-        if stock_lines >= 6 {
-            lines.push(Line::from(Span::styled(
-                "  …",
-                Style::default().fg(Color::DarkGray),
-            )));
-            break;
-        }
-    }
-    if stock_lines == 0 {
+    let mut lines = Vec::new();
+
+    // Satır 1: isim + rol
+    lines.push(Line::from(vec![
+        Span::styled(
+            player.name.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("{}", player.role),
+            Style::default().fg(role_color(player.role)),
+        ),
+    ]));
+
+    // Satır 2: nakit + skor tek satırda (büyük vurgu)
+    lines.push(Line::from(vec![
+        Span::styled("💰 ", Style::default().fg(Color::Green)),
+        Span::styled(
+            format!("{}", player.cash),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled("★ ", Style::default().fg(Color::Yellow)),
+        Span::styled(
+            format!("{}", score.total),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    // Satır 3: skor döküm kompakt (minik)
+    lines.push(Line::from(vec![Span::styled(
+        format!(
+            "  cash {}  stok {}  fab {}  esc {}",
+            compact_money(score.cash),
+            compact_money(score.stock_value),
+            compact_money(score.factory_value),
+            compact_money(score.escrow_value),
+        ),
+        Style::default().fg(Color::DarkGray),
+    )]));
+
+    // Satır 4: varlık sayıları tek satırda
+    lines.push(Line::from(vec![
+        Span::styled("🏭 ", Style::default().fg(Color::Rgb(210, 140, 80))),
+        Span::styled(
+            format!("{factory_count}"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled("🚚 ", Style::default().fg(Color::Rgb(120, 180, 240))),
+        Span::styled(
+            format!("{caravan_count}"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled(
+            format!("stok toplam {}", player.inventory.total_units()),
+            Style::default().fg(Color::Gray),
+        ),
+    ]));
+
+    // Satır 5+: en büyük 3 stok satırı (inline)
+    let mut entries: Vec<(CityId, ProductKind, u32)> = player
+        .inventory
+        .entries()
+        .filter(|(_, _, q)| *q > 0)
+        .collect();
+    entries.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
+    if entries.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  (boş)",
+            "  (stok yok — :buy ile al)",
             Style::default().fg(Color::DarkGray),
         )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  en çok stok:",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+        for (city, product, qty) in entries.iter().take(3) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:>4}", qty),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:<10}", product),
+                    Style::default().fg(product_color(*product)),
+                ),
+                Span::styled(
+                    format!("@ {}", city_short(*city)),
+                    Style::default().fg(Color::Blue),
+                ),
+            ]));
+        }
+        if entries.len() > 3 {
+            lines.push(Line::from(Span::styled(
+                format!("  … +{} satır ( m ile tam liste)", entries.len() - 3),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
     }
 
     let block = Block::default()
@@ -1755,72 +1790,108 @@ fn render_player_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     f.render_widget(para, area);
 }
 
+/// Para kısa formatı — skor dökümü gibi dar alanlar için.
+/// 12 345 678 cent → "123k", 1_234_567_890 → "12.3M".
+fn compact_money(money: Money) -> String {
+    let cents = money.as_cents();
+    let abs = cents.unsigned_abs();
+    let sign = if cents < 0 { "-" } else { "" };
+    let lira = abs / 100;
+    if lira >= 1_000_000 {
+        format!("{sign}{:.1}M", lira as f64 / 1_000_000.0)
+    } else if lira >= 10_000 {
+        format!("{sign}{}k", lira / 1_000)
+    } else if lira >= 1_000 {
+        format!("{sign}{:.1}k", lira as f64 / 1_000.0)
+    } else {
+        format!("{sign}{lira}")
+    }
+}
+
 fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let header_row = Row::new(vec!["Şehir", "Ürün", "Son Fiyat", "Δ", "Son5 Avg"]).style(
+    // Matrix layout: ürün satır, şehir sütun — çok daha kompakt.
+    // Hücre = fiyat + ok (↑/↓/—) rengiyle.
+    let mut header = vec![ratatui::text::Text::from(Span::styled(
+        "Ürün",
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-    );
+    ))];
+    for city in CityId::ALL {
+        header.push(ratatui::text::Text::from(Span::styled(
+            city_short(city),
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )));
+    }
+    let header_row = Row::new(header);
 
     let mut rows: Vec<Row> = Vec::new();
-    for city in CityId::ALL {
-        for product in ProductKind::ALL {
+    let mut any_price = false;
+    for product in ProductKind::ALL {
+        let mut cells: Vec<ratatui::text::Text> = vec![ratatui::text::Text::from(Span::styled(
+            format!("{product}"),
+            Style::default()
+                .fg(product_color(product))
+                .add_modifier(Modifier::BOLD),
+        ))];
+        for city in CityId::ALL {
             let key = (city, product);
-            let hist = app.state.price_history.get(&key);
-            let last = hist.and_then(|v| v.last()).map(|(_, p)| *p);
-            let avg = app.state.rolling_avg_price(city, product, 5);
+            let last = app
+                .state
+                .price_history
+                .get(&key)
+                .and_then(|v| v.last())
+                .map(|(_, p)| *p);
             let Some(price) = last else {
+                cells.push(ratatui::text::Text::from(Span::styled(
+                    "  —",
+                    Style::default().fg(Color::DarkGray),
+                )));
                 continue;
             };
+            any_price = true;
             let prev = app.prev_prices.get(&key).copied();
             let delta = prev.map_or(0, |p| price.as_cents() - p.as_cents());
-            let delta_style = if delta > 0 {
-                Style::default().fg(Color::Green)
+            let (arrow, color) = if delta > 0 {
+                ("↑", Color::Green)
             } else if delta < 0 {
-                Style::default().fg(Color::Red)
+                ("↓", Color::Red)
             } else {
-                Style::default().fg(Color::DarkGray)
+                ("·", Color::DarkGray)
             };
-            let delta_str = if delta == 0 {
-                "—".to_string()
-            } else {
-                format!(
-                    "{}{:.2}",
-                    if delta > 0 { "+" } else { "-" },
-                    (delta.abs() as f64) / 100.0
-                )
-            };
-            rows.push(Row::new(vec![
-                ratatui::text::Text::from(Span::styled(
-                    city_short(city),
-                    Style::default().fg(Color::Blue),
-                )),
-                ratatui::text::Text::from(Span::styled(
-                    format!("{product}"),
-                    Style::default().fg(product_color(product)),
-                )),
-                ratatui::text::Text::from(format!("{price}")),
-                ratatui::text::Text::from(Span::styled(delta_str, delta_style)),
-                ratatui::text::Text::from(avg.map_or("—".to_string(), |m| format!("{m}"))),
-            ]));
+            let cell = Line::from(vec![
+                Span::styled(
+                    format!("{}", price),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!(" {arrow}"), Style::default().fg(color)),
+            ]);
+            cells.push(ratatui::text::Text::from(cell));
         }
+        rows.push(Row::new(cells));
     }
 
-    if rows.is_empty() {
-        rows.push(Row::new(vec!["—", "(Henüz clearing olmadı)", "", "", ""]));
+    if !any_price {
+        rows = vec![Row::new(vec![ratatui::text::Text::from(Span::styled(
+            "(henüz clearing olmadı — SPACE ile tick)",
+            Style::default().fg(Color::DarkGray),
+        ))])];
     }
 
     let widths = [
-        Constraint::Length(10),
         Constraint::Length(12),
-        Constraint::Length(10),
-        Constraint::Length(8),
-        Constraint::Length(10),
+        Constraint::Min(10),
+        Constraint::Min(10),
+        Constraint::Min(10),
     ];
     let table = Table::new(rows, widths).header(header_row).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Pazar ")
+            .title(" Pazar (fiyatlar / tick) ")
             .border_style(Style::default().fg(Color::Yellow)),
     );
     f.render_widget(table, area);
@@ -1902,6 +1973,98 @@ fn render_log_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .border_style(Style::default().fg(Color::Green)),
     );
     f.render_widget(list, area);
+}
+
+/// Command mode sırasında leaderboard satırı yerine açılan akıllı hint.
+/// Tampondaki ilk kelimeye göre kullanım örneği gösterir.
+fn render_command_hint(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let Mode::Command { buffer } = &app.mode else {
+        return;
+    };
+    let first = buffer
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    let (label, example) = hint_for(&first);
+    let line = Line::from(vec![
+        Span::styled(
+            " ℹ  ",
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            label,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled(example, Style::default().fg(Color::Gray)),
+    ]);
+    let block = Block::default().borders(Borders::TOP | Borders::BOTTOM);
+    f.render_widget(Paragraph::new(line).block(block), area);
+}
+
+fn hint_for(cmd: &str) -> (&'static str, &'static str) {
+    match cmd {
+        "" => (
+            "komut yaz (Enter ile gönder)",
+            "örn:  buy istanbul pamuk 20 7   |   help için '?'",
+        ),
+        "buy" | "b" => (
+            "buy <şehir> <ürün> <miktar> <fiyat>",
+            "örn:  buy istanbul pamuk 20 7",
+        ),
+        "sell" | "s" => (
+            "sell <şehir> <ürün> <miktar> <fiyat>",
+            "örn:  sell istanbul kumas 10 18",
+        ),
+        "cancel" => (
+            "cancel <order_id>",
+            "açık emri geri çek (m ile order_id'leri gör)",
+        ),
+        "build" => (
+            "build <şehir> <bitmiş_ürün>",
+            "örn:  build istanbul kumas (Sanayici tekeli)",
+        ),
+        "caravan" | "kervan" => (
+            "caravan <başlangıç_şehri>",
+            "örn:  caravan istanbul (kervan satın al)",
+        ),
+        "ship" | "dispatch" => (
+            "ship <caravan_id> <from> <to> <ürün> <miktar>",
+            "örn:  ship 1 istanbul ankara pamuk 20",
+        ),
+        "loan" | "kredi" => (
+            "loan <miktar_lira> <vade_tick>",
+            "örn:  loan 10000 30 (%15 sabit faiz)",
+        ),
+        "repay" | "ode" => ("repay <loan_id>", "açık krediyi öde (m ile loan_id'yi gör)"),
+        "news" | "haber" => (
+            "news <bronze|silver|gold>",
+            "abonelik değiştir (Tüccar Silver bedava)",
+        ),
+        "offer" | "propose" => (
+            "offer <ürün> <qty> <fiyat> <şehir> <delivery_tick>",
+            "örn:  offer kumas 10 18 istanbul 15 (public kontrat)",
+        ),
+        "accept" => (
+            "accept <contract_id>",
+            "kontrat önerisini kabul et (m ile id'yi gör)",
+        ),
+        "withdraw" => (
+            "withdraw <contract_id>",
+            "kendi önerini geri çek (yalnız Proposed)",
+        ),
+        _ => (
+            "bilinmeyen komut",
+            "? ile yardım  |  örn: buy istanbul pamuk 20 7",
+        ),
+    }
 }
 
 fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2355,16 +2518,6 @@ fn describe_command(cmd: &Command) -> String {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn kv(label: &str, value: &str, color: Color) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<10}"), Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            value.to_string(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-    ])
-}
 
 fn role_color(role: Role) -> Color {
     match role {
