@@ -124,6 +124,9 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
             KeyCode::Char('1') => app.start_game(Role::Sanayici),
             KeyCode::Char('2') => app.start_game(Role::Tuccar),
+            KeyCode::Char('p') => {
+                app.selected_preset = app.selected_preset.next();
+            }
             _ => {}
         },
         Mode::Normal => match code {
@@ -206,12 +209,45 @@ struct App {
     prev_prices: std::collections::BTreeMap<(CityId, ProductKind), Money>,
     auto_sim: bool,
     mode: Mode,
+    /// Startup ekranında seçilen preset (oyun başlayınca `state.config`'e yazılır).
+    selected_preset: PresetChoice,
     /// İnsan komutları — tick ilerledikçe NPC komutlarıyla birlikte advance'e iletilir.
     pending_human_cmds: Vec<Command>,
     /// Tek seferlik status satırı (başarı/hata). Bir sonraki tick'te temizlenir.
     status: Option<StatusMsg>,
     /// Human `OrderId` sayacı — her yeni order için monoton artar.
     next_human_order_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresetChoice {
+    Hizli,
+    Standart,
+    Uzun,
+}
+
+impl PresetChoice {
+    fn config(self) -> RoomConfig {
+        match self {
+            Self::Hizli => RoomConfig::hizli(),
+            Self::Standart => RoomConfig::standart(),
+            Self::Uzun => RoomConfig::uzun(),
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Hizli => "Hızlı (90 tick, ~1.5 saat)",
+            Self::Standart => "Standart (150 tick, ~3 gün)",
+            Self::Uzun => "Uzun (350 tick, ~14 gün)",
+        }
+    }
+    fn next(self) -> Self {
+        match self {
+            Self::Hizli => Self::Standart,
+            Self::Standart => Self::Uzun,
+            Self::Uzun => Self::Hizli,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +274,7 @@ impl App {
             prev_prices: std::collections::BTreeMap::new(),
             auto_sim: false,
             mode: Mode::Startup,
+            selected_preset: PresetChoice::Hizli,
             pending_human_cmds: Vec::new(),
             status: None,
             next_human_order_id: 1,
@@ -245,7 +282,7 @@ impl App {
     }
 
     fn start_game(&mut self, role: Role) {
-        self.state = seed_world(role);
+        self.state = seed_world(role, self.selected_preset.config());
         self.mode = Mode::Normal;
         let role_name = match role {
             Role::Sanayici => "Sanayici",
@@ -337,8 +374,8 @@ impl App {
 // Dünya kurulumu
 // ---------------------------------------------------------------------------
 
-fn seed_world(human_role: Role) -> GameState {
-    let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+fn seed_world(human_role: Role, config: RoomConfig) -> GameState {
+    let mut s = GameState::new(RoomId::new(1), config);
 
     // İnsan oyuncu — rol'e göre özelleştirilmiş başlangıç paketi.
     let (starting_cash, human_name) = match human_role {
@@ -420,7 +457,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
 
     // Startup ekranı — tüm alanı kaplar, oyun paneli yok.
     if matches!(app.mode, Mode::Startup) {
-        render_startup(f, area);
+        render_startup(f, area, app);
         return;
     }
 
@@ -447,12 +484,12 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
     }
 }
 
-fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect) {
+fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let popup = centered_rect(80, 90, area);
 
     let title_block = Block::default()
         .borders(Borders::ALL)
-        .title(" 💰 MoneyWar — Rolünü Seç 💰 ")
+        .title(" 💰  MoneyWar  —  Yeni Sezon  💰 ")
         .border_style(
             Style::default()
                 .fg(Color::Yellow)
@@ -462,6 +499,25 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect) {
     f.render_widget(title_block, popup);
 
     let lines = vec![
+        Line::from(Span::styled(
+            "  ╔══════════════════════════════════════════════════════════╗",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "  ║  tick-tabanlı ekonomi simülasyonu  —  2-5 oyuncu ölçeği  ║",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "  ╚══════════════════════════════════════════════════════════╝",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Rolünü seç:",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::raw("  "),
@@ -492,12 +548,30 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect) {
         Line::from("      • Haber Gümüş bedava — bilgi avantajı"),
         Line::from("      • Oynayış: aktif, fırsatçı, hızlı karar"),
         Line::from(""),
+        Line::from(vec![
+            Span::styled("  ⚙️   Preset: ", Style::default().fg(Color::White)),
+            Span::styled(
+                app.selected_preset.label(),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   ("),
+            Span::styled(
+                "p",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ile değiştir)"),
+        ]),
+        Line::from(""),
         Line::from(Span::styled(
-            "  Skor formülü = Nakit + Stok×ort.fiyat + Fabrika×0.5 + Escrow",
+            "  Skor = Nakit + Stok × ort.fiyat + Fabrika × 0.5 + Aktif escrow",
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(Span::styled(
-            "  Hedef: 90 tick sonunda leaderboard'da #1",
+            "  Hedef: sezon sonunda leaderboard'da #1",
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(""),
@@ -510,7 +584,7 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect) {
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" Sanayici      "),
+            Span::raw(" Sanayici    "),
             Span::styled(
                 " 2 ",
                 Style::default()
@@ -518,7 +592,15 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect) {
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" Tüccar      "),
+            Span::raw(" Tüccar    "),
+            Span::styled(
+                " p ",
+                Style::default()
+                    .bg(Color::Magenta)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" preset    "),
             Span::styled(" q ", Style::default().bg(Color::DarkGray).fg(Color::White)),
             Span::raw(" çık"),
         ]),
