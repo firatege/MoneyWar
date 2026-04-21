@@ -120,6 +120,12 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
 /// Tuşu mod'a göre işle. Dönüş: `true` → çık.
 fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
     match app.mode.clone() {
+        Mode::Startup => match code {
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+            KeyCode::Char('1') => app.start_game(Role::Sanayici),
+            KeyCode::Char('2') => app.start_game(Role::Tuccar),
+            _ => {}
+        },
         Mode::Normal => match code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
             KeyCode::Char(' ') => app.step_one_tick(),
@@ -183,8 +189,12 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
 
 #[derive(Debug, Clone)]
 enum Mode {
+    /// Oyun başlangıcı — rol seçimi bekleniyor.
+    Startup,
     Normal,
-    Command { buffer: String },
+    Command {
+        buffer: String,
+    },
     Help,
     Info,
 }
@@ -219,18 +229,31 @@ enum StatusKind {
 
 impl App {
     fn new() -> Self {
-        let state = seed_world();
+        // Boş state; gerçek dünya `start_game(role)` ile kurulur.
+        let state = GameState::new(RoomId::new(1), RoomConfig::hizli());
         Self {
             state,
             last_tick_log: Vec::new(),
             recent_news: Vec::new(),
             prev_prices: std::collections::BTreeMap::new(),
             auto_sim: false,
-            mode: Mode::Normal,
+            mode: Mode::Startup,
             pending_human_cmds: Vec::new(),
             status: None,
             next_human_order_id: 1,
         }
+    }
+
+    fn start_game(&mut self, role: Role) {
+        self.state = seed_world(role);
+        self.mode = Mode::Normal;
+        let role_name = match role {
+            Role::Sanayici => "Sanayici",
+            Role::Tuccar => "Tüccar",
+        };
+        self.set_status_ok(format!(
+            "Hoşgeldin {role_name}! `i` nasıl oynanır, `?` komutlar, SPACE tick."
+        ));
     }
 
     fn next_order_id(&mut self) -> OrderId {
@@ -314,22 +337,31 @@ impl App {
 // Dünya kurulumu
 // ---------------------------------------------------------------------------
 
-fn seed_world() -> GameState {
+fn seed_world(human_role: Role) -> GameState {
     let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
 
-    // İnsan — Sanayici, İstanbul'da pamuk stoğu + nakit.
+    // İnsan oyuncu — rol'e göre özelleştirilmiş başlangıç paketi.
+    let (starting_cash, human_name) = match human_role {
+        // Sanayici: daha az nakit, İstanbul'da pamuk stoğu (fabrika beslemesi için).
+        Role::Sanayici => (50_000_i64, "Sen (Sanayici)"),
+        // Tüccar: bol nakit (kervan + arbitraj sermayesi), az stok.
+        Role::Tuccar => (80_000_i64, "Sen (Tüccar)"),
+    };
     let mut human = Player::new(
         HUMAN_ID,
-        "Sen",
-        Role::Sanayici,
-        Money::from_lira(50_000).unwrap(),
+        human_name,
+        human_role,
+        Money::from_lira(starting_cash).unwrap(),
         false,
     )
     .unwrap();
-    human
-        .inventory
-        .add(CityId::Istanbul, ProductKind::Pamuk, 100)
-        .unwrap();
+    // Sanayici fabrikasını besleyebilmek için pamuk stoğu ile başlar.
+    if matches!(human_role, Role::Sanayici) {
+        human
+            .inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+            .unwrap();
+    }
     s.players.insert(human.id, human);
 
     // NPC #1 — Tüccar satıcı (bol stok).
@@ -386,6 +418,12 @@ fn seed_world() -> GameState {
 fn render(f: &mut ratatui::Frame<'_>, app: &App) {
     let area = f.area();
 
+    // Startup ekranı — tüm alanı kaplar, oyun paneli yok.
+    if matches!(app.mode, Mode::Startup) {
+        render_startup(f, area);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -407,6 +445,87 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Info => render_info_overlay(f, area),
         _ => {}
     }
+}
+
+fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect) {
+    let popup = centered_rect(80, 90, area);
+
+    let title_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 💰 MoneyWar — Rolünü Seç 💰 ")
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = title_block.inner(popup);
+    f.render_widget(title_block, popup);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "🏭  1) Sanayici",
+                Style::default()
+                    .fg(Color::Rgb(210, 140, 80))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from("      • Fabrika kurar — ham maddeyi bitmiş ürüne çevirir (tekel)"),
+        Line::from("      • Başlangıç: 50.000₺ + İstanbul'da 100 pamuk"),
+        Line::from("      • Kervan kapasite: 20 (küçük, yakın mesafe)"),
+        Line::from("      • Oynayış: pasif gelir, üretim + yavaş büyüme"),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "🚚  2) Tüccar",
+                Style::default()
+                    .fg(Color::Rgb(120, 180, 240))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from("      • Arbitraj — ucuz şehirden al, pahalı şehirde sat"),
+        Line::from("      • Başlangıç: 80.000₺ (kervan + sermaye)"),
+        Line::from("      • Kervan kapasite: 50 (büyük, uzak mesafe)"),
+        Line::from("      • Haber Gümüş bedava — bilgi avantajı"),
+        Line::from("      • Oynayış: aktif, fırsatçı, hızlı karar"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Skor formülü = Nakit + Stok×ort.fiyat + Fabrika×0.5 + Escrow",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "  Hedef: 90 tick sonunda leaderboard'da #1",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                " 1 ",
+                Style::default()
+                    .bg(Color::Rgb(210, 140, 80))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Sanayici      "),
+            Span::styled(
+                " 2 ",
+                Style::default()
+                    .bg(Color::Rgb(120, 180, 240))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Tüccar      "),
+            Span::styled(" q ", Style::default().bg(Color::DarkGray).fg(Color::White)),
+            Span::raw(" çık"),
+        ]),
+    ];
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
