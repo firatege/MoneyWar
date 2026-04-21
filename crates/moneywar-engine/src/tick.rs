@@ -23,7 +23,7 @@
 //! | **4B** ✅ | `process_buy_caravan`/`process_dispatch_caravan` + `transport::advance_caravans` |
 //! | **5** ✅ | `contracts::{process_propose/accept/cancel + advance_contracts}` — Anlaşma Masası |
 //! | **5.5** ✅ | `loans::{process_take_loan, process_repay_loan, advance_loans}` — NPC banka |
-//! | 6 | `process_subscribe_news` + sistem eventleri |
+//! | **6** ✅ | `news::process_subscribe_news` + `events::advance_events` — haber + olay motoru |
 
 use crate::{
     contracts::{
@@ -32,10 +32,12 @@ use crate::{
         process_propose_contract as propose_contract_impl,
     },
     error::EngineError,
+    events::advance_events,
     loans::{
         advance_loans, process_repay_loan as repay_loan_impl, process_take_loan as take_loan_impl,
     },
     market::clear_markets,
+    news::process_subscribe_news as subscribe_news_impl,
     production::{advance_production, process_build_factory as build_factory_impl},
     report::{LogEntry, TickReport},
     rng::rng_for,
@@ -45,8 +47,7 @@ use crate::{
     },
 };
 use moneywar_domain::{
-    CityId, Command, DomainError, GameState, MarketOrder, NewsTier, OrderId, PlayerId, ProductKind,
-    Tick,
+    CityId, Command, DomainError, GameState, MarketOrder, OrderId, PlayerId, ProductKind, Tick,
 };
 
 /// Motoru bir tick ileri sarar.
@@ -67,10 +68,9 @@ pub fn advance_tick(
 ) -> Result<(GameState, TickReport), EngineError> {
     let next_tick = state.current_tick.next();
     let mut new_state = state.clone();
-    // RNG şimdilik kullanılmıyor; Faz 6 olay/haber tetikleyicileri devreye
-    // alındığında burada üretilip alt geçitlere iletilecek. Determinism
-    // garanti için seed'i burada tutuyoruz.
-    let _rng = rng_for(state.room_id, next_tick);
+    // Deterministik RNG — `(room_id, tick)`'ten türetilir. Faz 6 olay motoru
+    // bu RNG'yi kullanır.
+    let mut rng = rng_for(state.room_id, next_tick);
     let mut report = TickReport::new(next_tick);
 
     for cmd in commands {
@@ -86,12 +86,14 @@ pub fn advance_tick(
         }
     }
 
-    // Tick kapanışı sırası (Faz 5.5):
+    // Tick kapanışı sırası (Faz 6):
+    //   0. Olay motoru — RNG ile yeni olay tetikle, abonelere haber dağıt.
     //   1. Üretim
     //   2. Taşıma
     //   3. Kontratlar (fulfill/breach)
-    //   4. Krediler (vadesi gelen auto-settle — nakit varsa repay, yoksa default)
+    //   4. Krediler (vadesi gelen auto-settle)
     //   5. Hal Pazarı clearing
+    advance_events(&mut new_state, &mut rng, &mut report, next_tick);
     advance_production(&mut new_state, &mut report, next_tick);
     advance_caravans(&mut new_state, &mut report, next_tick);
     advance_contracts(&mut new_state, &mut report, next_tick);
@@ -154,7 +156,9 @@ fn dispatch(
             to,
             cargo,
         } => dispatch_caravan_impl(state, report, tick, *caravan_id, *from, *to, cargo),
-        Command::SubscribeNews { player, tier } => process_subscribe_news(state, *player, *tier),
+        Command::SubscribeNews { player, tier } => {
+            subscribe_news_impl(state, report, tick, *player, *tier)
+        }
         Command::TakeLoan {
             player,
             amount,
@@ -244,16 +248,6 @@ fn process_cancel_order(
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn process_subscribe_news(
-    _state: &mut GameState,
-    _player: PlayerId,
-    _tier: NewsTier,
-) -> Result<(), EngineError> {
-    // FAZ 6: abonelik tier'ını güncelle, Tüccar için Silver bedava.
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,8 +278,11 @@ mod tests {
         let s0 = state();
         let (s1, report) = advance_tick(&s0, &[]).unwrap();
         assert_eq!(s1.current_tick, Tick::new(1));
-        assert!(report.entries.is_empty());
         assert_eq!(report.tick, Tick::new(1));
+        // Faz 6: olay motoru RNG ile event üretebilir; komut sayısı sıfır
+        // olduğu için accepted/rejected sıfır olmalı — sistem event'leri olabilir.
+        assert_eq!(report.accepted_count(), 0);
+        assert_eq!(report.rejected_count(), 0);
     }
 
     #[test]

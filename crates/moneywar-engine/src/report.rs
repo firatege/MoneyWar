@@ -11,8 +11,8 @@
 //! hangi komutun reddedildiğini ölçebilirsin, rol bazlı `PnL` çıkarabilirsin.
 
 use moneywar_domain::{
-    CaravanId, CityId, Command, ContractId, ContractState, FactoryId, ListingKind, LoanId, Money,
-    OrderId, PlayerId, ProductKind, Tick,
+    CaravanId, CityId, Command, ContractId, ContractState, EventId, FactoryId, GameEvent,
+    ListingKind, LoanId, Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -343,6 +343,36 @@ impl LogEntry {
                 contract_id,
                 seller,
                 refunded_deposit,
+            },
+        }
+    }
+
+    /// Oyuncu haber aboneliği değiştirdi (cost = 0 olabilir — Tuccar Silver).
+    #[must_use]
+    pub fn news_subscribed(tick: Tick, player: PlayerId, tier: NewsTier, cost: Money) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::NewsSubscribed { player, tier, cost },
+        }
+    }
+
+    /// Motor RNG ile yeni bir olay zamanladı. Abone oyunculara haberi,
+    /// tier lead-time'ına göre inbox'larına düştü (bkz. `state.news_inbox`).
+    #[must_use]
+    pub fn event_scheduled(
+        tick: Tick,
+        event_id: EventId,
+        game_event: GameEvent,
+        event_tick: Tick,
+    ) -> Self {
+        Self {
+            tick,
+            actor: None,
+            event: LogEvent::EventScheduled {
+                event_id,
+                game_event,
+                event_tick,
             },
         }
     }
@@ -684,6 +714,22 @@ pub enum LogEvent {
         borrower: PlayerId,
         seized: Money,
         unpaid_balance: Money,
+    },
+
+    /// Oyuncu haber tier aboneliği değiştirdi. Tuccar için Silver bedavadır.
+    NewsSubscribed {
+        player: PlayerId,
+        tier: NewsTier,
+        cost: Money,
+    },
+
+    /// Motor yeni olay zamanladı. Abonelere `NewsItem` olarak inbox'a düştü.
+    /// v1'de olayın piyasaya otomatik etkisi YOK (haber + bilgi asimetrisi
+    /// kurgusu çalışıyor); etki v1.1'de gelebilir.
+    EventScheduled {
+        event_id: EventId,
+        game_event: GameEvent,
+        event_tick: Tick,
     },
 }
 

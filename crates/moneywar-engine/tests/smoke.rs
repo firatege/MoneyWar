@@ -23,7 +23,9 @@ fn advance_tick_empty_cmds_increments_tick() {
     let (s1, report) = advance_tick(&s0, &[]).expect("ok");
     assert_eq!(s1.current_tick, Tick::new(1));
     assert_eq!(report.tick, Tick::new(1));
-    assert!(report.entries.is_empty());
+    // Faz 6: komutlar boş ama sistem event'leri (olay motoru) olabilir.
+    assert_eq!(report.accepted_count(), 0);
+    assert_eq!(report.rejected_count(), 0);
 }
 
 #[test]

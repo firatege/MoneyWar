@@ -27,8 +27,10 @@
 
 mod contracts;
 mod error;
+mod events;
 mod loans;
 mod market;
+mod news;
 mod production;
 mod report;
 mod rng;
