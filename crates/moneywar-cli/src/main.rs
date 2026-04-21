@@ -113,6 +113,10 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
 
         if app.game_over() {
             app.auto_sim = false;
+            // Normal mode'dayken otomatik GameOver'a geç — oyun zaten bitmiş.
+            if matches!(app.mode, Mode::Normal) {
+                app.mode = Mode::GameOver;
+            }
         }
     }
 }
@@ -147,6 +151,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             KeyCode::Char('?') | KeyCode::Char('h') => app.mode = Mode::Help,
             KeyCode::Char('i') => app.mode = Mode::Info,
+            KeyCode::Char('m') => app.mode = Mode::Holdings,
             _ => {}
         },
         Mode::Command { mut buffer } => match code {
@@ -176,10 +181,14 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => app.mode = Mode::Command { buffer },
         },
-        Mode::Help | Mode::Info => match code {
+        Mode::Help | Mode::Info | Mode::Holdings => match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.mode = Mode::Normal;
             }
+            _ => {}
+        },
+        Mode::GameOver => match code {
+            KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
             _ => {}
         },
     }
@@ -200,6 +209,10 @@ enum Mode {
     },
     Help,
     Info,
+    /// Varlıklarım overlay — m ile açılır.
+    Holdings,
+    /// Sezon sonu reveal — 90. tick'te otomatik açılır, tüm skorlar görünür.
+    GameOver,
 }
 
 struct App {
@@ -476,10 +489,12 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
     render_leaderboard(f, chunks[2], app);
     render_footer(f, chunks[3], app);
 
-    // Overlay'ler (Help/Info) — ortada popup, arkaplanı temizle.
+    // Overlay'ler — ortada popup, arkaplanı temizle.
     match app.mode {
         Mode::Help => render_help_overlay(f, area),
         Mode::Info => render_info_overlay(f, area),
+        Mode::Holdings => render_holdings_overlay(f, area, app),
+        Mode::GameOver => render_game_over_overlay(f, area, app),
         _ => {}
     }
 }
@@ -647,6 +662,10 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
         ),
         help_kv("s", "Auto-sim aç/kapa (her 300ms tick)"),
         help_kv(":", "Komut moduna gir (metin yaz, Enter ile gönder)"),
+        help_kv(
+            "m",
+            "Varlıklarım (emir / fabrika / kervan / kontrat / kredi)",
+        ),
         help_kv("?  /  h", "Bu yardım ekranı"),
         help_kv("i", "Oyun kuralları / nasıl oynanır"),
         help_kv("q  /  Esc", "Çık (overlay açıksa kapatır)"),
@@ -811,6 +830,512 @@ fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
         .block(block)
         .wrap(Wrap { trim: false });
     f.render_widget(para, popup);
+}
+
+fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(85, 90, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 💼  Varlıklarım ")
+        .border_style(Style::default().fg(Color::Green));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // --- Açık emirler ---
+    lines.push(Line::from(Span::styled(
+        "📋  Açık Emirler (book'ta, tick sonunda eşleşecek)",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let mut open_orders: Vec<&MarketOrder> = Vec::new();
+    for orders in app.state.order_book.values() {
+        for o in orders {
+            if o.player == HUMAN_ID {
+                open_orders.push(o);
+            }
+        }
+    }
+    if open_orders.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok — `:buy` veya `:sell` ile emir gir)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for o in open_orders {
+            let side_color = if matches!(o.side, OrderSide::Buy) {
+                Color::Green
+            } else {
+                Color::Red
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{:<3}", o.id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!(
+                        "{:<4}",
+                        if matches!(o.side, OrderSide::Buy) {
+                            "BUY"
+                        } else {
+                            "SELL"
+                        }
+                    ),
+                    Style::default().fg(side_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:>4} ", o.quantity),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("{:<10}", o.product),
+                    Style::default().fg(product_color(o.product)),
+                ),
+                Span::raw("@ "),
+                Span::styled(
+                    format!("{}", o.unit_price),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("({})", city_short(o.city)),
+                    Style::default().fg(Color::Blue),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // --- Fabrikalar ---
+    lines.push(Line::from(Span::styled(
+        "🏭  Fabrikalar",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let mut my_factories: Vec<&moneywar_domain::Factory> = app
+        .state
+        .factories
+        .values()
+        .filter(|f| f.owner == HUMAN_ID)
+        .collect();
+    my_factories.sort_by_key(|f| f.id);
+    if my_factories.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok — `:build <şehir> <bitmiş_ürün>` ile kur, ilki bedava)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for factory in my_factories {
+            let is_idle = factory.is_atil(
+                app.state.current_tick,
+                moneywar_engine::IDLE_FACTORY_THRESHOLD,
+            );
+            let last = factory
+                .last_production_tick
+                .map_or_else(|| "hiç".into(), |t| format!("tick {}", t.value()));
+            let pending = factory.pending_units();
+            let status_color = if is_idle { Color::Red } else { Color::Green };
+            let status_label = if is_idle { "ATIL" } else { "ÜRETİYOR" };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{:<3}", factory.id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{:<10}", factory.product),
+                    Style::default().fg(product_color(factory.product)),
+                ),
+                Span::styled(
+                    format!("{:<10}", city_short(factory.city)),
+                    Style::default().fg(Color::Blue),
+                ),
+                Span::raw("son üretim: "),
+                Span::styled(format!("{:<12}", last), Style::default().fg(Color::Gray)),
+                Span::raw("batches: "),
+                Span::styled(format!("{pending:<3}"), Style::default().fg(Color::Magenta)),
+                Span::raw("  "),
+                Span::styled(
+                    format!(" {status_label} "),
+                    Style::default()
+                        .bg(status_color)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // --- Kervanlar ---
+    lines.push(Line::from(Span::styled(
+        "🚚  Kervanlar",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let mut my_caravans: Vec<&moneywar_domain::Caravan> = app
+        .state
+        .caravans
+        .values()
+        .filter(|c| c.owner == HUMAN_ID)
+        .collect();
+    my_caravans.sort_by_key(|c| c.id);
+    if my_caravans.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok — `:caravan <şehir>` ile al)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for caravan in my_caravans {
+            let state_desc = match &caravan.state {
+                moneywar_domain::CaravanState::Idle { location } => {
+                    format!("IDLE  @ {}", city_short(*location))
+                }
+                moneywar_domain::CaravanState::EnRoute {
+                    from,
+                    to,
+                    arrival_tick,
+                    cargo,
+                } => {
+                    format!(
+                        "EN ROUTE  {}→{}  varış: tick {}  yük: {}",
+                        city_short(*from),
+                        city_short(*to),
+                        arrival_tick.value(),
+                        cargo.total_units()
+                    )
+                }
+            };
+            let color = if caravan.is_idle() {
+                Color::Gray
+            } else {
+                Color::Cyan
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{:<3}", caravan.id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("kap {:>3}  ", caravan.capacity),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::styled(state_desc, Style::default().fg(color)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // --- Aktif kontratlar ---
+    lines.push(Line::from(Span::styled(
+        "🤝  Aktif Kontratlar",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let my_contracts: Vec<&moneywar_domain::Contract> = app
+        .state
+        .contracts
+        .values()
+        .filter(|c| c.seller == HUMAN_ID || c.accepted_by == Some(HUMAN_ID))
+        .collect();
+    if my_contracts.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for c in my_contracts {
+            let role = if c.seller == HUMAN_ID {
+                "SATICI"
+            } else {
+                "ALICI"
+            };
+            let state_str = match c.state {
+                moneywar_domain::ContractState::Proposed => "ÖNERİLDİ".to_string(),
+                moneywar_domain::ContractState::Active => "AKTİF".to_string(),
+                moneywar_domain::ContractState::Fulfilled => "TESLİM".to_string(),
+                moneywar_domain::ContractState::Breached { .. } => "BREACH".to_string(),
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{:<3}", c.id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{:<7}", role),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:>4} ", c.quantity),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("{:<10}", c.product),
+                    Style::default().fg(product_color(c.product)),
+                ),
+                Span::raw("@ "),
+                Span::styled(
+                    format!("{}", c.unit_price),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("({})", city_short(c.delivery_city)),
+                    Style::default().fg(Color::Blue),
+                ),
+                Span::raw(" teslim: "),
+                Span::styled(
+                    format!("tick {}", c.delivery_tick.value()),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!(" {state_str} "),
+                    Style::default()
+                        .bg(Color::Cyan)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // --- Aktif krediler ---
+    lines.push(Line::from(Span::styled(
+        "💰  Aktif Krediler",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let my_loans: Vec<&moneywar_domain::Loan> = app
+        .state
+        .loans
+        .values()
+        .filter(|l| l.borrower == HUMAN_ID && !l.repaid)
+        .collect();
+    if my_loans.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok — `:loan <miktar> <vade>` ile al, %15 faiz)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for l in my_loans {
+            let due = l.total_due().unwrap_or(Money::ZERO);
+            let ticks_left = l
+                .due_tick
+                .value()
+                .saturating_sub(app.state.current_tick.value());
+            let urgency = if ticks_left <= 2 {
+                Color::Red
+            } else {
+                Color::Yellow
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{:<3}", l.id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw("principal: "),
+                Span::styled(
+                    format!("{}", l.principal),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw("  borç: "),
+                Span::styled(
+                    format!("{}", due),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  vade: "),
+                Span::styled(
+                    format!("tick {}", l.due_tick.value()),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::raw("  kalan: "),
+                Span::styled(
+                    format!("{ticks_left}t"),
+                    Style::default().fg(urgency).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Herhangi bir tuşa bas → kapat",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(85, 90, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ★  SEZON SONU  —  REVEAL  ★ ")
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let board = leaderboard(&app.state);
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "         🏁  90 tick bitti — rakamlar açılıyor  🏁",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    // Kazanan dev başlık
+    if let Some(winner) = board.first() {
+        let name = app
+            .state
+            .players
+            .get(&winner.player_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::raw("      "),
+            Span::styled(
+                format!("🥇  Şampiyon: {}", name),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("{}", winner.total),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Detay tablo başlığı
+    lines.push(Line::from(Span::styled(
+        "  Sıra  Oyuncu              Nakit      Stok       Fabrika    Escrow     TOPLAM",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    for (idx, sc) in board.iter().enumerate() {
+        let name = app
+            .state
+            .players
+            .get(&sc.player_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let medal = match idx {
+            0 => "🥇",
+            1 => "🥈",
+            2 => "🥉",
+            _ => "  ",
+        };
+        let is_human = sc.player_id == HUMAN_ID;
+        let row_style = if is_human {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if idx == 0 {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  {medal} {:<2}   {:<18}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}",
+                idx + 1,
+                name,
+                format!("{}", sc.cash),
+                format!("{}", sc.stock_value),
+                format!("{}", sc.factory_value),
+                format!("{}", sc.escrow_value),
+                format!("{}", sc.total),
+            ),
+            row_style,
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    // Kendi yerini özellikle vurgula
+    if let Some(my) = board.iter().position(|s| s.player_id == HUMAN_ID) {
+        let my_sc = &board[my];
+        let rank = my + 1;
+        let comment = match rank {
+            1 => "🎉  Şampiyonsun! Stratejin işe yaradı.",
+            2 => "💪  İkincilik fena değil — sonraki sezona güçlü başlarsın.",
+            3 => "🥉  Podyumda yer aldın.",
+            r if r <= 5 => "👍  Top 5 — iyi bir sezon.",
+            _ => "📚  Kaybettin bu sezon — kalem dökümüne bak, nereyi kaçırdın?",
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  Senin yerin: #{rank}"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("{}", my_sc.total),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("  {comment}"),
+            Style::default().fg(Color::White),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  q veya Esc ile çık",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 fn help_kv(key: &str, desc: &str) -> Line<'static> {
@@ -1295,6 +1820,8 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Span::raw(" tick  "),
                 hotkey(":"),
                 Span::raw(" komut  "),
+                hotkey("m"),
+                Span::raw(" varlık  "),
                 hotkey("s"),
                 Span::raw(" auto  "),
                 hotkey("?"),
