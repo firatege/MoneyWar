@@ -30,7 +30,8 @@
     clippy::unnested_or_patterns,
     clippy::unnecessary_wraps,
     clippy::single_match_else,
-    clippy::single_match
+    clippy::single_match,
+    clippy::enum_glob_use
 )]
 
 use std::io;
@@ -137,6 +138,81 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         Mode::Normal => match code {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Char(' ') => app.step_one_tick(),
+            KeyCode::Char(':') => {
+                app.mode = Mode::Command {
+                    buffer: String::new(),
+                };
+            }
+            KeyCode::Char('?') => app.mode = Mode::Help,
+            KeyCode::Char('i') => app.mode = Mode::Info,
+            KeyCode::Char('m') => app.mode = Mode::Holdings,
+            // Wizard kısayolları — tek tuşla aksiyon menüsü.
+            KeyCode::Char('b') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Buy),
+                };
+            }
+            KeyCode::Char('S') => {
+                // Büyük S: SAT (küçük 's' auto-sim için ayrılı, alttaki branch).
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Sell),
+                };
+            }
+            KeyCode::Char('f') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Build),
+                };
+            }
+            KeyCode::Char('c') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Caravan),
+                };
+            }
+            KeyCode::Char('d') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Ship),
+                };
+            }
+            KeyCode::Char('l') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Loan),
+                };
+            }
+            KeyCode::Char('r') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Repay),
+                };
+            }
+            KeyCode::Char('N') => {
+                // Büyük N: HABER abonelik (küçük 'n' news inbox için).
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::News),
+                };
+            }
+            KeyCode::Char('x') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Cancel),
+                };
+            }
+            KeyCode::Char('o') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Offer),
+                };
+            }
+            KeyCode::Char('a') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Accept),
+                };
+            }
+            KeyCode::Char('w') => {
+                app.mode = Mode::Wizard {
+                    wizard: Wizard::new(ActionKind::Withdraw),
+                };
+            }
+            // News inbox / haber penceresi: küçük n (kısayol çakışmasın
+            // diye haber ABONELİK büyük N'e taşındı).
+            KeyCode::Char('n') => app.mode = Mode::NewsInbox,
+            // Auto-sim — küçük s.
             KeyCode::Char('s') => {
                 app.auto_sim = !app.auto_sim;
                 app.set_status_info(if app.auto_sim {
@@ -145,15 +221,6 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                     "Auto-sim kapalı"
                 });
             }
-            KeyCode::Char(':') => {
-                app.mode = Mode::Command {
-                    buffer: String::new(),
-                };
-            }
-            KeyCode::Char('?') | KeyCode::Char('h') => app.mode = Mode::Help,
-            KeyCode::Char('i') => app.mode = Mode::Info,
-            KeyCode::Char('m') => app.mode = Mode::Holdings,
-            KeyCode::Char('n') => app.mode = Mode::NewsInbox,
             _ => {}
         },
         Mode::Command { mut buffer } => match code {
@@ -190,6 +257,26 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => {}
         },
+        Mode::Wizard { mut wizard } => {
+            match handle_wizard_key(app, &mut wizard, code) {
+                WizardOutcome::Continue => app.mode = Mode::Wizard { wizard },
+                WizardOutcome::Cancel => {
+                    app.mode = Mode::Normal;
+                    app.set_status_info("İptal edildi.");
+                }
+                WizardOutcome::Submitted(cmd) => {
+                    let label = describe_command(&cmd);
+                    app.pending_human_cmds.push(cmd);
+                    app.mode = Mode::Normal;
+                    app.set_status_ok(format!("→ {label}  (SPACE ile tick ilerlet)"));
+                }
+                WizardOutcome::Error(msg) => {
+                    // Wizard açık kalsın, hata gösterilsin.
+                    app.mode = Mode::Wizard { wizard };
+                    app.set_status_err(format!("Hata: {msg}"));
+                }
+            }
+        }
         Mode::GameOver => match code {
             KeyCode::Char('q') => return Ok(true),
             _ => {}
@@ -218,6 +305,157 @@ enum Mode {
     NewsInbox,
     /// Sezon sonu reveal — 90. tick'te otomatik açılır, tüm skorlar görünür.
     GameOver,
+    /// Tek-tuş aksiyon wizard — b/s/f/c/d/l/r/n/o/a/w/x ile açılır,
+    /// adım adım komut kurar, ezbere parametre gerektirmez.
+    Wizard {
+        wizard: Wizard,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Wizard sistemi — tek-tuş aksiyon menüleri
+// ---------------------------------------------------------------------------
+
+/// Wizard'ın hangi action'ı kurduğunu belirler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionKind {
+    Buy,
+    Sell,
+    Build,
+    Caravan,
+    Ship,
+    Loan,
+    Repay,
+    News,
+    Cancel,
+    Offer,
+    Accept,
+    Withdraw,
+}
+
+impl ActionKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Buy => "AL",
+            Self::Sell => "SAT",
+            Self::Build => "FABRİKA KUR",
+            Self::Caravan => "KERVAN AL",
+            Self::Ship => "KERVAN GÖNDER",
+            Self::Loan => "KREDİ AL",
+            Self::Repay => "KREDİ ÖDE",
+            Self::News => "HABER ABONELİĞİ",
+            Self::Cancel => "EMRİ İPTAL",
+            Self::Offer => "KONTRAT ÖNER",
+            Self::Accept => "KONTRAT KABUL",
+            Self::Withdraw => "KONTRAT GERİ ÇEK",
+        }
+    }
+    /// Bu aksiyonun kurulması için gereken alan zinciri (sırayla doldurulur).
+    fn schema(self) -> &'static [FieldKind] {
+        use FieldKind::*;
+        match self {
+            Self::Buy | Self::Sell => &[City, Product, QtyU32, PriceLira],
+            Self::Build => &[City, FinishedProduct],
+            Self::Caravan => &[City],
+            Self::Ship => &[CaravanId, CityFrom, CityTo, Product, QtyU32],
+            Self::Loan => &[AmountLira, DurationTicks],
+            Self::Repay => &[LoanId],
+            Self::News => &[NewsTier_],
+            Self::Cancel => &[OrderId_],
+            Self::Offer => &[Product, QtyU32, PriceLira, City, DeliveryTick],
+            Self::Accept | Self::Withdraw => &[ContractId_],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FieldKind {
+    City,
+    CityFrom,
+    CityTo,
+    Product,
+    FinishedProduct,
+    QtyU32,
+    PriceLira,
+    AmountLira,
+    DurationTicks,
+    DeliveryTick,
+    NewsTier_,
+    OrderId_,
+    CaravanId,
+    LoanId,
+    ContractId_,
+}
+
+impl FieldKind {
+    fn prompt(self) -> &'static str {
+        match self {
+            Self::City => "Şehir",
+            Self::CityFrom => "Nereden",
+            Self::CityTo => "Nereye",
+            Self::Product => "Ürün",
+            Self::FinishedProduct => "Bitmiş ürün",
+            Self::QtyU32 => "Miktar (birim)",
+            Self::PriceLira => "Birim fiyat (₺)",
+            Self::AmountLira => "Tutar (₺)",
+            Self::DurationTicks => "Vade (tick)",
+            Self::DeliveryTick => "Teslimat tick'i",
+            Self::NewsTier_ => "Tier",
+            Self::OrderId_ => "Açık emir seç",
+            Self::CaravanId => "Kervan seç (Idle)",
+            Self::LoanId => "Açık kredi seç",
+            Self::ContractId_ => "Kontrat seç",
+        }
+    }
+    /// Bu alan numerik text input mi (Number) yoksa seçim listesi mi (Pick)?
+    fn is_text(self) -> bool {
+        matches!(
+            self,
+            Self::QtyU32
+                | Self::PriceLira
+                | Self::AmountLira
+                | Self::DurationTicks
+                | Self::DeliveryTick
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FieldValue {
+    City(CityId),
+    Product(ProductKind),
+    Number(u64),
+    NewsTier(NewsTier),
+    OrderId(OrderId),
+    CaravanId(moneywar_domain::CaravanId),
+    LoanId(moneywar_domain::LoanId),
+    ContractId(moneywar_domain::ContractId),
+}
+
+#[derive(Debug, Clone)]
+struct Wizard {
+    kind: ActionKind,
+    fields: Vec<FieldValue>,
+    text_buf: String,
+}
+
+impl Wizard {
+    fn new(kind: ActionKind) -> Self {
+        Self {
+            kind,
+            fields: Vec::new(),
+            text_buf: String::new(),
+        }
+    }
+
+    /// Şu an doldurulması gereken alan. `None` → tüm alanlar tamam, confirm.
+    fn current(&self) -> Option<FieldKind> {
+        self.kind.schema().get(self.fields.len()).copied()
+    }
+
+    fn is_done(&self) -> bool {
+        self.fields.len() >= self.kind.schema().len()
+    }
 }
 
 struct App {
@@ -511,6 +749,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Holdings => render_holdings_overlay(f, area, app),
         Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
         Mode::GameOver => render_game_over_overlay(f, area, app),
+        Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
         _ => {}
     }
 }
@@ -691,13 +930,12 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     lines.extend([
         help_kv("SPACE", "Bir tick ilerlet (bekleyen komutlar + NPC'ler)"),
         help_kv("s", "Auto-sim aç/kapa (300ms tick)"),
-        help_kv(":", "Komut moduna gir (metin yaz, Enter ile gönder)"),
         help_kv(
             "m",
             "Varlıklarım (emir / fabrika / kervan / kontrat / kredi)",
         ),
         help_kv("n", "Haber kutusu"),
-        help_kv("?  /  h", "Bu yardım"),
+        help_kv("?", "Bu yardım"),
         help_kv("i", "Oyun kuralları"),
         help_kv("q", "Çıkış"),
         help_kv("Esc", "Overlay'i kapat (oyundan çıkmaz)"),
@@ -705,9 +943,41 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("⌨️   Komutlar — {}", role),
+        format!("🎯  Tek-tuş aksiyon menüleri — {}", role),
         Style::default()
             .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    lines.push(Line::from(Span::styled(
+        "    (sayı tuşları ile seçim, rakam tuşları ile sayı, Enter onay, Backspace geri)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    let mut shortcuts = vec![
+        help_kv("b", "🛒 AL — şehir × ürün × miktar × fiyat"),
+        help_kv("S", "💸 SAT (büyük S — küçük 's' auto-sim)"),
+    ];
+    if matches!(role, Role::Sanayici) {
+        shortcuts.push(help_kv("f", "🏭 Fabrika kur — Sanayici tekeli"));
+    }
+    shortcuts.extend([
+        help_kv("c", "🚚 Kervan al"),
+        help_kv("d", "📦 Kervanı yola çıkar (dispatch)"),
+        help_kv("x", "❌ Açık emri iptal"),
+        help_kv("o", "🤝 Kontrat öner"),
+        help_kv("a", "✅ Kontrat kabul"),
+        help_kv("w", "↩  Kontrat geri çek (withdraw)"),
+        help_kv("l", "💰 Kredi al"),
+        help_kv("r", "💳 Kredi öde"),
+        help_kv("N", "📰 Haber abonelik (büyük N — küçük 'n' inbox)"),
+    ]);
+    lines.extend(shortcuts);
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        ":  İleri kullanıcı — komut metnini doğrudan yaz (vim tarzı)",
+        Style::default()
+            .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
     )));
     lines.push(Line::from(""));
@@ -914,6 +1184,277 @@ fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .block(block)
         .wrap(Wrap { trim: false });
     f.render_widget(para, popup);
+}
+
+fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wizard: &Wizard) {
+    let popup = centered_rect(70, 70, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" 🎯  {}  ", wizard.kind.label()))
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Yol haritası: tamamlanan adımlar + şu anki adım göstergesi.
+    if !wizard.fields.is_empty() {
+        let mut chips: Vec<Span> = vec![Span::raw("  ")];
+        for (i, value) in wizard.fields.iter().enumerate() {
+            chips.push(Span::styled(
+                format!(" {} ", field_value_label(value)),
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            if i < wizard.fields.len() - 1 {
+                chips.push(Span::raw(" → "));
+            }
+        }
+        lines.push(Line::from(chips));
+        lines.push(Line::from(""));
+    }
+
+    if let Some(field) = wizard.current() {
+        // Aktif adım: prompt + seçenekler.
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} ", field.prompt()),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "(adım ".to_string()
+                    + &(wizard.fields.len() + 1).to_string()
+                    + "/"
+                    + &wizard.kind.schema().len().to_string()
+                    + ")",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        lines.push(Line::from(""));
+        match field {
+            FieldKind::City | FieldKind::CityFrom | FieldKind::CityTo => {
+                for (i, c) in CityId::ALL.iter().enumerate() {
+                    lines.push(option_line(i + 1, city_short(*c), Color::Blue));
+                }
+            }
+            FieldKind::Product => {
+                for (i, p) in ProductKind::ALL.iter().enumerate() {
+                    lines.push(option_line(i + 1, &format!("{p}"), product_color(*p)));
+                }
+            }
+            FieldKind::FinishedProduct => {
+                for (i, p) in ProductKind::FINISHED_GOODS.iter().enumerate() {
+                    lines.push(option_line(i + 1, &format!("{p}"), product_color(*p)));
+                }
+            }
+            FieldKind::NewsTier_ => {
+                lines.push(option_line(1, "Bronz (bedava)", Color::Rgb(205, 127, 50)));
+                lines.push(option_line(
+                    2,
+                    "Gümüş (500₺, Tüccar bedava)",
+                    Color::Rgb(192, 192, 192),
+                ));
+                lines.push(option_line(
+                    3,
+                    "Altın (2000₺, 2 tick önce)",
+                    Color::Rgb(255, 215, 0),
+                ));
+            }
+            FieldKind::OrderId_ => {
+                let mine: Vec<&MarketOrder> = app
+                    .state
+                    .order_book
+                    .values()
+                    .flatten()
+                    .filter(|o| o.player == HUMAN_ID)
+                    .collect();
+                if mine.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  (açık emrin yok)",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                } else {
+                    for (i, o) in mine.iter().enumerate() {
+                        let label = format!(
+                            "#{} {} {} {} @ {} ({})",
+                            o.id.value(),
+                            if matches!(o.side, OrderSide::Buy) {
+                                "BUY"
+                            } else {
+                                "SELL"
+                            },
+                            o.quantity,
+                            o.product,
+                            o.unit_price,
+                            city_short(o.city)
+                        );
+                        lines.push(option_line(i + 1, &label, Color::White));
+                    }
+                }
+            }
+            FieldKind::CaravanId => {
+                let mine: Vec<&moneywar_domain::Caravan> = app
+                    .state
+                    .caravans
+                    .values()
+                    .filter(|c| c.owner == HUMAN_ID && c.is_idle())
+                    .collect();
+                if mine.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  (Idle kervanın yok — önce :caravan ile al ya da kervan dönsün)",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                } else {
+                    for (i, c) in mine.iter().enumerate() {
+                        let loc = c.state.current_city().map_or("?", city_short);
+                        let label = format!("#{} kap:{}  @ {}", c.id.value(), c.capacity, loc);
+                        lines.push(option_line(i + 1, &label, Color::White));
+                    }
+                }
+            }
+            FieldKind::LoanId => {
+                let mine: Vec<&moneywar_domain::Loan> = app
+                    .state
+                    .loans
+                    .values()
+                    .filter(|l| l.borrower == HUMAN_ID && !l.repaid)
+                    .collect();
+                if mine.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  (açık kredin yok)",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                } else {
+                    for (i, l) in mine.iter().enumerate() {
+                        let total = l.total_due().unwrap_or(Money::ZERO);
+                        let label = format!(
+                            "#{} principal:{}  borç:{}  vade:tick {}",
+                            l.id.value(),
+                            l.principal,
+                            total,
+                            l.due_tick.value()
+                        );
+                        lines.push(option_line(i + 1, &label, Color::White));
+                    }
+                }
+            }
+            FieldKind::ContractId_ => {
+                let mine: Vec<&moneywar_domain::Contract> = app.state.contracts.values().collect();
+                if mine.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  (kontrat yok)",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                } else {
+                    for (i, c) in mine.iter().enumerate() {
+                        let label = format!(
+                            "#{} {:?} {} {} @ {}  delivery tick {}",
+                            c.id.value(),
+                            c.state,
+                            c.quantity,
+                            c.product,
+                            c.unit_price,
+                            c.delivery_tick.value()
+                        );
+                        lines.push(option_line(i + 1, &label, Color::White));
+                    }
+                }
+            }
+            FieldKind::QtyU32
+            | FieldKind::PriceLira
+            | FieldKind::AmountLira
+            | FieldKind::DurationTicks
+            | FieldKind::DeliveryTick => {
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("{}_", wizard.text_buf),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+                let hint = match field {
+                    FieldKind::QtyU32 => "rakam tuşları → birim sayısı, Enter onay",
+                    FieldKind::PriceLira => "rakam tuşları → ₺ cinsinden birim fiyat, Enter onay",
+                    FieldKind::AmountLira => "rakam tuşları → toplam ₺, Enter onay",
+                    FieldKind::DurationTicks => "rakam tuşları → kaç tick, Enter onay",
+                    FieldKind::DeliveryTick => "rakam tuşları → teslimat tick'i, Enter onay",
+                    _ => "",
+                };
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("  💡 {hint}"),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+    } else {
+        // Tüm alanlar dolu → onay ekranı.
+        lines.push(Line::from(Span::styled(
+            "  ✓ Tüm alanlar tamam.",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Enter → komutu queue'ya ekle (sonra SPACE ile tick ilerlet)",
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  ← Backspace: bir adım geri    Esc: iptal",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn option_line(num: usize, label: &str, color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            format!(" {num} "),
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            label.to_string(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn field_value_label(value: &FieldValue) -> String {
+    match value {
+        FieldValue::City(c) => city_short(*c).to_string(),
+        FieldValue::Product(p) => format!("{p}"),
+        FieldValue::Number(n) => n.to_string(),
+        FieldValue::NewsTier(t) => format!("{t}"),
+        FieldValue::OrderId(id) => format!("ord#{}", id.value()),
+        FieldValue::CaravanId(id) => format!("crv#{}", id.value()),
+        FieldValue::LoanId(id) => format!("loan#{}", id.value()),
+        FieldValue::ContractId(id) => format!("ctr#{}", id.value()),
+    }
 }
 
 fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2174,18 +2715,20 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             spans.extend_from_slice(&[
                 hotkey("SPACE"),
                 Span::raw(" tick  "),
-                hotkey(":"),
-                Span::raw(" komut  "),
+                hotkey("b"),
+                Span::raw("/"),
+                hotkey("S"),
+                Span::raw(" al/sat  "),
+                hotkey("f"),
+                Span::raw(" fab  "),
+                hotkey("c"),
+                Span::raw("/"),
+                hotkey("d"),
+                Span::raw(" kervan  "),
                 hotkey("m"),
                 Span::raw(" varlık  "),
-                hotkey("n"),
-                Span::raw(" haber  "),
-                hotkey("s"),
-                Span::raw(" auto  "),
                 hotkey("?"),
-                Span::raw(" yardım  "),
-                hotkey("i"),
-                Span::raw(" bilgi  "),
+                Span::raw(" tüm tuşlar  "),
                 hotkey("q"),
                 Span::raw(" çık"),
             ]);
@@ -2202,6 +2745,289 @@ fn hotkey(label: &str) -> Span<'static> {
             .fg(Color::White)
             .add_modifier(Modifier::BOLD),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Wizard input handler + command builder
+// ---------------------------------------------------------------------------
+
+enum WizardOutcome {
+    Continue,
+    Cancel,
+    Submitted(Command),
+    Error(String),
+}
+
+fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> WizardOutcome {
+    if matches!(code, KeyCode::Esc) {
+        return WizardOutcome::Cancel;
+    }
+    // Backspace: text field'da char sil; aksi halde son seçimi geri al.
+    if matches!(code, KeyCode::Backspace) {
+        if !wizard.text_buf.is_empty() {
+            wizard.text_buf.pop();
+        } else if !wizard.fields.is_empty() {
+            wizard.fields.pop();
+            wizard.text_buf.clear();
+        }
+        return WizardOutcome::Continue;
+    }
+    // Tüm alanlar tamam → Enter ile gönder.
+    if wizard.is_done() {
+        if matches!(code, KeyCode::Enter) {
+            return match build_command_from_wizard(app, wizard) {
+                Ok(cmd) => WizardOutcome::Submitted(cmd),
+                Err(e) => WizardOutcome::Error(e),
+            };
+        }
+        return WizardOutcome::Continue;
+    }
+    let Some(field) = wizard.current() else {
+        return WizardOutcome::Continue;
+    };
+    if field.is_text() {
+        match code {
+            KeyCode::Char(c) if c.is_ascii_digit() => wizard.text_buf.push(c),
+            KeyCode::Enter => {
+                let parsed: Result<u64, _> = wizard.text_buf.parse();
+                match parsed {
+                    Ok(n) if n > 0 => {
+                        wizard.fields.push(FieldValue::Number(n));
+                        wizard.text_buf.clear();
+                    }
+                    _ => {
+                        return WizardOutcome::Error("geçerli bir pozitif sayı gir".into());
+                    }
+                }
+            }
+            _ => {}
+        }
+        return WizardOutcome::Continue;
+    }
+    // Seçim alanı — sayı tuşu (1-9) ile seç.
+    let KeyCode::Char(c) = code else {
+        return WizardOutcome::Continue;
+    };
+    let Some(idx) = c.to_digit(10) else {
+        return WizardOutcome::Continue;
+    };
+    if idx == 0 {
+        return WizardOutcome::Continue;
+    }
+    let idx = (idx - 1) as usize;
+    let val = match field {
+        FieldKind::City | FieldKind::CityFrom | FieldKind::CityTo => {
+            CityId::ALL.get(idx).map(|c| FieldValue::City(*c))
+        }
+        FieldKind::Product => ProductKind::ALL.get(idx).map(|p| FieldValue::Product(*p)),
+        FieldKind::FinishedProduct => ProductKind::FINISHED_GOODS
+            .get(idx)
+            .map(|p| FieldValue::Product(*p)),
+        FieldKind::NewsTier_ => {
+            let tiers = [NewsTier::Bronze, NewsTier::Silver, NewsTier::Gold];
+            tiers.get(idx).map(|t| FieldValue::NewsTier(*t))
+        }
+        FieldKind::OrderId_ => {
+            let mine: Vec<OrderId> = app
+                .state
+                .order_book
+                .values()
+                .flatten()
+                .filter(|o| o.player == HUMAN_ID)
+                .map(|o| o.id)
+                .collect();
+            mine.get(idx).map(|id| FieldValue::OrderId(*id))
+        }
+        FieldKind::CaravanId => {
+            let mine: Vec<moneywar_domain::CaravanId> = app
+                .state
+                .caravans
+                .values()
+                .filter(|c| c.owner == HUMAN_ID && c.is_idle())
+                .map(|c| c.id)
+                .collect();
+            mine.get(idx).map(|id| FieldValue::CaravanId(*id))
+        }
+        FieldKind::LoanId => {
+            let mine: Vec<moneywar_domain::LoanId> = app
+                .state
+                .loans
+                .values()
+                .filter(|l| l.borrower == HUMAN_ID && !l.repaid)
+                .map(|l| l.id)
+                .collect();
+            mine.get(idx).map(|id| FieldValue::LoanId(*id))
+        }
+        FieldKind::ContractId_ => {
+            let mine: Vec<moneywar_domain::ContractId> =
+                app.state.contracts.keys().copied().collect();
+            mine.get(idx).map(|id| FieldValue::ContractId(*id))
+        }
+        // Text fields handled above
+        _ => None,
+    };
+    if let Some(v) = val {
+        wizard.fields.push(v);
+    }
+    WizardOutcome::Continue
+}
+
+fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, String> {
+    let f = &wizard.fields;
+    let tick = app.state.current_tick.next();
+    let pick_city = |idx: usize| -> Result<CityId, String> {
+        match f.get(idx) {
+            Some(FieldValue::City(c)) => Ok(*c),
+            _ => Err("şehir eksik".into()),
+        }
+    };
+    let pick_product = |idx: usize| -> Result<ProductKind, String> {
+        match f.get(idx) {
+            Some(FieldValue::Product(p)) => Ok(*p),
+            _ => Err("ürün eksik".into()),
+        }
+    };
+    let pick_number = |idx: usize| -> Result<u64, String> {
+        match f.get(idx) {
+            Some(FieldValue::Number(n)) => Ok(*n),
+            _ => Err("sayı eksik".into()),
+        }
+    };
+    match wizard.kind {
+        ActionKind::Buy | ActionKind::Sell => {
+            let city = pick_city(0)?;
+            let product = pick_product(1)?;
+            let qty = u32::try_from(pick_number(2)?).map_err(|_| "miktar çok büyük")?;
+            let price_lira = i64::try_from(pick_number(3)?).map_err(|_| "fiyat çok büyük")?;
+            let price = Money::from_lira(price_lira).map_err(|e| format!("{e}"))?;
+            let side = if matches!(wizard.kind, ActionKind::Buy) {
+                OrderSide::Buy
+            } else {
+                OrderSide::Sell
+            };
+            let order = MarketOrder::new(
+                app.next_order_id(),
+                HUMAN_ID,
+                city,
+                product,
+                side,
+                qty,
+                price,
+                tick,
+            )
+            .map_err(|e| format!("{e}"))?;
+            Ok(Command::SubmitOrder(order))
+        }
+        ActionKind::Build => {
+            let city = pick_city(0)?;
+            let product = pick_product(1)?;
+            Ok(Command::BuildFactory {
+                owner: HUMAN_ID,
+                city,
+                product,
+            })
+        }
+        ActionKind::Caravan => Ok(Command::BuyCaravan {
+            owner: HUMAN_ID,
+            starting_city: pick_city(0)?,
+        }),
+        ActionKind::Ship => {
+            let cid = match f.first() {
+                Some(FieldValue::CaravanId(id)) => *id,
+                _ => return Err("kervan eksik".into()),
+            };
+            let from = pick_city(1)?;
+            let to = pick_city(2)?;
+            let product = pick_product(3)?;
+            let qty = u32::try_from(pick_number(4)?).map_err(|_| "miktar çok büyük")?;
+            let mut cargo = moneywar_domain::CargoSpec::new();
+            cargo.add(product, qty).map_err(|e| format!("{e}"))?;
+            Ok(Command::DispatchCaravan {
+                caravan_id: cid,
+                from,
+                to,
+                cargo,
+            })
+        }
+        ActionKind::Loan => {
+            let amount_lira = i64::try_from(pick_number(0)?).map_err(|_| "tutar çok büyük")?;
+            let duration = u32::try_from(pick_number(1)?).map_err(|_| "vade çok büyük")?;
+            let amount = Money::from_lira(amount_lira).map_err(|e| format!("{e}"))?;
+            Ok(Command::TakeLoan {
+                player: HUMAN_ID,
+                amount,
+                duration_ticks: duration,
+            })
+        }
+        ActionKind::Repay => match f.first() {
+            Some(FieldValue::LoanId(id)) => Ok(Command::RepayLoan {
+                player: HUMAN_ID,
+                loan_id: *id,
+            }),
+            _ => Err("kredi seç".into()),
+        },
+        ActionKind::News => match f.first() {
+            Some(FieldValue::NewsTier(t)) => Ok(Command::SubscribeNews {
+                player: HUMAN_ID,
+                tier: *t,
+            }),
+            _ => Err("tier seç".into()),
+        },
+        ActionKind::Cancel => match f.first() {
+            Some(FieldValue::OrderId(id)) => Ok(Command::CancelOrder {
+                order_id: *id,
+                requester: HUMAN_ID,
+            }),
+            _ => Err("emir seç".into()),
+        },
+        ActionKind::Offer => {
+            let product = pick_product(0)?;
+            let qty = u32::try_from(pick_number(1)?).map_err(|_| "miktar")?;
+            let price_lira = i64::try_from(pick_number(2)?).map_err(|_| "fiyat")?;
+            let unit_price = Money::from_lira(price_lira).map_err(|e| format!("{e}"))?;
+            let city = pick_city(3)?;
+            let delivery_n = u32::try_from(pick_number(4)?).map_err(|_| "delivery_tick")?;
+            let delivery_tick = Tick::new(delivery_n);
+            if !tick.is_before(delivery_tick) {
+                return Err(format!(
+                    "delivery_tick ({}) şu andan (tick {}) sonra olmalı",
+                    delivery_tick.value(),
+                    tick.value()
+                ));
+            }
+            let total = unit_price
+                .checked_mul_scalar(i64::from(qty))
+                .map_err(|e| format!("{e}"))?;
+            let deposit = Money::from_cents(total.as_cents() / 10);
+            Ok(Command::ProposeContract(
+                moneywar_domain::ContractProposal {
+                    seller: HUMAN_ID,
+                    listing: moneywar_domain::ListingKind::Public,
+                    product,
+                    quantity: qty,
+                    unit_price,
+                    delivery_city: city,
+                    delivery_tick,
+                    seller_deposit: deposit,
+                    buyer_deposit: deposit,
+                },
+            ))
+        }
+        ActionKind::Accept => match f.first() {
+            Some(FieldValue::ContractId(id)) => Ok(Command::AcceptContract {
+                contract_id: *id,
+                acceptor: HUMAN_ID,
+            }),
+            _ => Err("kontrat seç".into()),
+        },
+        ActionKind::Withdraw => match f.first() {
+            Some(FieldValue::ContractId(id)) => Ok(Command::CancelContractProposal {
+                contract_id: *id,
+                requester: HUMAN_ID,
+            }),
+            _ => Err("kontrat seç".into()),
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
