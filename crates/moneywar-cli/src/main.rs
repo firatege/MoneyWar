@@ -125,7 +125,8 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
 fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
     match app.mode.clone() {
         Mode::Startup => match code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+            // Yalnız `q` kapatır — Esc yanlışlıkla çıkış yapmasın.
+            KeyCode::Char('q') => return Ok(true),
             KeyCode::Char('1') => app.start_game(Role::Sanayici),
             KeyCode::Char('2') => app.start_game(Role::Tuccar),
             KeyCode::Char('p') => {
@@ -134,7 +135,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             _ => {}
         },
         Mode::Normal => match code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+            KeyCode::Char('q') => return Ok(true),
             KeyCode::Char(' ') => app.step_one_tick(),
             KeyCode::Char('s') => {
                 app.auto_sim = !app.auto_sim;
@@ -183,13 +184,14 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             _ => app.mode = Mode::Command { buffer },
         },
         Mode::Help | Mode::Info | Mode::Holdings | Mode::NewsInbox => match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Char(' ') => {
+            // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.mode = Mode::Normal;
             }
             _ => {}
         },
         Mode::GameOver => match code {
-            KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char('q') => return Ok(true),
             _ => {}
         },
     }
@@ -494,8 +496,8 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
 
     // Overlay'ler — ortada popup, arkaplanı temizle.
     match app.mode {
-        Mode::Help => render_help_overlay(f, area),
-        Mode::Info => render_info_overlay(f, area),
+        Mode::Help => render_help_overlay(f, area, app),
+        Mode::Info => render_info_overlay(f, area, app),
         Mode::Holdings => render_holdings_overlay(f, area, app),
         Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
         Mode::GameOver => render_game_over_overlay(f, area, app),
@@ -648,102 +650,157 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vert[1])[1]
 }
 
-fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
+fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let popup = centered_rect(75, 85, area);
     f.render_widget(Clear, popup);
 
-    let lines = vec![
-        Line::from(Span::styled(
-            "📖  Tuşlar",
+    // İnsan oyuncunun rolü — komut listesini ona göre filtrele.
+    let role = app
+        .state
+        .players
+        .get(&HUMAN_ID)
+        .map(|p| p.role)
+        .unwrap_or(Role::Tuccar);
+    let is_sanayici = matches!(role, Role::Sanayici);
+    let is_tuccar = matches!(role, Role::Tuccar);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(
+            "📖  Tuşlar  ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )),
-        Line::from(""),
-        help_kv(
-            "SPACE",
-            "Bir tick ilerlet (bekleyen komutlar + NPC komutları çalışır)",
         ),
-        help_kv("s", "Auto-sim aç/kapa (her 300ms tick)"),
+        Span::styled(
+            format!("(rol: {})", role),
+            Style::default().fg(role_color(role)),
+        ),
+    ]));
+    lines.push(Line::from(""));
+    lines.extend([
+        help_kv("SPACE", "Bir tick ilerlet (bekleyen komutlar + NPC'ler)"),
+        help_kv("s", "Auto-sim aç/kapa (300ms tick)"),
         help_kv(":", "Komut moduna gir (metin yaz, Enter ile gönder)"),
         help_kv(
             "m",
             "Varlıklarım (emir / fabrika / kervan / kontrat / kredi)",
         ),
-        help_kv("n", "Haber kutusu (açıklanan + Gold ön-görüler)"),
-        help_kv("?  /  h", "Bu yardım ekranı"),
-        help_kv("i", "Oyun kuralları / nasıl oynanır"),
-        help_kv("q  /  Esc", "Çık (overlay açıksa kapatır)"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "⌨️   Komutlar  —  `:` sonrasında yaz",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )),
-        Line::from(""),
+        help_kv("n", "Haber kutusu"),
+        help_kv("?  /  h", "Bu yardım"),
+        help_kv("i", "Oyun kuralları"),
+        help_kv("q", "Çıkış"),
+        help_kv("Esc", "Overlay'i kapat (oyundan çıkmaz)"),
+    ]);
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("⌨️   Komutlar — {}", role),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    lines.push(Line::from(""));
+
+    // Her rolün kullanabileceği ortak ticaret komutları
+    lines.extend([
         help_cmd(
             ":buy <şehir> <ürün> <miktar> <fiyat>",
-            "Hal Pazarı alım emri (ör. :buy istanbul pamuk 20 7)",
+            "Hal Pazarı alım — örn: buy istanbul pamuk 20 7",
         ),
-        help_cmd(
-            ":sell <şehir> <ürün> <miktar> <fiyat>",
-            "Hal Pazarı satım emri",
-        ),
-        help_cmd(
-            ":cancel <order_id>",
-            "Emrini geri çek (tick kapanmadan önce)",
-        ),
-        help_cmd(
+        help_cmd(":sell <şehir> <ürün> <miktar> <fiyat>", "Hal Pazarı satım"),
+        help_cmd(":cancel <order_id>", "Açık emri geri çek (tick kapanmadan)"),
+    ]);
+
+    // Sanayici-özel
+    if is_sanayici {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  🏭 Sanayici tekeli",
+            Style::default().fg(Color::Rgb(210, 140, 80)),
+        )));
+        lines.push(help_cmd(
             ":build <şehir> <bitmiş_ürün>",
-            "Fabrika kur (sadece Sanayici). Örn: :build istanbul kumas",
-        ),
+            "Fabrika kur — kumas/un/zeytinyagi üretir",
+        ));
+    }
+
+    // Kervan — iki rol de ama kapasite farklı
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        if is_tuccar {
+            "  🚚 Tüccar kervanı (kapasite 50, uzak mesafe avantajı)"
+        } else {
+            "  🚚 Sanayici kervanı (kapasite 20, yakın mesafe)"
+        },
+        Style::default().fg(role_color(role)),
+    )));
+    lines.extend([
+        help_cmd(":caravan <şehir>", "Kervan satın al"),
         help_cmd(
-            ":caravan <başlangıç_şehri>",
-            "Kervan satın al (Sanayici kap:20, Tüccar kap:50)",
-        ),
-        help_cmd(
-            ":ship <caravan_id> <nereden> <nereye> <ürün> <miktar>",
+            ":ship <caravan_id> <from> <to> <ürün> <qty>",
             "Kervanı yola çıkar (varış: mesafe tick sonra)",
         ),
+    ]);
+
+    // Kontrat — iki rol de yapabilir
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  🤝 Anlaşma Masası (kontrat)",
+        Style::default().fg(Color::Magenta),
+    )));
+    lines.extend([
         help_cmd(
-            ":loan <miktar_lira> <vade_tick>",
-            "NPC bankasından kredi al (%15 sabit faiz)",
+            ":offer <ürün> <qty> <fiyat> <şehir> <delivery>",
+            "Kontrat önerisi (public, deposit=%10)",
         ),
-        help_cmd(":repay <loan_id>", "Krediyi manuel öde (principal + faiz)"),
-        help_cmd(
-            ":news <bronze|silver|gold>",
-            "Haber aboneliği değiştir (Tüccar için Silver bedava)",
-        ),
-        help_cmd(
-            ":offer <ürün> <qty> <fiyat> <şehir> <delivery_tick>",
-            "Kontrat önerisi (public, deposit default %10 × toplam değer)",
-        ),
-        help_cmd(
-            ":accept <contract_id>",
-            "Açık kontrat önerisini kabul et → Active",
-        ),
-        help_cmd(
-            ":withdraw <contract_id>",
-            "Kendi kontrat önerini geri çek (yalnız Proposed)",
-        ),
-        Line::from(""),
-        Line::from(Span::styled(
-            "💡  Şehirler: istanbul(ist), ankara(ank), izmir(izm)",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(Span::styled(
-            "💡  Ürünler: pamuk, bugday, zeytin (ham) | kumas, un, zeytinyagi (bitmiş)",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Herhangi bir tuşa bas → kapat",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::ITALIC),
-        )),
-    ];
+        help_cmd(":accept <contract_id>", "Kontrat önerisini kabul et"),
+        help_cmd(":withdraw <contract_id>", "Kendi önerini geri çek"),
+    ]);
+
+    // Kredi — iki rol de
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  💰 NPC banka",
+        Style::default().fg(Color::Green),
+    )));
+    lines.extend([
+        help_cmd(":loan <miktar> <vade_tick>", "Kredi al (%15 sabit faiz)"),
+        help_cmd(":repay <loan_id>", "Krediyi manuel öde"),
+    ]);
+
+    // Haber — Tüccar için ek bilgi
+    lines.push(Line::from(""));
+    let news_hint = if is_tuccar {
+        "Haber Gümüş bedava (Tüccar avantajı), Altın ücretli"
+    } else {
+        "Gümüş 500₺, Altın 2000₺"
+    };
+    lines.push(Line::from(Span::styled(
+        format!("  📰 Haber — {news_hint}"),
+        Style::default().fg(Color::Cyan),
+    )));
+    lines.push(help_cmd(
+        ":news <bronze|silver|gold>",
+        "Haber aboneliği değiştir",
+    ));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Şehirler: istanbul(ist), ankara(ank), izmir(izm)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Ürünler: pamuk, bugday, zeytin (ham) | kumas, un, zeytinyagi (bitmiş)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Esc / Enter / Space → kapat",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::ITALIC),
+    )));
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -755,9 +812,26 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
     f.render_widget(para, popup);
 }
 
-fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
+fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let popup = centered_rect(75, 85, area);
     f.render_widget(Clear, popup);
+
+    let role = app
+        .state
+        .players
+        .get(&HUMAN_ID)
+        .map(|p| p.role)
+        .unwrap_or(Role::Tuccar);
+    let (role_line, role_color_val) = match role {
+        Role::Sanayici => (
+            "Rolün: Sanayici — fabrika kur, üret, sat.",
+            Color::Rgb(210, 140, 80),
+        ),
+        Role::Tuccar => (
+            "Rolün: Tüccar — ucuz al, pahalı yerde sat.",
+            Color::Rgb(120, 180, 240),
+        ),
+    };
 
     let lines = vec![
         Line::from(Span::styled(
@@ -768,31 +842,23 @@ fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "Rol ve hedef",
+            role_line,
             Style::default()
-                .fg(Color::Yellow)
+                .fg(role_color_val)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(
-            "  • Sen Sanayicisin. Fabrika kurabilir, ham maddeyi bitmiş ürüne çevirebilirsin.",
-        ),
-        Line::from(
-            "  • 3 şehir (İstanbul / Ankara / İzmir) × 6 ürün (3 ham + 3 bitmiş) ile ticaret yapılır.",
-        ),
-        Line::from(
-            "  • Hedef: Sezon bitiminde (varsayılan 90 tick) leaderboard'da en yüksek skor.",
-        ),
+        Line::from(format!(
+            "Hedef: sezon sonunda ({} tick) leaderboard'da #1.",
+            app.state.config.season_ticks
+        )),
         Line::from(""),
         Line::from(Span::styled(
-            "Skor formülü (§9)",
+            "Skor formülü",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  Skor = Nakit"),
-        Line::from("       + Σ (stok × son 5 tick ortalama fiyatı)"),
-        Line::from("       + Σ (fabrika kurulum maliyeti × 0.5)  [10 tick atıl = 0]"),
-        Line::from("       + Σ (aktif kontrat escrow'un)"),
+        Line::from("  Skor = Nakit + Σ(stok × son5 ort.fiyat) + Σ(fabrika×0.5) + Σ(aktif escrow)"),
         Line::from(""),
         Line::from(Span::styled(
             "Tick akışı",
@@ -800,39 +866,30 @@ fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  1) Komut yaz (`:buy`, `:build`, ...) — tick içinde biriker, kilitli"),
-        Line::from("  2) SPACE bas → motor komutları uygular + NPC'ler hamle yapar"),
-        Line::from("  3) Üretim, kervan varış, kontrat, kredi otomatik işlenir"),
+        Line::from("  1) `:` ile komut yaz (buy/sell/...) — tick içinde biriker, kilitli"),
+        Line::from("  2) SPACE bas → komutlar uygulanır, NPC'ler hamle yapar, piyasa temizlenir"),
+        Line::from("  3) Üretim / kervan varış / kontrat / kredi otomatik işlenir"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Haber katmanları",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(
-            "  4) Hal Pazarı batch auction: uniform fiyat, eşleşenler settle, geri kalan çöpe",
+            "  🥉 Bronz bedava (olay tick'inde)   🥈 Gümüş 1 tick önce   🥇 Altın 2 tick önce",
         ),
-        Line::from("  5) Haberler inbox'a düşer (tier'ına göre erken/geç)"),
         Line::from(""),
         Line::from(Span::styled(
-            "Strateji ipuçları",
+            "Tuşlar",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from("  🏭 Fabrika kur → pamuk al → 2 tick sonra kumaş üret → sat"),
-        Line::from("  📈 Fiyatlar tick sonunda açılır — \"bluff alanı\": kimse emrini görmez"),
-        Line::from("  📰 Haber abonelik satın al → olayları önceden gör → pozisyon al"),
-        Line::from("  🤝 Kontrat yap → fiyat riskini sabitle (ama cayarsan kapora yanar)"),
-        Line::from("  💰 Kredi %15 faiz — vadeyi kaçırırsan tüm nakdini kaybedebilirsin"),
-        Line::from("  ⚠️  Piyasa doygunluk eşiği: çok satarsan fazlası yarı fiyata gider"),
+        Line::from("  :  komut    m  varlık    n  haber    SPACE  tick    ?  yardım"),
         Line::from(""),
         Line::from(Span::styled(
-            "Haber katmanları (§6)",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from("  🥉 Bronz  — bedava, olay tick'inde duyurulur"),
-        Line::from("  🥈 Gümüş  — 500₺, 1 tick önce (Tüccar bedava)"),
-        Line::from("  🥇 Altın  — 2000₺, 2 tick önce"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Herhangi bir tuşa bas → kapat",
+            "Esc / Enter / Space → kapat",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::ITALIC),
