@@ -152,6 +152,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('?') | KeyCode::Char('h') => app.mode = Mode::Help,
             KeyCode::Char('i') => app.mode = Mode::Info,
             KeyCode::Char('m') => app.mode = Mode::Holdings,
+            KeyCode::Char('n') => app.mode = Mode::NewsInbox,
             _ => {}
         },
         Mode::Command { mut buffer } => match code {
@@ -181,7 +182,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => app.mode = Mode::Command { buffer },
         },
-        Mode::Help | Mode::Info | Mode::Holdings => match code {
+        Mode::Help | Mode::Info | Mode::Holdings | Mode::NewsInbox => match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.mode = Mode::Normal;
             }
@@ -211,6 +212,8 @@ enum Mode {
     Info,
     /// Varlıklarım overlay — m ile açılır.
     Holdings,
+    /// Haber inbox overlay — n ile açılır.
+    NewsInbox,
     /// Sezon sonu reveal — 90. tick'te otomatik açılır, tüm skorlar görünür.
     GameOver,
 }
@@ -494,6 +497,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Help => render_help_overlay(f, area),
         Mode::Info => render_info_overlay(f, area),
         Mode::Holdings => render_holdings_overlay(f, area, app),
+        Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
         Mode::GameOver => render_game_over_overlay(f, area, app),
         _ => {}
     }
@@ -666,6 +670,7 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
             "m",
             "Varlıklarım (emir / fabrika / kervan / kontrat / kredi)",
         ),
+        help_kv("n", "Haber kutusu (açıklanan + Gold ön-görüler)"),
         help_kv("?  /  h", "Bu yardım ekranı"),
         help_kv("i", "Oyun kuralları / nasıl oynanır"),
         help_kv("q  /  Esc", "Çık (overlay açıksa kapatır)"),
@@ -709,6 +714,18 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect) {
         help_cmd(
             ":news <bronze|silver|gold>",
             "Haber aboneliği değiştir (Tüccar için Silver bedava)",
+        ),
+        help_cmd(
+            ":offer <ürün> <qty> <fiyat> <şehir> <delivery_tick>",
+            "Kontrat önerisi (public, deposit default %10 × toplam değer)",
+        ),
+        help_cmd(
+            ":accept <contract_id>",
+            "Açık kontrat önerisini kabul et → Active",
+        ),
+        help_cmd(
+            ":withdraw <contract_id>",
+            "Kendi kontrat önerini geri çek (yalnız Proposed)",
         ),
         Line::from(""),
         Line::from(Span::styled(
@@ -1176,6 +1193,121 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     format!("{ticks_left}t"),
                     Style::default().fg(urgency).add_modifier(Modifier::BOLD),
                 ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Herhangi bir tuşa bas → kapat",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_news_inbox_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(80, 85, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📰  Haber Kutusu ")
+        .border_style(Style::default().fg(Color::Magenta));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let current = app.state.current_tick;
+    let inbox = app.state.news_inbox.get(&HUMAN_ID);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "  Açıklanmış haberler (disclosed_tick ≤ now):",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+
+    let disclosed: Vec<&NewsItem> = inbox
+        .map(|v| {
+            v.iter()
+                .filter(|n| !current.is_before(n.disclosed_tick))
+                .collect()
+        })
+        .unwrap_or_default();
+    if disclosed.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok — henüz açıklanmış haber yok)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for n in disclosed.iter().rev().take(20) {
+            let icon = match n.tier {
+                NewsTier::Bronze => "🥉",
+                NewsTier::Silver => "🥈",
+                NewsTier::Gold => "🥇",
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{icon} "),
+                    Style::default()
+                        .fg(tier_color(n.tier))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("tick {:>3}: ", n.event_tick.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(format_event(&n.event), Style::default().fg(Color::White)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Bekleyen haberler (gelecekte açılacak — sadece Gold'un önden gördükleri):",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+
+    let pending: Vec<&NewsItem> = inbox
+        .map(|v| {
+            v.iter()
+                .filter(|n| current.is_before(n.disclosed_tick))
+                .collect()
+        })
+        .unwrap_or_default();
+    if pending.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (yok — üst tier aboneliği alırsan ön-görüler burada)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for n in pending.iter().take(10) {
+            let icon = match n.tier {
+                NewsTier::Bronze => "🥉",
+                NewsTier::Silver => "🥈",
+                NewsTier::Gold => "🥇",
+            };
+            let ticks_ahead = n.disclosed_tick.value().saturating_sub(current.value());
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{icon} "),
+                    Style::default()
+                        .fg(tier_color(n.tier))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("+{ticks_ahead}t: "),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(format_event(&n.event), Style::default().fg(Color::Gray)),
             ]));
         }
     }
@@ -1822,6 +1954,8 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Span::raw(" komut  "),
                 hotkey("m"),
                 Span::raw(" varlık  "),
+                hotkey("n"),
+                Span::raw(" haber  "),
                 hotkey("s"),
                 Span::raw(" auto  "),
                 hotkey("?"),
@@ -1868,8 +2002,89 @@ fn parse_command(app: &mut App, line: &str) -> Result<Command, String> {
         "loan" | "kredi" => parse_loan_cmd(args),
         "repay" | "ode" => parse_repay_cmd(args),
         "news" | "haber" => parse_news_cmd(args),
+        "offer" | "propose" => parse_offer_cmd(args, tick),
+        "accept" => parse_accept_cmd(args),
+        "withdraw" => parse_withdraw_cmd(args),
         _ => Err(format!("bilinmeyen komut '{head}' — `?` yardım için")),
     }
+}
+
+fn parse_offer_cmd(args: &[&str], proposed_tick: Tick) -> Result<Command, String> {
+    if !(5..=6).contains(&args.len()) {
+        return Err(
+            "kullanım: offer <ürün> <miktar> <fiyat> <şehir> <delivery_tick> [deposit_lira]".into(),
+        );
+    }
+    let product = parse_product(args[0])?;
+    let quantity: u32 = args[1]
+        .parse()
+        .map_err(|_| format!("geçersiz miktar: {}", args[1]))?;
+    let price_lira: i64 = args[2]
+        .parse()
+        .map_err(|_| format!("geçersiz fiyat: {}", args[2]))?;
+    let unit_price = Money::from_lira(price_lira).map_err(|e| format!("{e}"))?;
+    let city = parse_city(args[3])?;
+    let delivery: u32 = args[4]
+        .parse()
+        .map_err(|_| format!("geçersiz delivery_tick: {}", args[4]))?;
+    let delivery_tick = Tick::new(delivery);
+    if !proposed_tick.is_before(delivery_tick) {
+        return Err(format!(
+            "delivery_tick ({}) şu andan (tick {}) sonra olmalı",
+            delivery_tick.value(),
+            proposed_tick.value()
+        ));
+    }
+    let deposit = if args.len() == 6 {
+        let d: i64 = args[5]
+            .parse()
+            .map_err(|_| format!("geçersiz deposit: {}", args[5]))?;
+        Money::from_lira(d).map_err(|e| format!("{e}"))?
+    } else {
+        let total = unit_price
+            .checked_mul_scalar(i64::from(quantity))
+            .map_err(|e| format!("{e}"))?;
+        Money::from_cents(total.as_cents() / 10)
+    };
+    Ok(Command::ProposeContract(
+        moneywar_domain::ContractProposal {
+            seller: HUMAN_ID,
+            listing: moneywar_domain::ListingKind::Public,
+            product,
+            quantity,
+            unit_price,
+            delivery_city: city,
+            delivery_tick,
+            seller_deposit: deposit,
+            buyer_deposit: deposit,
+        },
+    ))
+}
+
+fn parse_accept_cmd(args: &[&str]) -> Result<Command, String> {
+    if args.len() != 1 {
+        return Err("kullanım: accept <contract_id>".into());
+    }
+    let id: u64 = args[0]
+        .parse()
+        .map_err(|_| format!("geçersiz contract_id: {}", args[0]))?;
+    Ok(Command::AcceptContract {
+        contract_id: moneywar_domain::ContractId::new(id),
+        acceptor: HUMAN_ID,
+    })
+}
+
+fn parse_withdraw_cmd(args: &[&str]) -> Result<Command, String> {
+    if args.len() != 1 {
+        return Err("kullanım: withdraw <contract_id>".into());
+    }
+    let id: u64 = args[0]
+        .parse()
+        .map_err(|_| format!("geçersiz contract_id: {}", args[0]))?;
+    Ok(Command::CancelContractProposal {
+        contract_id: moneywar_domain::ContractId::new(id),
+        requester: HUMAN_ID,
+    })
 }
 
 fn parse_order_cmd(
