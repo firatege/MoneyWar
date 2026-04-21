@@ -1,0 +1,37 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database (local dev)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend (Faz 11+)
+web/node_modules/
+web/dist/
+web/.next/
+web/build/
+
+# Coverage
+*.profraw
+lcov.info
+coverage/

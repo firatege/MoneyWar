@@ -1,0 +1,13 @@
+[alias]
+# Faz 0+: kalite zinciri
+chk = "check --workspace --all-targets"
+lint = "clippy --workspace --all-targets -- -D warnings"
+fmt-check = "fmt --all -- --check"
+t = "test --workspace"
+
+# Pedantic warnings hidden behind explicit alias
+lint-pedantic = "clippy --workspace --all-targets -- -W clippy::pedantic"
+
+[build]
+# Incremental derleme — dev ergonomi
+incremental = true
