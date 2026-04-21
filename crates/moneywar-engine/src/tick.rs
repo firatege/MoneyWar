@@ -22,7 +22,7 @@
 //! | **4A** ✅ | `process_build_factory` + `production::advance_production` — fabrika + üretim |
 //! | **4B** ✅ | `process_buy_caravan`/`process_dispatch_caravan` + `transport::advance_caravans` |
 //! | **5** ✅ | `contracts::{process_propose/accept/cancel + advance_contracts}` — Anlaşma Masası |
-//! | 5.5 | `process_take_loan`, `process_repay_loan` |
+//! | **5.5** ✅ | `loans::{process_take_loan, process_repay_loan, advance_loans}` — NPC banka |
 //! | 6 | `process_subscribe_news` + sistem eventleri |
 
 use crate::{
@@ -32,6 +32,9 @@ use crate::{
         process_propose_contract as propose_contract_impl,
     },
     error::EngineError,
+    loans::{
+        advance_loans, process_repay_loan as repay_loan_impl, process_take_loan as take_loan_impl,
+    },
     market::clear_markets,
     production::{advance_production, process_build_factory as build_factory_impl},
     report::{LogEntry, TickReport},
@@ -42,8 +45,8 @@ use crate::{
     },
 };
 use moneywar_domain::{
-    CityId, Command, DomainError, GameState, LoanId, MarketOrder, Money, NewsTier, OrderId,
-    PlayerId, ProductKind, Tick,
+    CityId, Command, DomainError, GameState, MarketOrder, NewsTier, OrderId, PlayerId, ProductKind,
+    Tick,
 };
 
 /// Motoru bir tick ileri sarar.
@@ -83,14 +86,16 @@ pub fn advance_tick(
         }
     }
 
-    // Tick kapanışı sırası (Faz 5):
-    //   1. Üretim — biten batch'ler envantere, yeni batch'ler başlar.
-    //   2. Taşıma — varış zamanı gelen kervanlar hedef envanter'e boşalır.
-    //   3. Kontratlar — delivery_tick'i gelenler fulfill/breach.
-    //   4. Hal Pazarı clearing — post-production/transport/contract envanteri.
+    // Tick kapanışı sırası (Faz 5.5):
+    //   1. Üretim
+    //   2. Taşıma
+    //   3. Kontratlar (fulfill/breach)
+    //   4. Krediler (vadesi gelen auto-settle — nakit varsa repay, yoksa default)
+    //   5. Hal Pazarı clearing
     advance_production(&mut new_state, &mut report, next_tick);
     advance_caravans(&mut new_state, &mut report, next_tick);
     advance_contracts(&mut new_state, &mut report, next_tick);
+    advance_loans(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
@@ -154,8 +159,10 @@ fn dispatch(
             player,
             amount,
             duration_ticks,
-        } => process_take_loan(state, *player, *amount, *duration_ticks, tick),
-        Command::RepayLoan { player, loan_id } => process_repay_loan(state, *player, *loan_id),
+        } => take_loan_impl(state, report, tick, *player, *amount, *duration_ticks),
+        Command::RepayLoan { player, loan_id } => {
+            repay_loan_impl(state, report, tick, *player, *loan_id)
+        }
     }
 }
 
@@ -244,28 +251,6 @@ fn process_subscribe_news(
     _tier: NewsTier,
 ) -> Result<(), EngineError> {
     // FAZ 6: abonelik tier'ını güncelle, Tüccar için Silver bedava.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_take_loan(
-    _state: &mut GameState,
-    _player: PlayerId,
-    _amount: Money,
-    _duration_ticks: u32,
-    _tick: Tick,
-) -> Result<(), EngineError> {
-    // FAZ 5.5: kredi tablosundan faiz, cash'e yatır, Loan ekle.
-    Ok(())
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn process_repay_loan(
-    _state: &mut GameState,
-    _player: PlayerId,
-    _loan_id: LoanId,
-) -> Result<(), EngineError> {
-    // FAZ 5.5: principal + faiz düş, Loan sil.
     Ok(())
 }
 

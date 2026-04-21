@@ -11,8 +11,8 @@
 //! hangi komutun reddedildiğini ölçebilirsin, rol bazlı `PnL` çıkarabilirsin.
 
 use moneywar_domain::{
-    CaravanId, CityId, Command, ContractId, ContractState, FactoryId, ListingKind, Money, OrderId,
-    PlayerId, ProductKind, Tick,
+    CaravanId, CityId, Command, ContractId, ContractState, FactoryId, ListingKind, LoanId, Money,
+    OrderId, PlayerId, ProductKind, Tick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -347,6 +347,74 @@ impl LogEntry {
         }
     }
 
+    /// NPC bankasından kredi alındı — principal borçlunun cash'ine eklendi.
+    #[must_use]
+    pub fn loan_taken(
+        tick: Tick,
+        borrower: PlayerId,
+        loan_id: LoanId,
+        principal: Money,
+        interest_rate_percent: u32,
+        due_tick: Tick,
+        total_due: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(borrower),
+            event: LogEvent::LoanTaken {
+                loan_id,
+                borrower,
+                principal,
+                interest_rate_percent,
+                due_tick,
+                total_due,
+            },
+        }
+    }
+
+    /// Kredi ödendi — `on_time` false ise vadeyi geçti ama motor çekebildi.
+    #[must_use]
+    pub fn loan_repaid(
+        tick: Tick,
+        borrower: PlayerId,
+        loan_id: LoanId,
+        amount_paid: Money,
+        on_time: bool,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(borrower),
+            event: LogEvent::LoanRepaid {
+                loan_id,
+                borrower,
+                amount_paid,
+                on_time,
+            },
+        }
+    }
+
+    /// Kredi default — vade geçti, borçlu yeterli nakit bulamadı.
+    /// Mevcut tüm nakti çekildi, kalan borç banka tarafından silindi.
+    #[must_use]
+    pub fn loan_defaulted(
+        tick: Tick,
+        borrower: PlayerId,
+        loan_id: LoanId,
+        seized: Money,
+        unpaid_balance: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(borrower),
+            event: LogEvent::LoanDefaulted {
+                loan_id,
+                borrower,
+                seized,
+                unpaid_balance,
+            },
+        }
+    }
+
     /// Kontrat durum geçişi (5B — delivery settlement).
     #[must_use]
     pub fn contract_settled(
@@ -587,6 +655,35 @@ pub enum LogEvent {
     ContractSettled {
         contract_id: ContractId,
         final_state: ContractState,
+    },
+
+    /// NPC bankasından kredi alındı. Bu event sistem-dışı (oyun bankası)
+    /// para yaratır; money conservation oyun içi transferler için geçerli,
+    /// banka ile toplamda değil.
+    LoanTaken {
+        loan_id: LoanId,
+        borrower: PlayerId,
+        principal: Money,
+        interest_rate_percent: u32,
+        due_tick: Tick,
+        total_due: Money,
+    },
+
+    /// Kredi tam olarak geri ödendi. `on_time=false` → motor vadeden sonra
+    /// otomatik çekti ama nakit yetti.
+    LoanRepaid {
+        loan_id: LoanId,
+        borrower: PlayerId,
+        amount_paid: Money,
+        on_time: bool,
+    },
+
+    /// Kredi default — motor borçlunun tüm nakdini çekti, kalanı silindi.
+    LoanDefaulted {
+        loan_id: LoanId,
+        borrower: PlayerId,
+        seized: Money,
+        unpaid_balance: Money,
     },
 }
 

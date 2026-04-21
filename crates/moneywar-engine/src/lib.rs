@@ -27,6 +27,7 @@
 
 mod contracts;
 mod error;
+mod loans;
 mod market;
 mod production;
 mod report;
