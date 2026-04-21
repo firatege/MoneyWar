@@ -10,22 +10,22 @@
 //! - Rastgelelik sadece `rng_for(room_id, next_tick)` üstünden — aynı
 //!   (state, commands) → bit-perfect aynı sonuç.
 //!
-//! Bu dosya Faz 2 iskeletidir. Her `Command` variant'ı için `process_*`
-//! stub fonksiyonları vardır, hepsi `Ok(())` döndürür (motor komutu kabul
-//! eder ama state'i değiştirmez). İlerleyen fazlarda stub'lar gerçek
-//! mantıkla doldurulur:
+//! Her `Command` variant'ı için ayrı `process_*` fonksiyonu vardır. Faz 2
+//! iskeletinde hepsi `Ok(())` stub'ıydı; fazlar ilerledikçe gerçek mantıkla
+//! dolar:
 //!
-//! | Faz | Stub → gerçek |
+//! | Faz | Durum |
 //! |---|---|
-//! | 3 | `process_submit_order`, `process_cancel_order` + batch auction |
+//! | **3A** ✅ | `process_submit_order`, `process_cancel_order` — order book yönetimi |
+//! | 3B | Tick sonu batch auction + uniform clearing price + settlement |
 //! | 4 | `process_build_factory`, `process_buy_caravan`, `process_dispatch_caravan` |
 //! | 5 | `process_propose_contract`, `process_accept_contract`, `process_cancel_contract` |
 //! | 5.5 | `process_take_loan`, `process_repay_loan` |
 //! | 6 | `process_subscribe_news` + sistem eventleri |
 
 use moneywar_domain::{
-    CaravanId, CityId, Command, ContractId, ContractProposal, GameState, LoanId, MarketOrder,
-    Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
+    CaravanId, CityId, Command, ContractId, ContractProposal, DomainError, GameState, LoanId,
+    MarketOrder, Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
 };
 use rand_chacha::ChaCha8Rng;
 
@@ -139,28 +139,80 @@ fn dispatch(
 }
 
 // ---------------------------------------------------------------------------
-// Command stub'ları. Hepsi `Ok(())` döner — state mutate edilmez. Gerçek
-// mantık Faz 3+ doldurur. Parametre imzaları şimdiden sabit ki ileride
-// çağrı yeri değişmesin.
+// Command işleyicileri. SubmitOrder / CancelOrder gerçek (Faz 3A); diğerleri
+// hâlâ `Ok(())` stub'ı — imzalar sabit tutuldu ki ileri fazlarda çağrı yeri
+// değişmesin.
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::unnecessary_wraps)] // Stub; Faz 3'te `Result` gerçekten kullanılacak.
+/// `SubmitOrder` — emri order book'un `(city, product)` bucket'ına koyar.
+///
+/// Bluff alanı (§2) gereği cash/stok kilidi **yok** — validation minimal:
+/// - `MarketOrder::new` zaten `quantity > 0` ve `unit_price > 0`'ı garantiler.
+/// - Burada tek ek: aynı `OrderId` zaten book'ta ise reddet (idempotency).
+///
+/// Eşleşme bu fonksiyonda değil, tick sonunda `clear_markets` içinde (Faz 3B).
 fn process_submit_order(
-    _state: &mut GameState,
-    _order: &MarketOrder,
+    state: &mut GameState,
+    order: &MarketOrder,
     _tick: Tick,
 ) -> Result<(), EngineError> {
-    // FAZ 3: order book'a ekle, limit validation, saturation eşiği kontrolü.
+    let duplicate = state
+        .order_book
+        .values()
+        .flatten()
+        .any(|existing| existing.id == order.id);
+    if duplicate {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "order {} already in book",
+            order.id
+        ))));
+    }
+    state
+        .order_book
+        .entry((order.city, order.product))
+        .or_default()
+        .push(order.clone());
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
+/// `CancelOrder` — book'tan emri çıkarır (tick açılmadan önce geri çekme).
+///
+/// Sahiplik kontrolü: `requester == order.player` olmalı. Emir bulunamazsa
+/// veya başkasının emri ise `Validation` hatası döner; `CommandRejected`
+/// log kaydına yazılır, state bozulmaz.
 fn process_cancel_order(
-    _state: &mut GameState,
-    _order_id: OrderId,
-    _requester: PlayerId,
+    state: &mut GameState,
+    order_id: OrderId,
+    requester: PlayerId,
 ) -> Result<(), EngineError> {
-    // FAZ 3: order book'tan çek, sahiplik kontrolü.
+    let mut target: Option<((CityId, ProductKind), PlayerId)> = None;
+    for (key, orders) in &state.order_book {
+        if let Some(o) = orders.iter().find(|o| o.id == order_id) {
+            target = Some((*key, o.player));
+            break;
+        }
+    }
+
+    let Some((key, owner)) = target else {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "order {order_id} not found"
+        ))));
+    };
+
+    if owner != requester {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "order {order_id} owned by {owner}, not {requester}"
+        ))));
+    }
+
+    let orders = state
+        .order_book
+        .get_mut(&key)
+        .expect("key came from the book itself");
+    orders.retain(|o| o.id != order_id);
+    if orders.is_empty() {
+        state.order_book.remove(&key);
+    }
     Ok(())
 }
 
@@ -316,13 +368,155 @@ mod tests {
     }
 
     #[test]
-    fn submit_order_is_logged_as_accepted_stub() {
+    fn submit_order_adds_to_book_and_logs_accepted() {
         let s0 = state();
         let cmd = submit_order(7, 1);
-        let (_s1, report) = advance_tick(&s0, std::slice::from_ref(&cmd)).unwrap();
+        let (s1, report) = advance_tick(&s0, std::slice::from_ref(&cmd)).unwrap();
         assert_eq!(report.accepted_count(), 1);
         assert_eq!(report.rejected_count(), 0);
         assert_eq!(report.entries[0].actor, Some(PlayerId::new(7)));
+
+        let bucket = s1
+            .order_book
+            .get(&(CityId::Istanbul, ProductKind::Pamuk))
+            .expect("bucket exists after submit");
+        assert_eq!(bucket.len(), 1);
+        assert_eq!(bucket[0].id, OrderId::new(1));
+    }
+
+    #[test]
+    fn submit_orders_accumulate_in_same_bucket() {
+        let s0 = state();
+        let cmds = vec![submit_order(1, 1), submit_order(2, 2), submit_order(3, 3)];
+        let (s1, _) = advance_tick(&s0, &cmds).unwrap();
+        let bucket = s1
+            .order_book
+            .get(&(CityId::Istanbul, ProductKind::Pamuk))
+            .unwrap();
+        assert_eq!(bucket.len(), 3);
+        // Insertion order preserved.
+        let ids: Vec<_> = bucket.iter().map(|o| o.id.value()).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn submit_orders_to_different_pairs_split_buckets() {
+        let s0 = state();
+        let istanbul_pamuk = Command::SubmitOrder(
+            MarketOrder::new(
+                OrderId::new(1),
+                PlayerId::new(1),
+                CityId::Istanbul,
+                ProductKind::Pamuk,
+                OrderSide::Buy,
+                10,
+                Money::from_lira(5).unwrap(),
+                Tick::new(1),
+            )
+            .unwrap(),
+        );
+        let ankara_bugday = Command::SubmitOrder(
+            MarketOrder::new(
+                OrderId::new(2),
+                PlayerId::new(1),
+                CityId::Ankara,
+                ProductKind::Bugday,
+                OrderSide::Sell,
+                20,
+                Money::from_lira(7).unwrap(),
+                Tick::new(1),
+            )
+            .unwrap(),
+        );
+        let (s1, _) = advance_tick(&s0, &[istanbul_pamuk, ankara_bugday]).unwrap();
+        assert_eq!(s1.order_book.len(), 2);
+        assert_eq!(
+            s1.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
+            1
+        );
+        assert_eq!(
+            s1.order_book[&(CityId::Ankara, ProductKind::Bugday)].len(),
+            1
+        );
+    }
+
+    #[test]
+    fn duplicate_order_id_is_rejected() {
+        let s0 = state();
+        let (s1, _) = advance_tick(&s0, &[submit_order(1, 42)]).unwrap();
+        // Tick 2'de aynı order_id'yi tekrar gönder → reddedilmeli.
+        let (s2, report) = advance_tick(&s1, &[submit_order(1, 42)]).unwrap();
+        assert_eq!(report.accepted_count(), 0);
+        assert_eq!(report.rejected_count(), 1);
+        // Book değişmemeli: hâlâ tek kayıt.
+        assert_eq!(
+            s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
+            1
+        );
+    }
+
+    #[test]
+    fn order_book_persists_across_ticks() {
+        let s0 = state();
+        let (s1, _) = advance_tick(&s0, &[submit_order(1, 1)]).unwrap();
+        // Bir sonraki tick boş komutlarla geçer — book hâlâ dolu olmalı
+        // (clearing Faz 3B'de gelecek).
+        let (s2, _) = advance_tick(&s1, &[]).unwrap();
+        assert_eq!(
+            s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
+            1
+        );
+    }
+
+    fn cancel_order(requester: u64, order_id: u64) -> Command {
+        Command::CancelOrder {
+            order_id: OrderId::new(order_id),
+            requester: PlayerId::new(requester),
+        }
+    }
+
+    #[test]
+    fn cancel_order_removes_and_cleans_empty_bucket() {
+        let s0 = state();
+        let (s1, _) = advance_tick(&s0, &[submit_order(7, 1)]).unwrap();
+        let (s2, report) = advance_tick(&s1, &[cancel_order(7, 1)]).unwrap();
+        assert_eq!(report.accepted_count(), 1);
+        // Bucket boş kalınca map'ten silinmeli.
+        assert!(s2.order_book.is_empty());
+    }
+
+    #[test]
+    fn cancel_order_preserves_other_orders_in_bucket() {
+        let s0 = state();
+        let (s1, _) = advance_tick(&s0, &[submit_order(1, 1), submit_order(2, 2)]).unwrap();
+        let (s2, report) = advance_tick(&s1, &[cancel_order(1, 1)]).unwrap();
+        assert_eq!(report.accepted_count(), 1);
+        let bucket = &s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)];
+        assert_eq!(bucket.len(), 1);
+        assert_eq!(bucket[0].id, OrderId::new(2));
+        assert_eq!(bucket[0].player, PlayerId::new(2));
+    }
+
+    #[test]
+    fn cancel_order_wrong_owner_is_rejected() {
+        let s0 = state();
+        let (s1, _) = advance_tick(&s0, &[submit_order(7, 1)]).unwrap();
+        // Başka oyuncu iptal etmeye çalışıyor.
+        let (s2, report) = advance_tick(&s1, &[cancel_order(99, 1)]).unwrap();
+        assert_eq!(report.rejected_count(), 1);
+        // Book değişmemeli.
+        assert_eq!(
+            s2.order_book[&(CityId::Istanbul, ProductKind::Pamuk)].len(),
+            1
+        );
+    }
+
+    #[test]
+    fn cancel_order_not_found_is_rejected() {
+        let s0 = state();
+        let (s1, report) = advance_tick(&s0, &[cancel_order(1, 999)]).unwrap();
+        assert_eq!(report.rejected_count(), 1);
+        assert!(s1.order_book.is_empty());
     }
 
     #[test]
