@@ -595,9 +595,9 @@ impl Achievement {
             Self::FirstFactory => "✨  İLK FABRİKAN! ✨",
             Self::FirstCaravan => "🐪  İLK KERVANIN! 🐪",
             Self::FirstTrade => "🤝  İLK İŞLEMİN! 🤝",
-            Self::TenK => "💰  10.000₺ — kasan doldu",
-            Self::FiftyK => "💎  50.000₺ — büyük kasa",
-            Self::HundredK => "👑  100.000₺ — büyük servet",
+            Self::TenK => "💰  +5K kâr — para kazanıyorsun",
+            Self::FiftyK => "💎  +20K kâr — iyi sezon",
+            Self::HundredK => "👑  +50K kâr — büyük başarı",
             Self::ThreeFactories => "🏭  3 ŞEHRE FABRİKA",
             Self::ThreeCaravans => "🚂  3 KERVANLIK FİLO",
             Self::LeadingNow => "🥇  LEADERBOARD'DA 1.LİK!",
@@ -654,6 +654,10 @@ struct App {
     /// Şu an ekranda görünen toast. `current_tick >= expires_at_tick` ise
     /// kaldırılır.
     active_toast: Option<Toast>,
+    /// Oyun başında oyuncunun nakdi (cents). Achievement'lar **net kazanç**
+    /// üstünden ölçülür — başlangıç sermayesi rolden role değişiyor (50K
+    /// Sanayici / 80K Tüccar), mutlak eşik anında unlock olurdu.
+    starting_cash_cents: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -770,6 +774,7 @@ impl App {
             cached_sparklines: std::collections::BTreeMap::new(),
             unlocked_achievements: std::collections::BTreeSet::new(),
             active_toast: None,
+            starting_cash_cents: 0,
         }
     }
 
@@ -780,7 +785,9 @@ impl App {
         let Some(player) = self.state.players.get(&HUMAN_ID) else {
             return;
         };
-        let cash_lira = player.cash.as_cents() / 100;
+        // Net kazanç (lira) — başlangıç sermayesi role'e göre değişiyor (50K/80K),
+        // mutlak nakit eşikleri instant unlock olurdu. PnL üstünden ölç.
+        let pnl_lira = (player.cash.as_cents() - self.starting_cash_cents) / 100;
         let factory_count = self
             .state
             .factories
@@ -810,9 +817,10 @@ impl App {
             (Achievement::ThreeFactories, factory_cities.len() >= 3),
             (Achievement::FirstCaravan, caravan_count >= 1),
             (Achievement::ThreeCaravans, caravan_count >= 3),
-            (Achievement::TenK, cash_lira >= 10_000),
-            (Achievement::FiftyK, cash_lira >= 50_000),
-            (Achievement::HundredK, cash_lira >= 100_000),
+            // Net kâr eşikleri (başlangıç sermayesinin üstünde)
+            (Achievement::TenK, pnl_lira >= 5_000),
+            (Achievement::FiftyK, pnl_lira >= 20_000),
+            (Achievement::HundredK, pnl_lira >= 50_000),
             (Achievement::LeadingNow, leading),
         ];
 
@@ -883,6 +891,11 @@ impl App {
         let room_id = random_room_id();
         self.state = seed_world(role, cfg, room_id);
         self.mode = Mode::Normal;
+        self.starting_cash_cents = self
+            .state
+            .players
+            .get(&HUMAN_ID)
+            .map_or(0, |p| p.cash.as_cents());
         self.refresh_caches();
         // Rol'e göre ilk hamle önerisi — terminal açılır açılmaz oyuncu
         // ne yapacağını bilsin.
