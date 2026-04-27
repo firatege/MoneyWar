@@ -31,7 +31,7 @@ pub mod fuzzy;
 pub use error::NpcError;
 
 use moneywar_domain::{
-    Caravan, CargoSpec, CityId, Command, Factory, GameState, MarketOrder, Money, NpcKind, OrderId,
+    Caravan, CargoSpec, CityId, Command, GameState, MarketOrder, Money, NpcKind, OrderId,
     OrderSide, PlayerId, ProductKind, Role, Tick,
 };
 use rand::Rng;
@@ -181,7 +181,7 @@ impl NpcBehavior for SmartTrader {
 fn decide_sanayici(
     state: &GameState,
     pid: PlayerId,
-    rng: &mut ChaCha8Rng,
+    _rng: &mut ChaCha8Rng,
     tick: Tick,
 ) -> Vec<Command> {
     let mut cmds: Vec<Command> = Vec::new();
@@ -192,21 +192,10 @@ fn decide_sanayici(
     let factory_count = u32::try_from(state.factories.values().filter(|f| f.owner == pid).count())
         .unwrap_or(u32::MAX);
 
-    // 1) Fabrika yoksa kur — raw→finished marjı en yüksek şehri seç (rasyonel).
+    // 1) Sadece 1 fabrika cap. Matematik: 2. fabrika 15K maliyet, 30 batch ×
+    // 10 × 12₺ marj = 3.6K ekstra kâr → -11.4K net. Tek fabrika kâr getirir.
+    // Eski Hard SmartTrader 2-3 fabrika kuruyordu, sezon boyu zarar.
     if factory_count == 0 {
-        let city = best_factory_city(state);
-        let (_, product) = city_specialty(state, city);
-        cmds.push(Command::BuildFactory {
-            owner: pid,
-            city,
-            product,
-        });
-    } else if factory_count < 3
-        && player.cash >= Factory::build_cost(factory_count)
-        && rng.random_ratio(1, 5)
-    {
-        // %20 olasılık ile yeni fabrika kur (cash yeterli ve <3 ise).
-        // Yine en kârlı şehre — çeşitlilik RNG gate ile zaten sağlanıyor.
         let city = best_factory_city(state);
         let (_, product) = city_specialty(state, city);
         cmds.push(Command::BuildFactory {
@@ -297,7 +286,9 @@ fn decide_tuccar(
     let player = state.players.get(&pid).expect("checked");
     let ttl = state.config.balance.default_order_ttl;
 
-    // 1) Kervan yoksa al — ilki bedava.
+    // 1) Kervan yoksa al — ilki bedava. Cap 2 — 2. kervan 6K maliyet,
+    // arbitraj kâr 100₺/dispatch × ~20 dispatch/sezon = 2K. Net -4K, kabul
+    // edilebilir. 3+ kervan zarar ekonomisi (eski 4 cap → -10K Tüccar).
     let caravan_count = u32::try_from(state.caravans.values().filter(|c| c.owner == pid).count())
         .unwrap_or(u32::MAX);
     if caravan_count == 0 {
@@ -305,11 +296,10 @@ fn decide_tuccar(
             owner: pid,
             starting_city: pick_city(rng),
         });
-    } else if caravan_count < 4
+    } else if caravan_count < 2
         && player.cash >= moneywar_domain::Caravan::buy_cost(Role::Tuccar, caravan_count)
-        && rng.random_ratio(1, 3)
+        && rng.random_ratio(1, 4)
     {
-        // %33 olasılık + 4 kervana kadar — eski %16 + 3'lük cap çok yavaştı.
         cmds.push(Command::BuyCaravan {
             owner: pid,
             starting_city: pick_city(rng),
