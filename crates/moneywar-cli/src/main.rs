@@ -1358,9 +1358,9 @@ fn seed_world(
         next_id += 1;
     }
 
-    // NPC-Esnaf(lar) — saf satıcı (dükkan). Devasa stok (~3000 birim
-    // dengeli dağıtım), her tick 4 sell emri verir. Kervan/fabrika yok.
-    // Cash önemli değil — sadece satıyorlar.
+    // NPC-Esnaf(lar) — saf satıcı (dükkan). Devasa stok (~5000 birim
+    // dengeli dağıtım), Hasat fazında daha aktif. Eski 3000 sezon ortası
+    // tükeniyordu, 5000 ile sezon boyu rezerv yeterli.
     for _ in 0..composition.esnaf {
         let name = pick_npc_name(&mut rng, NpcKind::Esnaf, &mut used_names);
         let mut npc = Player::new(
@@ -1372,7 +1372,7 @@ fn seed_world(
         )
         .unwrap()
         .with_kind(NpcKind::Esnaf);
-        distribute_inventory(&mut npc, &mut rng, 3_000);
+        distribute_inventory(&mut npc, &mut rng, 5_000);
         s.players.insert(npc.id, npc);
         next_id += 1;
     }

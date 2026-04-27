@@ -28,7 +28,7 @@
 
 use moneywar_domain::{
     ActiveShock, CityId, EventId, EventSeverity, GameEvent, GameState, NewsId, NewsItem, NewsTier,
-    ProductKind, Tick,
+    NpcKind, PlayerId, ProductKind, Tick,
 };
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -66,6 +66,44 @@ pub(crate) fn advance_events(
 
     dispatch_news(state, game_event, event_tick);
     apply_shock(state, game_event, event_tick);
+    apply_supply_boost(state, rng, game_event);
+}
+
+/// `BumperHarvest` event'i tetiklendiğinde rastgele bir Esnaf NPC'nin
+/// (city, product) stoğunu +50-150 birim artırır. Pozitif arz pompası —
+/// "bereketli hasat" semantiği gerçekten arzı çoğaltır, sadece fiyat
+/// şokuyla sınırlı değil. Sezon-içi arz tükenmesini önler.
+///
+/// Esnaf yoksa noop (defansif). Süre etkisi yok — eklenen stok kalıcı.
+fn apply_supply_boost(state: &mut GameState, rng: &mut ChaCha8Rng, event: GameEvent) {
+    let GameEvent::BumperHarvest { city, product, severity } = event else {
+        return;
+    };
+    let bonus: u32 = match severity {
+        EventSeverity::Minor => 50,
+        EventSeverity::Major => 100,
+        EventSeverity::Macro => 150,
+    };
+    // Deterministik Esnaf seçimi — `BTreeMap` iter sırasında Esnaf id'lerini
+    // topla, RNG ile birini seç.
+    let esnaf_ids: Vec<PlayerId> = state
+        .players
+        .iter()
+        .filter_map(|(id, p)| {
+            if p.has_npc_kind(NpcKind::Esnaf) {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if esnaf_ids.is_empty() {
+        return;
+    }
+    let idx = rng.random_range(0..esnaf_ids.len());
+    if let Some(esnaf) = state.players.get_mut(&esnaf_ids[idx]) {
+        let _ = esnaf.inventory.add(city, product, bonus);
+    }
 }
 
 /// Olayın baseline fiyatına etkisini `state.active_shocks`'a kaydeder.

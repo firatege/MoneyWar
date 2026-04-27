@@ -65,16 +65,17 @@ pub struct NpcComposition {
 }
 
 impl NpcComposition {
-    /// Default: 2 Sanayici + 2 Tüccar + 3 Alıcı + 2 Esnaf + 2 Spekülatör = 11 NPC.
-    /// Tek oyunculu modda bile pazar canlı — spekülatör spread'i hemen daraltır,
-    /// alıcı/esnaf arz-talebi taşır, sanayici/tüccar rekabet yaratır.
+    /// Default: 2 Sanayici, 2 Tüccar, 3 Alıcı, 3 Esnaf, 2 Spekülatör = 12 NPC.
+    /// Eski 2 Esnaf yetmiyordu (sezon-içi arz çöküşü). 3 Esnaf, büyütülmüş
+    /// başlangıç stoğu ve `BumperHarvest` dinamik refresh ile sezon boyu
+    /// pazar likit kalır.
     #[must_use]
     pub const fn default_const() -> Self {
         Self {
             sanayici: 2,
             tuccar: 2,
             alici: 3,
-            esnaf: 2,
+            esnaf: 3,
             spekulator: 2,
         }
     }
@@ -474,14 +475,14 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_2_2_3_2_2() {
+    fn npc_composition_default_is_2_2_3_3_2() {
         let c = NpcComposition::default_const();
         assert_eq!(c.sanayici, 2);
         assert_eq!(c.tuccar, 2);
         assert_eq!(c.alici, 3);
-        assert_eq!(c.esnaf, 2);
+        assert_eq!(c.esnaf, 3);
         assert_eq!(c.spekulator, 2);
-        assert_eq!(c.total(), 11);
+        assert_eq!(c.total(), 12);
     }
 
     #[test]
