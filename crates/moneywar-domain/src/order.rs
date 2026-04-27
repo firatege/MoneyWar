@@ -33,6 +33,11 @@ impl OrderSide {
 ///
 /// Tick süresince kilitli (bluff alanı §1), tick sınırında tüm emirler
 /// motor tarafından okunup tek takas fiyatıyla eşleştirilir.
+///
+/// **TTL modeli**: Her clear pass sonrası eşleşmeyen kalıntı kitapta kalır
+/// ve `remaining_ticks` -1'e iner. 0'a düşünce `OrderExpired` ile düşer.
+/// `ttl_ticks` emrin ilk verildiği zamanki taahhüt (erken çekme cezası için
+/// referans). `new()` TTL=1 default ile eski davranışı korur (tek tick).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketOrder {
     pub id: OrderId,
@@ -44,12 +49,16 @@ pub struct MarketOrder {
     /// Limit fiyat (birim başına). Alım için maksimum, satım için minimum.
     pub unit_price: Money,
     pub submitted_tick: Tick,
+    /// Emrin ilk verildiği zamanki taahhüt edilen TTL. Cezanın pro-rata
+    /// payda'sı — submit sonrası değişmez.
+    pub ttl_ticks: u32,
+    /// Kalan yaşam süresi. Her clear'de -1, 0'da `OrderExpired`.
+    pub remaining_ticks: u32,
 }
 
 impl MarketOrder {
-    /// Yeni emir. Doğrular:
-    /// - `quantity > 0`
-    /// - `unit_price > 0` (sıfır/negatif fiyatlı emir anlamsız)
+    /// TTL=1 varsayılanıyla yeni emir (tek clear, kalan düşer). Test + eski
+    /// kod yolu için geriye uyumluluk köprüsü. Prod yollar `new_with_ttl` kullanmalı.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: OrderId,
@@ -61,6 +70,35 @@ impl MarketOrder {
         unit_price: Money,
         submitted_tick: Tick,
     ) -> Result<Self, DomainError> {
+        Self::new_with_ttl(
+            id,
+            player,
+            city,
+            product,
+            side,
+            quantity,
+            unit_price,
+            submitted_tick,
+            1,
+        )
+    }
+
+    /// Yeni emir + TTL. Doğrular:
+    /// - `quantity > 0`
+    /// - `unit_price > 0`
+    /// - `ttl_ticks >= 1`
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_ttl(
+        id: OrderId,
+        player: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        side: OrderSide,
+        quantity: u32,
+        unit_price: Money,
+        submitted_tick: Tick,
+        ttl_ticks: u32,
+    ) -> Result<Self, DomainError> {
         if quantity == 0 {
             return Err(DomainError::Validation("order quantity must be > 0".into()));
         }
@@ -68,6 +106,11 @@ impl MarketOrder {
             return Err(DomainError::Validation(format!(
                 "order unit_price must be positive, got {unit_price}"
             )));
+        }
+        if ttl_ticks == 0 {
+            return Err(DomainError::Validation(
+                "order ttl_ticks must be ≥ 1".into(),
+            ));
         }
         Ok(Self {
             id,
@@ -78,6 +121,8 @@ impl MarketOrder {
             quantity,
             unit_price,
             submitted_tick,
+            ttl_ticks,
+            remaining_ticks: ttl_ticks,
         })
     }
 
@@ -195,5 +240,47 @@ mod tests {
         let o = valid_order(OrderSide::Sell);
         let back: MarketOrder = serde_json::from_str(&serde_json::to_string(&o).unwrap()).unwrap();
         assert_eq!(o, back);
+    }
+
+    #[test]
+    fn new_defaults_to_single_tick_ttl() {
+        let o = valid_order(OrderSide::Buy);
+        assert_eq!(o.ttl_ticks, 1);
+        assert_eq!(o.remaining_ticks, 1);
+    }
+
+    #[test]
+    fn new_with_ttl_initializes_countdown() {
+        let o = MarketOrder::new_with_ttl(
+            OrderId::new(1),
+            PlayerId::new(1),
+            CityId::Istanbul,
+            ProductKind::Pamuk,
+            OrderSide::Buy,
+            10,
+            Money::from_lira(5).unwrap(),
+            Tick::new(1),
+            5,
+        )
+        .unwrap();
+        assert_eq!(o.ttl_ticks, 5);
+        assert_eq!(o.remaining_ticks, 5);
+    }
+
+    #[test]
+    fn zero_ttl_rejected() {
+        let err = MarketOrder::new_with_ttl(
+            OrderId::new(1),
+            PlayerId::new(1),
+            CityId::Istanbul,
+            ProductKind::Pamuk,
+            OrderSide::Buy,
+            10,
+            Money::from_lira(5).unwrap(),
+            Tick::ZERO,
+            0,
+        )
+        .expect_err("ttl=0");
+        assert!(matches!(err, DomainError::Validation(_)));
     }
 }

@@ -27,7 +27,9 @@
 //!    - Event'ler: her settled segment → `OrderMatched`, başarısız → `FillRejected`,
 //!      bucket özeti → `MarketCleared` (threshold + `saturation_qty` alanlarıyla).
 //!    - `price_history[(city, product)]` tarihçesine `(tick, clearing_price)` eklenir.
-//!    - Bucket boşaltılır (eşleşmeyenler çöpe — tasarım §2).
+//!    - Eşleşmeyen kalıntı: `remaining_ticks -= 1`. 0'a düşen emir
+//!      `OrderExpired` event'iyle düşer; TTL'si kalan emir kitapta yeni qty
+//!      ile kalır (persistent order book).
 
 use moneywar_domain::{CityId, GameState, MarketOrder, Money, OrderSide, ProductKind, Tick};
 
@@ -107,6 +109,10 @@ fn clear_bucket(
         0
     };
 
+    // TTL persist: eşleşmeyen kalıntıyı kitaba geri koy, remaining_ticks -1,
+    // 0'a düşen emirler OrderExpired event'iyle düşer.
+    persist_unmatched_orders(state, report, tick, key, buys, sells, &fills);
+
     report.push(LogEntry::market_cleared(
         tick,
         city,
@@ -118,6 +124,72 @@ fn clear_bucket(
         threshold,
         saturation_qty,
     ));
+}
+
+/// Eşleşmeyen / kısmen eşleşmiş emirleri kitaba geri koyar, TTL countdown'u uygular.
+///
+/// `fills` match sonucu — matched qty bu fonksiyon için "filled" sayılır
+/// (settlement reject olmuş olsa bile; bluff cezası). Her emir için:
+/// - `leftover = orig_qty - matched_qty`
+/// - `leftover == 0` → tamamen filled, sessizce düşer
+/// - `remaining_ticks == 1` (bu clear son hakkı) → `OrderExpired`, düşer
+/// - diğer → `remaining_ticks -= 1`, leftover qty ile kitaba geri konur
+fn persist_unmatched_orders(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    key: (CityId, ProductKind),
+    buys: Vec<MarketOrder>,
+    sells: Vec<MarketOrder>,
+    fills: &[Fill],
+) {
+    let (city, product) = key;
+
+    // Her emir id'sinin bu clear'da ne kadar match olduğunu topla.
+    let mut filled: std::collections::HashMap<moneywar_domain::OrderId, u32> =
+        std::collections::HashMap::new();
+    for fill in fills {
+        *filled.entry(fill.buy_order_id).or_insert(0) =
+            filled.get(&fill.buy_order_id).copied().unwrap_or(0) + fill.quantity;
+        *filled.entry(fill.sell_order_id).or_insert(0) =
+            filled.get(&fill.sell_order_id).copied().unwrap_or(0) + fill.quantity;
+    }
+
+    // Cooldown set edilecek emirler — loop sonunda toplu uygular (borrow sorunu).
+    let mut cooldown_keys: Vec<moneywar_domain::PlayerId> = Vec::new();
+
+    let mut kept: Vec<MarketOrder> = Vec::new();
+    for mut o in buys.into_iter().chain(sells.into_iter()) {
+        let matched = filled.get(&o.id).copied().unwrap_or(0);
+        let leftover = o.quantity.saturating_sub(matched);
+        if leftover == 0 {
+            // Tamamen eşleşti → cooldown başlat.
+            cooldown_keys.push(o.player);
+            continue;
+        }
+
+        // Bu clear emrin son hakkıysa, kitaba geri dönmez → expire + cooldown.
+        if o.remaining_ticks <= 1 {
+            report.push(LogEntry::order_expired(
+                tick, o.id, o.player, city, product, o.side, leftover,
+            ));
+            cooldown_keys.push(o.player);
+            continue;
+        }
+
+        o.quantity = leftover;
+        o.remaining_ticks -= 1;
+        kept.push(o);
+    }
+
+    if !kept.is_empty() {
+        state.order_book.insert(key, kept);
+    }
+
+    // Cooldown'ları topluca uygula — `(player, city, product)` bazında.
+    for player in cooldown_keys {
+        crate::tick::set_relist_cooldown(state, player, city, product, tick);
+    }
 }
 
 /// Fills'i settle et. Saturation eşiği cumulative qty'ye göre full/half tier'a
@@ -433,9 +505,19 @@ mod tests {
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
 
-        // Tek entry: MarketCleared (clearing_price = None).
-        assert_eq!(r.entries.len(), 1);
-        match &r.entries[0].event {
+        // TTL=1 default → her iki emir OrderExpired olur, MarketCleared son entry.
+        let expired_count = r
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::OrderExpired { .. }))
+            .count();
+        assert_eq!(expired_count, 2);
+        let cleared = r
+            .entries
+            .iter()
+            .find(|e| matches!(e.event, crate::report::LogEvent::MarketCleared { .. }))
+            .expect("market cleared entry");
+        match &cleared.event {
             crate::report::LogEvent::MarketCleared {
                 clearing_price,
                 matched_qty,
@@ -450,7 +532,7 @@ mod tests {
             }
             other => panic!("expected MarketCleared, got {other:?}"),
         }
-        // Book boşaltılmalı (eşleşmeyenler çöpe).
+        // TTL=1 emirler expire → kitap boşaldı.
         assert!(s.order_book.is_empty());
     }
 
@@ -621,14 +703,18 @@ mod tests {
 
     #[test]
     fn only_one_side_present_clears_with_no_matches() {
-        // Sadece buy emirleri, sell yok → hiç match, MarketCleared yalnız.
+        // Sadece buy, sell yok → MarketCleared + OrderExpired (TTL=1 default).
         let mut s = state();
         populate(&mut s, vec![order(1, 1, OrderSide::Buy, 10, 10)]);
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
 
-        assert_eq!(r.entries.len(), 1);
-        match &r.entries[0].event {
+        let cleared = r
+            .entries
+            .iter()
+            .find(|e| matches!(e.event, crate::report::LogEvent::MarketCleared { .. }))
+            .expect("market cleared");
+        match &cleared.event {
             crate::report::LogEvent::MarketCleared {
                 matched_qty,
                 submitted_buy_qty,
@@ -643,6 +729,12 @@ mod tests {
             }
             other => panic!("expected MarketCleared, got {other:?}"),
         }
+        let expired = r
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::OrderExpired { .. }))
+            .count();
+        assert_eq!(expired, 1);
         assert!(s.order_book.is_empty());
     }
 
@@ -676,8 +768,19 @@ mod tests {
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
 
-        // Her bucket için tek MarketCleared → 2 entry.
-        assert_eq!(r.entries.len(), 2);
+        // Her bucket: 1 MarketCleared + 1 OrderExpired (TTL=1 default) → 4 entry.
+        let cleared = r
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::MarketCleared { .. }))
+            .count();
+        let expired = r
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::OrderExpired { .. }))
+            .count();
+        assert_eq!(cleared, 2);
+        assert_eq!(expired, 2);
         assert!(s.order_book.is_empty());
     }
 
@@ -935,5 +1038,105 @@ mod tests {
             }
             other => panic!("expected MarketCleared, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // TTL persistence testleri
+    // -----------------------------------------------------------------------
+
+    fn order_ttl(
+        id: u64,
+        player: u64,
+        side: OrderSide,
+        qty: u32,
+        price_lira: i64,
+        ttl: u32,
+    ) -> MarketOrder {
+        MarketOrder::new_with_ttl(
+            OrderId::new(id),
+            PlayerId::new(player),
+            CityId::Istanbul,
+            ProductKind::Pamuk,
+            side,
+            qty,
+            Money::from_lira(price_lira).unwrap(),
+            Tick::new(1),
+            ttl,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn order_with_ttl_greater_than_one_survives_unmatched_clear() {
+        let mut s = state();
+        populate(&mut s, vec![order_ttl(1, 1, OrderSide::Buy, 10, 10, 3)]);
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        // Eşleşme yok ama TTL=3 → 2'ye düşüp kitapta kalmalı, expire yok.
+        let expired = r
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::OrderExpired { .. }))
+            .count();
+        assert_eq!(expired, 0);
+        let bucket = s
+            .order_book
+            .get(&(CityId::Istanbul, ProductKind::Pamuk))
+            .expect("bucket kept");
+        assert_eq!(bucket.len(), 1);
+        assert_eq!(bucket[0].remaining_ticks, 2);
+        assert_eq!(bucket[0].quantity, 10);
+    }
+
+    #[test]
+    fn order_expires_on_last_tick_of_ttl() {
+        let mut s = state();
+        populate(&mut s, vec![order_ttl(1, 1, OrderSide::Buy, 10, 10, 2)]);
+        // 1. clear: remaining 2 → 1, kitapta kalır.
+        let mut r1 = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r1, Tick::new(1));
+        assert_eq!(
+            s.order_book
+                .get(&(CityId::Istanbul, ProductKind::Pamuk))
+                .unwrap()[0]
+                .remaining_ticks,
+            1
+        );
+        // 2. clear: remaining 1 → expire.
+        let mut r2 = TickReport::new(Tick::new(2));
+        clear_markets(&mut s, &mut r2, Tick::new(2));
+        let expired = r2
+            .entries
+            .iter()
+            .filter(|e| matches!(e.event, crate::report::LogEvent::OrderExpired { .. }))
+            .count();
+        assert_eq!(expired, 1);
+        assert!(s.order_book.is_empty());
+    }
+
+    #[test]
+    fn partial_match_leaves_leftover_in_book_with_decremented_ttl() {
+        let mut s = state();
+        seed_players(&mut s, &[1, 2]);
+        populate(
+            &mut s,
+            vec![
+                order_ttl(1, 1, OrderSide::Buy, 20, 10, 5), // alıcı 20 birim
+                order_ttl(2, 2, OrderSide::Sell, 8, 10, 1), // satıcı 8 birim (TTL=1)
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+
+        // 8 match, alıcı 12 leftover, TTL 5→4. Satıcı tamamen eşleşti → silindi.
+        let bucket = s
+            .order_book
+            .get(&(CityId::Istanbul, ProductKind::Pamuk))
+            .expect("bucket kept");
+        assert_eq!(bucket.len(), 1);
+        assert_eq!(bucket[0].id, OrderId::new(1));
+        assert_eq!(bucket[0].quantity, 12);
+        assert_eq!(bucket[0].remaining_ticks, 4);
     }
 }

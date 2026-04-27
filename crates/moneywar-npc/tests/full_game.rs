@@ -6,7 +6,7 @@
 //! clearing) beklenen sıra ile işliyor.
 
 use moneywar_domain::{
-    CityId, Command, GameState, MarketOrder, Money, OrderId, OrderSide, Player, PlayerId,
+    CityId, Command, GameState, MarketOrder, Money, NpcKind, OrderId, OrderSide, Player, PlayerId,
     ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{advance_tick, rng_for};
@@ -114,4 +114,195 @@ fn twenty_tick_simulation_with_humans_and_npcs() {
         npc_stock <= 200,
         "NPC stock should only decrease via market: {npc_stock}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Likidite smoke — yeni AliciNpc + 1/1/3 kompozisyon piyasa aktivitesi üretir.
+// ---------------------------------------------------------------------------
+
+fn seed_with_composition() -> GameState {
+    // RoomConfig default balance kullanır (composition 1/1/3).
+    let mut s = GameState::new(RoomId::new(42), RoomConfig::hizli());
+
+    // İnsan Sanayici — fabrika kuracak, sonra kumaş üretecek.
+    let mut human = Player::new(
+        PlayerId::new(1),
+        "İnsan",
+        Role::Sanayici,
+        Money::from_lira(50_000).unwrap(),
+        false,
+    )
+    .unwrap();
+    human
+        .inventory
+        .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+        .unwrap();
+    s.players.insert(human.id, human);
+
+    // Kompozisyon: 1 Tüccar + 1 Sanayici + 3 Alıcı.
+    let mut tuccar = Player::new(
+        PlayerId::new(100),
+        "Hasan Bey",
+        Role::Tuccar,
+        Money::from_lira(15_000).unwrap(),
+        true,
+    )
+    .unwrap()
+    .with_kind(NpcKind::Tuccar);
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            tuccar.inventory.add(city, product, 25).unwrap();
+        }
+    }
+    s.players.insert(tuccar.id, tuccar);
+
+    let mut sanayici_npc = Player::new(
+        PlayerId::new(101),
+        "Mehmet Usta",
+        Role::Sanayici,
+        Money::from_lira(30_000).unwrap(),
+        true,
+    )
+    .unwrap()
+    .with_kind(NpcKind::Sanayici);
+    sanayici_npc
+        .inventory
+        .add(CityId::Istanbul, ProductKind::Kumas, 20)
+        .unwrap();
+    s.players.insert(sanayici_npc.id, sanayici_npc);
+
+    let alici_names = ["Selim Bey", "Ali Bey", "Ömer Bey"];
+    for (i, name) in alici_names.iter().enumerate() {
+        let alici = Player::new(
+            PlayerId::new(102 + i as u64),
+            *name,
+            Role::Tuccar,
+            Money::from_lira(100_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Alici);
+        s.players.insert(alici.id, alici);
+    }
+
+    // 2 NPC-Esnaf — saf satıcı. Her biri devasa stok.
+    let esnaf_names = ["Zeynep Hanım", "Fatma Hanım"];
+    for (i, name) in esnaf_names.iter().enumerate() {
+        let mut esnaf = Player::new(
+            PlayerId::new(105 + i as u64),
+            *name,
+            Role::Tuccar,
+            Money::from_lira(10_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Esnaf);
+        // Her şehir × ürün için 100 birim (toplam 2100 birim dengeli dağıtım).
+        for city in CityId::ALL {
+            for product in ProductKind::ALL {
+                let _ = esnaf.inventory.add(city, product, 100);
+            }
+        }
+        s.players.insert(esnaf.id, esnaf);
+    }
+    s
+}
+
+#[test]
+fn liquidity_smoke_twenty_ticks_produces_matches() {
+    use moneywar_engine::LogEvent;
+    let mut state = seed_with_composition();
+    let mut total_matches: u32 = 0;
+    let mut total_expired: u32 = 0;
+    let mut total_cleared_buckets: u32 = 0;
+
+    for t in 1..=20u32 {
+        let mut npc_rng = rng_for(state.room_id, Tick::new(t));
+        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Hard);
+        let (new_state, report) = advance_tick(&state, &cmds).expect("advance");
+        state = new_state;
+        for entry in &report.entries {
+            match &entry.event {
+                LogEvent::OrderMatched { .. } => total_matches += 1,
+                LogEvent::OrderExpired { .. } => total_expired += 1,
+                LogEvent::MarketCleared {
+                    matched_qty,
+                    clearing_price: Some(_),
+                    ..
+                } => {
+                    if *matched_qty > 0 {
+                        total_cleared_buckets += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 20 tick'te en az 20 eşleşme. AliciNpc + Tuccar/Sanayici satışı
+    // overlap yaratmalı. Relist cooldown likiditeyi biraz kısar (istenen
+    // tasarım — flash-place manipülasyonunu önler); eşik ona göre set edildi.
+    println!(
+        "smoke: {total_matches} match, {total_expired} expired, {total_cleared_buckets} cleared-bucket-with-price"
+    );
+    assert!(
+        total_matches >= 20,
+        "likidite düşük: {total_matches} match, {total_expired} expired, {total_cleared_buckets} cleared bucket"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cooldown correctness — aynı (player, city, product) için TTL=1 emir
+// bittikten sonra ardışık tick'te yeni emir reddedilmeli.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn relist_cooldown_rejects_immediate_resubmit() {
+    use moneywar_engine::LogEvent;
+    let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+    let mut human = Player::new(
+        PlayerId::new(1),
+        "H",
+        Role::Tuccar,
+        Money::from_lira(10_000).unwrap(),
+        false,
+    )
+    .unwrap();
+    let _ = human
+        .inventory
+        .add(CityId::Istanbul, ProductKind::Pamuk, 100);
+    s.players.insert(human.id, human);
+
+    // Tick 1: TTL=1 emir yolla → clear'de expire, cooldown başlar.
+    let o1 = MarketOrder::new(
+        OrderId::new(1),
+        PlayerId::new(1),
+        CityId::Istanbul,
+        ProductKind::Pamuk,
+        OrderSide::Sell,
+        10,
+        Money::from_lira(5).unwrap(),
+        Tick::new(1),
+    )
+    .unwrap();
+    let (s1, _r1) = advance_tick(&s, &[Command::SubmitOrder(o1)]).unwrap();
+
+    // Tick 2: aynı (player, city, product) için yeni emir → reject.
+    let o2 = MarketOrder::new(
+        OrderId::new(2),
+        PlayerId::new(1),
+        CityId::Istanbul,
+        ProductKind::Pamuk,
+        OrderSide::Sell,
+        5,
+        Money::from_lira(5).unwrap(),
+        Tick::new(2),
+    )
+    .unwrap();
+    let (_s2, r2) = advance_tick(&s1, &[Command::SubmitOrder(o2)]).unwrap();
+    let rejected = r2
+        .entries
+        .iter()
+        .any(|e| matches!(&e.event, LogEvent::CommandRejected { reason, .. } if reason.contains("cooldown")));
+    assert!(rejected, "cooldown reject bekleniyordu");
 }

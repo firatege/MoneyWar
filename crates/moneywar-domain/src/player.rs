@@ -126,6 +126,40 @@ impl Inventory {
     }
 }
 
+/// NPC alt-türü. Davranış dispatch'i için kullanılır — eski versiyonda
+/// `player.name.starts_with("NPC-Alıcı")` gibi kırılgan string prefix
+/// kontrolü vardı; şimdi structural ayrım. İsimler artık serbestçe
+/// güzelleştirilebilir ("Selim Bey") çünkü NPC tipi name'den bağımsız.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NpcKind {
+    /// Akıllı tüccar — arbitraj + kervan dispatch.
+    Tuccar,
+    /// Akıllı sanayici — fabrika kurar, üretir, satar.
+    Sanayici,
+    /// Saf alıcı (talep sink) — sadece buy emri verir.
+    Alici,
+    /// Saf satıcı (dükkan/esnaf) — sadece sell emri verir.
+    Esnaf,
+    /// Spekülatör — her tick (city, product)'e hem alış hem satış emri verir.
+    /// Spread'i daraltıp piyasa likiditesini canlandırır; "mallar bekliyor"
+    /// hissini öldürür. Kâr beklentisi: küçük ama tutarlı (market making).
+    Spekulator,
+}
+
+impl NpcKind {
+    /// İnsan-okunur kısa etiket — leaderboard ve panellerde.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tuccar => "Tüccar",
+            Self::Sanayici => "Sanayici",
+            Self::Alici => "Alıcı",
+            Self::Esnaf => "Esnaf",
+            Self::Spekulator => "Spekülatör",
+        }
+    }
+}
+
 /// Oyuncu (insan veya NPC).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Player {
@@ -135,6 +169,11 @@ pub struct Player {
     pub cash: Money,
     pub inventory: Inventory,
     pub is_npc: bool,
+    /// NPC alt-türü. İnsan oyuncuda `None`. Davranış dispatcher'ı bu
+    /// field'a bakar; eski kodda string prefix vardı, kaldırıldı.
+    /// `serde(default)` ile geriye uyumlu (eski save dosyaları None alır).
+    #[serde(default)]
+    pub npc_kind: Option<NpcKind>,
 }
 
 impl Player {
@@ -162,7 +201,23 @@ impl Player {
             cash: starting_cash,
             inventory: Inventory::new(),
             is_npc,
+            npc_kind: None,
         })
+    }
+
+    /// Builder-style: NPC alt-türünü set eder. İnsan oyuncuda çağrılmaz.
+    /// Seed kodunda kullanılır — `Player::new(...).unwrap().with_kind(NpcKind::Alici)`.
+    #[must_use]
+    pub fn with_kind(mut self, kind: NpcKind) -> Self {
+        self.npc_kind = Some(kind);
+        self
+    }
+
+    /// `npc_kind` kontrolü. NPC dispatcher ve UI filter'larında kullanılır;
+    /// her seferinde `p.npc_kind == Some(X)` yazımını önler.
+    #[must_use]
+    pub fn has_npc_kind(&self, kind: NpcKind) -> bool {
+        self.npc_kind == Some(kind)
     }
 
     /// Nakit ekler. Overflow = hata.

@@ -29,7 +29,7 @@ mod error;
 pub use error::NpcError;
 
 use moneywar_domain::{
-    Caravan, CargoSpec, CityId, Command, Factory, GameState, MarketOrder, Money, OrderId,
+    Caravan, CargoSpec, CityId, Command, Factory, GameState, MarketOrder, Money, NpcKind, OrderId,
     OrderSide, PlayerId, ProductKind, Role, Tick,
 };
 use rand::Rng;
@@ -91,18 +91,20 @@ impl NpcBehavior for MarketMaker {
         let Some(player) = state.players.get(&self_id) else {
             return Vec::new();
         };
+        let ttl = state.config.balance.default_order_ttl;
         let city = pick_city(rng);
         let product = pick_product(rng);
-        let base = base_price(product);
+        // Son clearing fiyatı varsa onu kullan (price discovery), yoksa base.
+        let reference = market_or_base(state, city, product);
         let have = player.inventory.get(city, product);
         let order_id = OrderId::new(npc_order_id(self_id, tick, 0));
 
         if have > 0 {
             let qty = rng.random_range(1u32..=have.min(20));
             let sell_price = Money::from_cents(
-                base.as_cents() * moneywar_domain::balance::NPC_SELL_MARKUP_PCT / 100,
+                reference.as_cents() * moneywar_domain::balance::NPC_SELL_MARKUP_PCT / 100,
             );
-            if let Ok(order) = MarketOrder::new(
+            if let Ok(order) = MarketOrder::new_with_ttl(
                 order_id,
                 self_id,
                 city,
@@ -111,21 +113,22 @@ impl NpcBehavior for MarketMaker {
                 qty,
                 sell_price,
                 tick,
+                ttl,
             ) {
                 return vec![Command::SubmitOrder(order)];
             }
             return Vec::new();
         }
 
-        let min_cash_cents = base.as_cents().saturating_mul(10);
+        let min_cash_cents = reference.as_cents().saturating_mul(10);
         if player.cash.as_cents() < min_cash_cents {
             return Vec::new();
         }
         let qty: u32 = rng.random_range(1u32..=10);
         let buy_price = Money::from_cents(
-            base.as_cents() * moneywar_domain::balance::NPC_BUY_MARKDOWN_PCT / 100,
+            reference.as_cents() * moneywar_domain::balance::NPC_BUY_MARKDOWN_PCT / 100,
         );
-        MarketOrder::new(
+        MarketOrder::new_with_ttl(
             order_id,
             self_id,
             city,
@@ -134,6 +137,7 @@ impl NpcBehavior for MarketMaker {
             qty,
             buy_price,
             tick,
+            ttl,
         )
         .map(|o| vec![Command::SubmitOrder(o)])
         .unwrap_or_default()
@@ -175,18 +179,15 @@ fn decide_sanayici(
     let mut cmds: Vec<Command> = Vec::new();
     let mut seq: u32 = 0;
     let player = state.players.get(&pid).expect("checked");
+    let ttl = state.config.balance.default_order_ttl;
 
     let factory_count = u32::try_from(state.factories.values().filter(|f| f.owner == pid).count())
         .unwrap_or(u32::MAX);
 
-    // 1) Fabrika yoksa kur — ilki bedava. RNG ile şehir/ürün seç (deterministik).
+    // 1) Fabrika yoksa kur — raw→finished marjı en yüksek şehri seç (rasyonel).
     if factory_count == 0 {
-        let city = pick_city(rng);
-        let product = match city {
-            CityId::Istanbul => ProductKind::Kumas,
-            CityId::Ankara => ProductKind::Un,
-            CityId::Izmir => ProductKind::Zeytinyagi,
-        };
+        let city = best_factory_city(state);
+        let (_, product) = city_specialty(state, city);
         cmds.push(Command::BuildFactory {
             owner: pid,
             city,
@@ -196,13 +197,10 @@ fn decide_sanayici(
         && player.cash >= Factory::build_cost(factory_count)
         && rng.random_ratio(1, 5)
     {
-        // %20 olasılık ile yeni fabrika kur (eğer cash yeterli ve <3 fabrika varsa).
-        let city = pick_city(rng);
-        let product = match city {
-            CityId::Istanbul => ProductKind::Kumas,
-            CityId::Ankara => ProductKind::Un,
-            CityId::Izmir => ProductKind::Zeytinyagi,
-        };
+        // %20 olasılık ile yeni fabrika kur (cash yeterli ve <3 ise).
+        // Yine en kârlı şehre — çeşitlilik RNG gate ile zaten sağlanıyor.
+        let city = best_factory_city(state);
+        let (_, product) = city_specialty(state, city);
         cmds.push(Command::BuildFactory {
             owner: pid,
             city,
@@ -228,7 +226,7 @@ fn decide_sanayici(
             if player.cash.as_cents() >= total {
                 let id = OrderId::new(npc_order_id(pid, tick, seq));
                 seq += 1;
-                if let Ok(o) = MarketOrder::new(
+                if let Ok(o) = MarketOrder::new_with_ttl(
                     id,
                     pid,
                     factory.city,
@@ -237,6 +235,7 @@ fn decide_sanayici(
                     qty,
                     buy_price,
                     tick,
+                    ttl,
                 ) {
                     cmds.push(Command::SubmitOrder(o));
                 }
@@ -257,7 +256,7 @@ fn decide_sanayici(
         let sell_qty = qty.min(15);
         let id = OrderId::new(npc_order_id(pid, tick, seq));
         seq += 1;
-        if let Ok(o) = MarketOrder::new(
+        if let Ok(o) = MarketOrder::new_with_ttl(
             id,
             pid,
             city,
@@ -266,6 +265,7 @@ fn decide_sanayici(
             sell_qty,
             sell_price,
             tick,
+            ttl,
         ) {
             cmds.push(Command::SubmitOrder(o));
         }
@@ -287,6 +287,7 @@ fn decide_tuccar(
     let mut cmds: Vec<Command> = Vec::new();
     let mut seq: u32 = 0;
     let player = state.players.get(&pid).expect("checked");
+    let ttl = state.config.balance.default_order_ttl;
 
     // 1) Kervan yoksa al — ilki bedava.
     let caravan_count = u32::try_from(state.caravans.values().filter(|c| c.owner == pid).count())
@@ -358,7 +359,7 @@ fn decide_tuccar(
             if player.cash.as_cents() >= total {
                 let id = OrderId::new(npc_order_id(pid, tick, seq));
                 seq += 1;
-                if let Ok(o) = MarketOrder::new(
+                if let Ok(o) = MarketOrder::new_with_ttl(
                     id,
                     pid,
                     here,
@@ -367,6 +368,7 @@ fn decide_tuccar(
                     qty_target,
                     buy_price,
                     tick,
+                    ttl,
                 ) {
                     cmds.push(Command::SubmitOrder(o));
                 }
@@ -374,21 +376,59 @@ fn decide_tuccar(
         }
     }
 
-    // 3) Stoğu olan ürünleri bulundukları şehirde sat (kervan yoksa veya
-    //    arbitraj fırsatı yoksa likidite ver).
-    let mut entries: Vec<(CityId, ProductKind, u32)> = player
+    // 3) Stoğu olan ürünleri bulundukları şehirde sat.
+    // Raw ve finished dengesi önemli — eski kod top-2 qty alıyordu,
+    // finished goods dominant kalınca ham madde HİÇ satılmıyordu ve
+    // Sanayici fabrikaları aç kalıyordu. Yeni strateji:
+    //   - En yüksek qty'li 1 raw (varsa)
+    //   - En yüksek qty'li 1 finished (varsa)
+    //   - Fallback: genel top-2
+    let mut raw_entries: Vec<(CityId, ProductKind, u32)> = player
         .inventory
         .entries()
-        .filter(|(_, _, q)| *q > 0)
+        .filter(|(_, p, q)| p.is_raw() && *q > 0)
         .collect();
-    entries.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
-    for (city, product, qty) in entries.into_iter().take(2) {
+    raw_entries.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
+
+    let mut finished_entries: Vec<(CityId, ProductKind, u32)> = player
+        .inventory
+        .entries()
+        .filter(|(_, p, q)| p.is_finished() && *q > 0)
+        .collect();
+    finished_entries.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
+
+    let mut to_sell: Vec<(CityId, ProductKind, u32)> = Vec::new();
+    if let Some(raw) = raw_entries.first() {
+        to_sell.push(*raw);
+    }
+    if let Some(fin) = finished_entries.first() {
+        to_sell.push(*fin);
+    }
+    // İki slot dolmadıysa genel listeyle tamamla.
+    if to_sell.len() < 2 {
+        let mut all: Vec<(CityId, ProductKind, u32)> = player
+            .inventory
+            .entries()
+            .filter(|(_, _, q)| *q > 0)
+            .collect();
+        all.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
+        for e in all {
+            if !to_sell.iter().any(|t| t.0 == e.0 && t.1 == e.1) {
+                to_sell.push(e);
+                if to_sell.len() >= 2 {
+                    break;
+                }
+            }
+        }
+    }
+
+    for (city, product, qty) in to_sell {
         let target = market_or_base(state, city, product);
         let sell_price = Money::from_cents((target.as_cents() * 105) / 100);
         let sell_qty = qty.min(15);
         let id = OrderId::new(npc_order_id(pid, tick, seq));
         seq += 1;
-        if let Ok(o) = MarketOrder::new(
+        if let Ok(o) = MarketOrder::new_with_ttl(
             id,
             pid,
             city,
@@ -397,6 +437,7 @@ fn decide_tuccar(
             sell_qty,
             sell_price,
             tick,
+            ttl,
         ) {
             cmds.push(Command::SubmitOrder(o));
         }
@@ -407,10 +448,233 @@ fn decide_tuccar(
 }
 
 // =============================================================================
+// AliciNpc — saf alıcı (kervan/fabrika yok, sadece buy emri)
+// =============================================================================
+
+/// Saf alıcı NPC. Seed'de `name` "NPC-Alıcı" prefix'i ile eklenen oyuncular
+/// bu davranışı alır. Ne rol oynadıkları önemli değil — her tick 3 buy emri
+/// verir, bias **finished goods**'a. Finished goods talebi piyasaya insan
+/// oyuncunun üretimi için alıcı bulmasını sağlar.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AliciNpc;
+
+impl NpcBehavior for AliciNpc {
+    fn decide(
+        &self,
+        state: &GameState,
+        self_id: PlayerId,
+        rng: &mut ChaCha8Rng,
+        tick: Tick,
+    ) -> Vec<Command> {
+        let Some(player) = state.players.get(&self_id) else {
+            return Vec::new();
+        };
+        let ttl = state.config.balance.default_order_ttl;
+
+        // 3 emir: %70 finished (oyuncu üretimi alıcı bulsun), %30 raw.
+        // Deterministic: city × product RNG ile seçilir.
+        let mut cmds = Vec::new();
+        for seq in 0..3u32 {
+            let product = if rng.random_ratio(7, 10) {
+                // Finished goods — oyuncu üretimine talep.
+                let idx = rng.random_range(0usize..ProductKind::FINISHED_GOODS.len());
+                ProductKind::FINISHED_GOODS[idx]
+            } else {
+                pick_product(rng)
+            };
+            let city = pick_city(rng);
+            let market = market_or_base(state, city, product);
+            // %8 üzerine ödemeye hazır — Tüccar satışıyla (ask ~%105) overlap
+            // yaratır, piyasa likiditesi kırılmasın. Her tick rastgele
+            // %5-%10 arasında oynayarak fiyat dinamiği verir.
+            let premium = rng.random_range(105u32..=110);
+            let bid_price = Money::from_cents((market.as_cents() * i64::from(premium)) / 100);
+            let qty: u32 = rng.random_range(10u32..=25);
+            let total = bid_price.as_cents().saturating_mul(i64::from(qty));
+            if player.cash.as_cents() < total {
+                continue;
+            }
+            let id = OrderId::new(npc_order_id(self_id, tick, seq));
+            if let Ok(o) = MarketOrder::new_with_ttl(
+                id,
+                self_id,
+                city,
+                product,
+                OrderSide::Buy,
+                qty,
+                bid_price,
+                tick,
+                ttl,
+            ) {
+                cmds.push(Command::SubmitOrder(o));
+            }
+        }
+        cmds
+    }
+}
+
+// =============================================================================
+// EsnafNpc — saf satıcı (dükkan, devasa stok, sürekli arz)
+// =============================================================================
+
+/// Saf satıcı NPC. Seed'de `name` "NPC-Esnaf" prefix'i olan oyuncular bu
+/// davranışı alır. Her tick 4 sell emri verir, bias **raw materials**'a
+/// (oyuncunun fabrika hammaddesi için talebi karşılar). Kervan/fabrika yok,
+/// sadece stoğundan satar. Fiyat market × 102% (hafif markup, dump değil).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EsnafNpc;
+
+impl NpcBehavior for EsnafNpc {
+    fn decide(
+        &self,
+        state: &GameState,
+        self_id: PlayerId,
+        rng: &mut ChaCha8Rng,
+        tick: Tick,
+    ) -> Vec<Command> {
+        let Some(player) = state.players.get(&self_id) else {
+            return Vec::new();
+        };
+        let ttl = state.config.balance.default_order_ttl;
+
+        // Yarı-pasif: tick'in %50'sinde tamamen sessiz (dükkan kapalı).
+        // Aktif olduğunda 1-2 satış emri verir, 4 değil — Esnaflar piyasaya
+        // dominant olmasın, oyuncu emirleri de yer bulsun. "Pazardaki dükkanlar"
+        // hissi var ama piyasayı dolduran ana güç oyuncu/Spekulator/Tüccar.
+        if rng.random_ratio(1, 2) {
+            return Vec::new();
+        }
+
+        let order_count = rng.random_range(1u32..=2);
+        let mut cmds = Vec::new();
+        for seq in 0..order_count {
+            let product = if rng.random_ratio(6, 10) {
+                let idx = rng.random_range(0usize..ProductKind::RAW_MATERIALS.len());
+                ProductKind::RAW_MATERIALS[idx]
+            } else {
+                let idx = rng.random_range(0usize..ProductKind::FINISHED_GOODS.len());
+                ProductKind::FINISHED_GOODS[idx]
+            };
+            let city = pick_city(rng);
+            let have = player.inventory.get(city, product);
+            if have == 0 {
+                continue;
+            }
+            let market = market_or_base(state, city, product);
+            let ask_price = Money::from_cents((market.as_cents() * 102) / 100);
+            let sell_qty = rng.random_range(10u32..=25).min(have);
+            let id = OrderId::new(npc_order_id(self_id, tick, seq));
+            if let Ok(o) = MarketOrder::new_with_ttl(
+                id,
+                self_id,
+                city,
+                product,
+                OrderSide::Sell,
+                sell_qty,
+                ask_price,
+                tick,
+                ttl,
+            ) {
+                cmds.push(Command::SubmitOrder(o));
+            }
+        }
+        cmds
+    }
+}
+
+// =============================================================================
+// SpekulatorNpc — market maker (spread doldurur, mallar bekleyici kalmasın)
+// =============================================================================
+
+/// Spekülatör NPC — her tick **iki** (city, product) için **hem bid hem ask**
+/// emir verir. Bid market × 0.97, ask market × 1.03 → ~%6 spread, eşleşme
+/// olmazsa NPC iki uçta da likidite tutuyor; başka oyuncu/NPC ortadan
+/// rahatlıkla geçebilir. Net etki: pazar sürekli akar, "mallar bekliyor"
+/// hissini öldürür.
+///
+/// Risk yönetimi: stoğu varsa sat, yoksa sadece bid (yarısı için bile yeterli).
+/// Nakit < `bid_total` ise bid'i atla. Bu sayede iflas etmez ama tutarlı likidite verir.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SpekulatorNpc;
+
+impl NpcBehavior for SpekulatorNpc {
+    fn decide(
+        &self,
+        state: &GameState,
+        self_id: PlayerId,
+        rng: &mut ChaCha8Rng,
+        tick: Tick,
+    ) -> Vec<Command> {
+        let Some(player) = state.players.get(&self_id) else {
+            return Vec::new();
+        };
+        let ttl = state.config.balance.default_order_ttl;
+        let mut cmds = Vec::new();
+        let mut seq: u32 = 0;
+
+        // 2 (city, product) seç ve her biri için bid+ask emir çifti üret.
+        for _ in 0..2u32 {
+            let city = pick_city(rng);
+            let product = pick_product(rng);
+            let market = market_or_base(state, city, product);
+            let market_cents = market.as_cents();
+
+            // Ask (sat) — stoğum varsa
+            let have = player.inventory.get(city, product);
+            if have > 0 {
+                let ask_cents = (market_cents * 103) / 100;
+                let qty = have.min(rng.random_range(5u32..=15));
+                let id = OrderId::new(npc_order_id(self_id, tick, seq));
+                seq += 1;
+                if let Ok(o) = MarketOrder::new_with_ttl(
+                    id,
+                    self_id,
+                    city,
+                    product,
+                    OrderSide::Sell,
+                    qty,
+                    Money::from_cents(ask_cents),
+                    tick,
+                    ttl,
+                ) {
+                    cmds.push(Command::SubmitOrder(o));
+                }
+            }
+
+            // Bid (al) — nakit yetiyorsa
+            let bid_cents = (market_cents * 97) / 100;
+            let qty = rng.random_range(5u32..=15);
+            let total = bid_cents.saturating_mul(i64::from(qty));
+            if player.cash.as_cents() >= total {
+                let id = OrderId::new(npc_order_id(self_id, tick, seq));
+                seq += 1;
+                if let Ok(o) = MarketOrder::new_with_ttl(
+                    id,
+                    self_id,
+                    city,
+                    product,
+                    OrderSide::Buy,
+                    qty,
+                    Money::from_cents(bid_cents),
+                    tick,
+                    ttl,
+                ) {
+                    cmds.push(Command::SubmitOrder(o));
+                }
+            }
+        }
+
+        cmds
+    }
+}
+
+// =============================================================================
 // Dispatcher
 // =============================================================================
 
 /// Tüm NPC'ler için bu tick'e ait komut setini, verilen zorluğa göre üret.
+/// Pure-buyer ve pure-seller davranışları Difficulty'den bağımsız; diğerleri
+/// Difficulty'ye göre `MarketMaker` (Easy) veya `SmartTrader` (Hard).
 #[must_use]
 pub fn decide_all_npcs(
     state: &GameState,
@@ -425,9 +689,18 @@ pub fn decide_all_npcs(
         .collect();
     let mut cmds = Vec::new();
     for pid in npc_ids {
-        let next: Vec<Command> = match difficulty {
-            Difficulty::Easy => MarketMaker.decide(state, pid, rng, tick),
-            Difficulty::Hard => SmartTrader.decide(state, pid, rng, tick),
+        // Dispatch — player.npc_kind structural ayrımına göre. Set edilmemiş
+        // (None) NPC'ler `Difficulty`'ye göre genel `MarketMaker`/`SmartTrader`'a düşer.
+        let kind = state.players.get(&pid).and_then(|p| p.npc_kind);
+        let next: Vec<Command> = match kind {
+            Some(NpcKind::Alici) => AliciNpc.decide(state, pid, rng, tick),
+            Some(NpcKind::Esnaf) => EsnafNpc.decide(state, pid, rng, tick),
+            Some(NpcKind::Spekulator) => SpekulatorNpc.decide(state, pid, rng, tick),
+            // Sanayici / Tüccar / None → zorluğa göre.
+            _ => match difficulty {
+                Difficulty::Easy => MarketMaker.decide(state, pid, rng, tick),
+                Difficulty::Hard => SmartTrader.decide(state, pid, rng, tick),
+            },
         };
         cmds.extend(next);
     }
@@ -440,6 +713,31 @@ pub fn decide_all_npcs(
 
 fn pick_city(rng: &mut ChaCha8Rng) -> CityId {
     CityId::ALL[rng.random_range(0usize..CityId::ALL.len())]
+}
+
+/// NPC-Sanayici için en kârlı şehri seçer: o şehrin raw fiyatı ile finished
+/// fiyatı arasındaki marj en yüksek olan. Fiyat son clearing → baseline → base
+/// fallback sırasıyla okunur.
+fn best_factory_city(state: &GameState) -> CityId {
+    CityId::ALL
+        .iter()
+        .copied()
+        .max_by_key(|city| {
+            let (raw, finished) = city_specialty(state, *city);
+            let raw_cents = market_or_base(state, *city, raw).as_cents();
+            let fin_cents = market_or_base(state, *city, finished).as_cents();
+            fin_cents.saturating_sub(raw_cents)
+        })
+        .unwrap_or(CityId::Istanbul)
+}
+
+/// Şehir uzmanlaşması — bu oyundaki (raw, finished) çifti. Eskiden
+/// hard-coded'du; şimdi `state.cheap_raw_for(city)` üstünden state-aware →
+/// her oyunda farklı eşleşme. `finished` her zaman raw'ın `finished_output`'u.
+fn city_specialty(state: &GameState, city: CityId) -> (ProductKind, ProductKind) {
+    let raw = state.cheap_raw_for(city);
+    let finished = raw.finished_output().unwrap_or(ProductKind::Kumas);
+    (raw, finished)
 }
 
 fn pick_product(rng: &mut ChaCha8Rng) -> ProductKind {
@@ -456,14 +754,25 @@ fn base_price(product: ProductKind) -> Money {
     Money::from_lira(lira).expect("fixed literal fits i64")
 }
 
-/// Pazarda son clearing fiyatı varsa onu, yoksa baz fiyatı döner.
-/// `SmartTrader`'ın "fair value" hesabı için.
+/// Pazarda son clearing fiyatı varsa onu, yoksa seed anında üretilmiş
+/// `price_baseline`'ı (aktif şok varsa o çarpılmış), o da yoksa hardcoded
+/// base'i döner. `SmartTrader`'ın "fair value" hesabı için.
+///
+/// Aktif şok mekanizması: olay motoru `state.active_shocks`'a yazar; NPC
+/// fiyat referansı bunu otomatik içerir → kuraklık olduğunda NPC'ler
+/// daha pahalıya satıp daha pahalıya alır → piyasa fiyatı yukarı kayar.
 fn market_or_base(state: &GameState, city: CityId, product: ProductKind) -> Money {
-    state
+    if let Some((_, last)) = state
         .price_history
         .get(&(city, product))
         .and_then(|v| v.last())
-        .map_or_else(|| base_price(product), |(_, p)| *p)
+    {
+        return *last;
+    }
+    if let Some(eff) = state.effective_baseline(city, product) {
+        return eff;
+    }
+    base_price(product)
 }
 
 /// NPC `OrderId`: insan oyuncu havuzu ile çakışmasın diye yüksek ofsetli.
@@ -613,5 +922,75 @@ mod tests {
             cmds.iter().any(|c| matches!(c, Command::BuyCaravan { .. })),
             "Tüccar kervan almayı denemeli: {cmds:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // AliciNpc testleri
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn alici_produces_three_buy_orders_per_tick() {
+        let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        let npc = Player::new(
+            PlayerId::new(1),
+            "Selim Bey",
+            Role::Tuccar,
+            Money::from_lira(100_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Alici);
+        s.players.insert(npc.id, npc);
+        let mut rng = fresh_rng();
+        let cmds = AliciNpc.decide(&s, PlayerId::new(1), &mut rng, Tick::new(1));
+        assert_eq!(cmds.len(), 3);
+        for c in &cmds {
+            match c {
+                Command::SubmitOrder(o) => assert!(matches!(o.side, OrderSide::Buy)),
+                other => panic!("alici sadece buy emri vermeli: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn alici_skips_orders_when_cash_insufficient() {
+        let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        let npc = Player::new(
+            PlayerId::new(1),
+            "Selim Bey",
+            Role::Tuccar,
+            Money::from_lira(50).unwrap(), // çok düşük — finished goods için yetmez
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Alici);
+        s.players.insert(npc.id, npc);
+        let mut rng = fresh_rng();
+        let cmds = AliciNpc.decide(&s, PlayerId::new(1), &mut rng, Tick::new(1));
+        assert!(
+            cmds.len() < 3,
+            "düşük nakitle 3 emir verilememeli, {} verildi",
+            cmds.len()
+        );
+    }
+
+    #[test]
+    fn dispatcher_routes_alici_kind_to_pure_buyer() {
+        let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        let alici = Player::new(
+            PlayerId::new(1),
+            "Zeynep Hanım",
+            Role::Tuccar,
+            Money::from_lira(100_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Alici);
+        s.players.insert(alici.id, alici);
+        let mut rng = fresh_rng();
+        let cmds = decide_all_npcs(&s, &mut rng, Tick::new(1), Difficulty::Hard);
+        // Hard mode'da tüccar olsa kervan alırdı; AliciNpc sadece buy verir.
+        assert!(cmds.iter().all(|c| matches!(c, Command::SubmitOrder(_))));
+        assert_eq!(cmds.len(), 3);
     }
 }

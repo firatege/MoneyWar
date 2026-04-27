@@ -49,7 +49,8 @@ use crate::{
     },
 };
 use moneywar_domain::{
-    CityId, Command, DomainError, GameState, MarketOrder, OrderId, PlayerId, ProductKind, Tick,
+    CityId, Command, DomainError, GameState, MarketOrder, Money, OrderId, PlayerId, ProductKind,
+    Tick,
 };
 
 /// Motoru bir tick ileri sarar.
@@ -89,12 +90,16 @@ pub fn advance_tick(
     }
 
     // Tick kapanışı sırası (Faz 6):
-    //   0. Olay motoru — RNG ile yeni olay tetikle, abonelere haber dağıt.
+    //   0a. Aktif piyasa şoklarından expire olanları temizle (yeni olay
+    //       eklenmeden — yeni olayın kendi etkisi tabii ki kalır).
+    //   0b. Olay motoru — RNG ile yeni olay tetikle, abonelere haber dağıt.
+    //       Fiyat şokunu da aynı yerde kaydeder.
     //   1. Üretim
     //   2. Taşıma
     //   3. Kontratlar (fulfill/breach)
     //   4. Krediler (vadesi gelen auto-settle)
     //   5. Hal Pazarı clearing
+    new_state.clear_expired_shocks(next_tick);
     advance_events(&mut new_state, &mut rng, &mut report, next_tick);
     advance_production(&mut new_state, &mut report, next_tick);
     advance_caravans(&mut new_state, &mut report, next_tick);
@@ -133,7 +138,7 @@ fn dispatch(
         Command::CancelOrder {
             order_id,
             requester,
-        } => process_cancel_order(state, *order_id, *requester),
+        } => process_cancel_order(state, report, tick, *order_id, *requester),
         Command::ProposeContract(proposal) => propose_contract_impl(state, report, tick, proposal),
         Command::AcceptContract {
             contract_id,
@@ -182,13 +187,15 @@ fn dispatch(
 ///
 /// Bluff alanı (§2) gereği cash/stok kilidi **yok** — validation minimal:
 /// - `MarketOrder::new` zaten `quantity > 0` ve `unit_price > 0`'ı garantiler.
-/// - Burada tek ek: aynı `OrderId` zaten book'ta ise reddet (idempotency).
+/// - Aynı `OrderId` zaten book'ta ise reddet (idempotency).
+/// - **Relist cooldown** (Faz 2): `(player, city, product)` için
+///   `current_tick < earliest_allowed_tick` ise reddet.
 ///
 /// Eşleşme bu fonksiyonda değil, tick sonunda `clear_markets` içinde (Faz 3B).
 fn process_submit_order(
     state: &mut GameState,
     order: &MarketOrder,
-    _tick: Tick,
+    tick: Tick,
 ) -> Result<(), EngineError> {
     let duplicate = state
         .order_book
@@ -201,6 +208,22 @@ fn process_submit_order(
             order.id
         ))));
     }
+
+    // Relist cooldown check.
+    let key = (order.player, order.city, order.product);
+    if let Some(&allowed_tick) = state.relist_cooldown.get(&key) {
+        if tick.is_before(allowed_tick) {
+            let ticks_left = allowed_tick.value().saturating_sub(tick.value());
+            return Err(EngineError::Domain(DomainError::Validation(format!(
+                "relist cooldown active for {} {} at {}: {} tick kaldı",
+                order.player, order.product, order.city, ticks_left
+            ))));
+        }
+        // Cooldown dolmuş → temizle (bu emir onu tüketecek, yeni cooldown ileri
+        // yazılacak emir bittikçe).
+        state.relist_cooldown.remove(&key);
+    }
+
     state
         .order_book
         .entry((order.city, order.product))
@@ -209,36 +232,93 @@ fn process_submit_order(
     Ok(())
 }
 
+/// `(player, city, product)` için cooldown'u `tick + ticks`'e çeker.
+/// Emir `bittiğinde` (expire / cancel / full fill) çağrılır.
+pub(crate) fn set_relist_cooldown(
+    state: &mut GameState,
+    player: PlayerId,
+    city: CityId,
+    product: ProductKind,
+    tick: Tick,
+) {
+    let ticks = state.config.balance.relist_cooldown_ticks;
+    if ticks == 0 {
+        return;
+    }
+    let until = tick.checked_add(ticks).unwrap_or(Tick::new(u32::MAX));
+    state.relist_cooldown.insert((player, city, product), until);
+}
+
 /// `CancelOrder` — book'tan emri çıkarır (tick açılmadan önce geri çekme).
 ///
 /// Sahiplik kontrolü: `requester == order.player` olmalı. Emir bulunamazsa
 /// veya başkasının emri ise `Validation` hatası döner; `CommandRejected`
 /// log kaydına yazılır, state bozulmaz.
+///
+/// **Erken çekme cezası** (Faz 2): `penalty = notional × pct / 100 × remaining/ttl`.
+/// Ceza oyuncunun nakitinden düşülür; yetmezse mevcut nakit kadar (0'a indirilmez
+/// — Money `ZERO` olsa da debit saturate etmeli). `OrderCancelled` event'iyle
+/// kaydedilir.
 fn process_cancel_order(
     state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
     order_id: OrderId,
     requester: PlayerId,
 ) -> Result<(), EngineError> {
-    let mut target: Option<((CityId, ProductKind), PlayerId)> = None;
+    // Önce emri bul — tam kopyasını al ki ceza hesabı + event için kullanabilelim.
+    let mut target: Option<((CityId, ProductKind), MarketOrder)> = None;
     for (key, orders) in &state.order_book {
         if let Some(o) = orders.iter().find(|o| o.id == order_id) {
-            target = Some((*key, o.player));
+            target = Some((*key, o.clone()));
             break;
         }
     }
 
-    let Some((key, owner)) = target else {
+    let Some((key, order)) = target else {
         return Err(EngineError::Domain(DomainError::Validation(format!(
             "order {order_id} not found"
         ))));
     };
 
-    if owner != requester {
+    if order.player != requester {
         return Err(EngineError::Domain(DomainError::Validation(format!(
-            "order {order_id} owned by {owner}, not {requester}"
+            "order {order_id} owned by {}, not {requester}",
+            order.player
         ))));
     }
 
+    // Ceza: notional × pct / 100 × remaining / ttl.
+    let balance = state.config.balance;
+    let penalty_cents: i64 = if balance.cancel_penalty_pct > 0 && order.ttl_ticks > 0 {
+        let notional = order
+            .unit_price
+            .as_cents()
+            .saturating_mul(i64::from(order.quantity));
+        // (notional × pct × remaining) / (100 × ttl)
+        let scaled = notional
+            .saturating_mul(i64::from(balance.cancel_penalty_pct))
+            .saturating_mul(i64::from(order.remaining_ticks));
+        let denom = 100_i64.saturating_mul(i64::from(order.ttl_ticks));
+        if denom == 0 { 0 } else { scaled / denom }
+    } else {
+        0
+    };
+    let penalty = Money::from_cents(penalty_cents);
+
+    // Ceza kadar nakit düş (saturate — yetersizse mevcut kadar çek).
+    let applied_penalty = if let Some(player) = state.players.get_mut(&requester) {
+        let available = player.cash.as_cents();
+        let take = available.min(penalty_cents).max(0);
+        if take > 0 {
+            let _ = player.debit(Money::from_cents(take));
+        }
+        Money::from_cents(take)
+    } else {
+        Money::ZERO
+    };
+
+    // Kitaptan emri çıkar.
     let orders = state
         .order_book
         .get_mut(&key)
@@ -246,6 +326,35 @@ fn process_cancel_order(
     orders.retain(|o| o.id != order_id);
     if orders.is_empty() {
         state.order_book.remove(&key);
+    }
+
+    report.push(LogEntry::order_cancelled(
+        tick,
+        order_id,
+        requester,
+        key.0,
+        key.1,
+        order.side,
+        order.quantity,
+        order.remaining_ticks,
+        order.ttl_ticks,
+        applied_penalty,
+    ));
+
+    // Relist cooldown: aynı (player, city, product) tekrar emir veremez.
+    set_relist_cooldown(state, requester, key.0, key.1, tick);
+
+    // Ceza istenen miktardan az çekildiyse kayıt dursun — silent değil.
+    if applied_penalty.as_cents() < penalty.as_cents() {
+        report.push(LogEntry::command_rejected(
+            tick,
+            requester,
+            Command::CancelOrder {
+                order_id,
+                requester,
+            },
+            format!("cancel penalty partially applied: wanted {penalty}, took {applied_penalty}"),
+        ));
     }
     Ok(())
 }
@@ -516,6 +625,70 @@ mod tests {
         let (s1b, r1b) = advance_tick(&s0, &cmds).unwrap();
         assert_eq!(s1a, s1b);
         assert_eq!(r1a, r1b);
+    }
+
+    #[test]
+    fn cancel_ttl1_order_at_full_ttl_charges_full_penalty() {
+        // TTL=1 emir, hemen cancel → remaining=1, ttl=1, ratio=1.
+        // 10 birim × 5₺ = 50₺ notional. Default penalty %2 → 1₺ = 100 cent.
+        let mut s0 = state();
+        // Oyuncuya nakit ver (varsayılan player yok, seed edelim).
+        let mut player = moneywar_domain::Player::new(
+            PlayerId::new(7),
+            "P7",
+            moneywar_domain::Role::Tuccar,
+            moneywar_domain::Money::from_lira(1_000).unwrap(),
+            false,
+        )
+        .unwrap();
+        let _ = player
+            .inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 100);
+        s0.players.insert(player.id, player);
+
+        let cmds = vec![submit_order(7, 1), cancel_order(7, 1)];
+        let (s1, report) = advance_tick(&s0, &cmds).unwrap();
+
+        // Ceza event'i var mı?
+        let penalty_ev = report
+            .entries
+            .iter()
+            .find_map(|e| match &e.event {
+                crate::report::LogEvent::OrderCancelled { penalty, .. } => Some(*penalty),
+                _ => None,
+            })
+            .expect("OrderCancelled event");
+        // 10 × 500 = 5000 cent × 2% = 100 cent = 1₺.
+        assert_eq!(penalty_ev, moneywar_domain::Money::from_cents(100));
+
+        // Oyuncu cash'i 1000₺ - 1₺ = 999₺.
+        let final_cash = s1.players[&PlayerId::new(7)].cash;
+        assert_eq!(final_cash, moneywar_domain::Money::from_lira(999).unwrap());
+    }
+
+    #[test]
+    fn cancel_caps_penalty_to_available_cash() {
+        // Cezayı karşılayamayacak kadar az nakit → saturate (mevcut kadar çek).
+        let mut s0 = state();
+        let mut player = moneywar_domain::Player::new(
+            PlayerId::new(8),
+            "P8",
+            moneywar_domain::Role::Tuccar,
+            moneywar_domain::Money::from_cents(50), // 0.50₺ — tam ceza 1₺, 50 cent keseriz
+            false,
+        )
+        .unwrap();
+        let _ = player
+            .inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 100);
+        s0.players.insert(player.id, player);
+
+        let cmds = vec![submit_order(8, 1), cancel_order(8, 1)];
+        let (s1, _report) = advance_tick(&s0, &cmds).unwrap();
+        assert_eq!(
+            s1.players[&PlayerId::new(8)].cash,
+            moneywar_domain::Money::ZERO
+        );
     }
 
     #[test]

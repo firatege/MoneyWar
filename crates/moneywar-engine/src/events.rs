@@ -27,8 +27,8 @@
 //! sistemi zaten yeterli (erken haber → erken pozisyon).
 
 use moneywar_domain::{
-    CityId, EventId, EventSeverity, GameEvent, GameState, NewsId, NewsItem, NewsTier, ProductKind,
-    Tick,
+    ActiveShock, CityId, EventId, EventSeverity, GameEvent, GameState, NewsId, NewsItem, NewsTier,
+    ProductKind, Tick,
 };
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -65,6 +65,90 @@ pub(crate) fn advance_events(
     ));
 
     dispatch_news(state, game_event, event_tick);
+    apply_shock(state, game_event, event_tick);
+}
+
+/// Olayın baseline fiyatına etkisini `state.active_shocks`'a kaydeder.
+/// `Drought`/`Strike` → fiyat artar (kıtlık). `BumperHarvest` → fiyat düşer (bolluk).
+/// `RoadClosure` → her iki şehre minor pozitif şok (tedarik kesintisi).
+/// `NewMarket` → talep patlaması, fiyat artar.
+///
+/// Şok `event_tick`'ten itibaren `SHOCK_DURATION` tick boyunca aktif.
+/// Aynı (city, product) için yeni şok eskisinin üstüne yazılır.
+fn apply_shock(state: &mut GameState, event: GameEvent, event_tick: Tick) {
+    const SHOCK_DURATION: u32 = 4;
+    /// `NewMarket`'in talep şokunun severity'si yok; makul orta değer.
+    const SHOCK_NEW_MARKET_PCT: i32 = 12;
+
+    // SHOCK_*_PCT sabitleri u32 (8/18/35) — i32 sınırının çok altında,
+    // bu cast hiçbir zaman wrap etmez.
+    #[allow(clippy::cast_possible_wrap)]
+    let pct: i32 = match event.severity() {
+        Some(EventSeverity::Minor) => moneywar_domain::balance::SHOCK_MINOR_PCT as i32,
+        Some(EventSeverity::Major) => moneywar_domain::balance::SHOCK_MAJOR_PCT as i32,
+        Some(EventSeverity::Macro) => moneywar_domain::balance::SHOCK_MACRO_PCT as i32,
+        None => SHOCK_NEW_MARKET_PCT,
+    };
+
+    let expires_at = event_tick.checked_add(SHOCK_DURATION).unwrap_or(event_tick);
+
+    match event {
+        GameEvent::Drought { city, product, .. } | GameEvent::Strike { city, product, .. } => {
+            // Kıtlık: fiyat yukarı.
+            state.active_shocks.insert(
+                (city, product),
+                ActiveShock {
+                    multiplier_pct: pct,
+                    expires_at,
+                    source: event,
+                },
+            );
+        }
+        GameEvent::BumperHarvest { city, product, .. } => {
+            // Bolluk: fiyat aşağı (negatif yüzde).
+            state.active_shocks.insert(
+                (city, product),
+                ActiveShock {
+                    multiplier_pct: -pct,
+                    expires_at,
+                    source: event,
+                },
+            );
+        }
+        GameEvent::NewMarket { city, product, .. } => {
+            state.active_shocks.insert(
+                (city, product),
+                ActiveShock {
+                    multiplier_pct: pct,
+                    expires_at,
+                    source: event,
+                },
+            );
+        }
+        GameEvent::RoadClosure { from, to, .. } => {
+            // Yol kapandı → her iki şehirde tüm ürünler hafif primer.
+            // Half severity (yol etkisi tek üründen daha geniş ama sığ).
+            let half = pct / 2;
+            for product in ProductKind::ALL {
+                state.active_shocks.insert(
+                    (from, product),
+                    ActiveShock {
+                        multiplier_pct: half,
+                        expires_at,
+                        source: event,
+                    },
+                );
+                state.active_shocks.insert(
+                    (to, product),
+                    ActiveShock {
+                        multiplier_pct: half,
+                        expires_at,
+                        source: event,
+                    },
+                );
+            }
+        }
+    }
 }
 
 /// Sezon ilerleme % ile olasılıklı olay seç. `None` = bu tick olay yok.
@@ -96,17 +180,17 @@ fn roll_event(state: &GameState, rng: &mut ChaCha8Rng, tick: Tick) -> Option<Gam
     match kind {
         0 => Some(GameEvent::Drought {
             city,
-            product: city_cheap_raw(city),
+            product: state.cheap_raw_for(city),
             severity,
         }),
         1 => Some(GameEvent::Strike {
             city,
-            product: city_cheap_raw(city),
+            product: state.cheap_raw_for(city),
             severity,
         }),
         2 => Some(GameEvent::BumperHarvest {
             city,
-            product: city_cheap_raw(city),
+            product: state.cheap_raw_for(city),
             severity,
         }),
         _ => {
@@ -135,11 +219,6 @@ fn pick_different_city(rng: &mut ChaCha8Rng, exclude: CityId) -> CityId {
             return c;
         }
     }
-}
-
-/// Şehrin doğal uzmanlaşma ham maddesi (§3) — olay ürün seçimi için.
-fn city_cheap_raw(city: CityId) -> ProductKind {
-    city.cheap_raw()
 }
 
 /// Her oyuncunun efektif tier'ına göre haber üret + inbox'a ekle.

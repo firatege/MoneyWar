@@ -15,10 +15,23 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Caravan, CaravanId, CityId, Contract, ContractId, Factory, FactoryId, Loan, LoanId,
+    Caravan, CaravanId, CityId, Contract, ContractId, Factory, FactoryId, GameEvent, Loan, LoanId,
     MarketOrder, Money, NewsItem, NewsTier, Player, PlayerId, ProductKind, RoomConfig, RoomId,
     Tick,
 };
+
+/// Aktif piyasa şoku — bir olayın `(city, product)` üzerinde geçici fiyat
+/// etkisi. Pozitif `multiplier_pct` baseline'ı yukarı (kıtlık), negatif
+/// aşağı (bolluk) iter. `expires_at` tick'inden itibaren kaldırılır.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveShock {
+    /// Şokun yüzde etkisi. Örn. +18 → baseline × 1.18, -10 → × 0.90.
+    pub multiplier_pct: i32,
+    /// Bu tick'e gelindiğinde şok temizlenir.
+    pub expires_at: Tick,
+    /// Şoku üreten olay (UI için "Drought in Ankara" gibi etiketleme).
+    pub source: GameEvent,
+}
 
 /// Tek bir oda'nın tüm oyun durumu.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +64,37 @@ pub struct GameState {
     /// `(city, product) → [(tick, takas_fiyati), ...]`. Skor için son 5 tick
     /// ortalaması buradan hesaplanır (§9).
     pub price_history: BTreeMap<(CityId, ProductKind), Vec<(Tick, Money)>>,
+
+    /// Oyun başında seed RNG ile üretilen baz fiyat dağılımı. Her `(city, product)`
+    /// için sabit. NPC davranışları bu tabloyu "fair value" olarak kullanır:
+    /// son clearing yoksa buradan, varsa karışımla. Her oyun farklı olduğu için
+    /// gerçek arbitraj fırsatı yaratır (bazı şehirler pahalı, bazıları ucuz).
+    /// Boş olursa NPC eski hardcoded base'e düşer (`balance::NPC_BASE_PRICE_*`).
+    #[serde(default)]
+    pub price_baseline: BTreeMap<(CityId, ProductKind), Money>,
+
+    /// Relist cooldown: `(player, city, product) → earliest_allowed_tick`.
+    /// Bir emir bittiğinde (expire / cancel / full fill), bu anahtar
+    /// `current_tick + balance.relist_cooldown_ticks` değeriyle yazılır.
+    /// Submit sırasında `current_tick < earliest_allowed_tick` ise emir reddedilir.
+    /// Flash-place manipülasyonunu engeller.
+    #[serde(default)]
+    pub relist_cooldown: BTreeMap<(PlayerId, CityId, ProductKind), Tick>,
+
+    /// Aktif piyasa şokları — olay motoru ekler, tick başında expire olanlar
+    /// temizlenir. NPC fair-value hesabı ve UI bu map'ten okur. Aynı
+    /// `(city, product)` için yeni şok eskisinin üstüne yazılır (override).
+    #[serde(default)]
+    pub active_shocks: BTreeMap<(CityId, ProductKind), ActiveShock>,
+
+    /// Bu oyunun şehir-uzmanlaşma haritası. Hangi şehir hangi ham maddeyi
+    /// doğal olarak ucuza üretir? Seed sırasında 3 raw'ı 3 şehre **shuffled**
+    /// atar — her oyun farklı: bir oyunda İstanbul → Buğday, sonraki oyunda
+    /// İstanbul → Zeytin. "Ezbere strateji" sorununu kırar (oyuncu her sezon
+    /// haritayı keşfeder). Boş ise fallback `CityId::cheap_raw()`'a düşer
+    /// (geriye uyumluluk).
+    #[serde(default)]
+    pub city_specialty: BTreeMap<CityId, ProductKind>,
 
     /// Deterministik ID üretimi için sayaçlar. Engine yeni entity kurduğunda bunları artırır.
     pub counters: IdCounters,
@@ -85,8 +129,48 @@ impl GameState {
             news_inbox: BTreeMap::new(),
             loans: BTreeMap::new(),
             price_history: BTreeMap::new(),
+            price_baseline: BTreeMap::new(),
+            relist_cooldown: BTreeMap::new(),
+            active_shocks: BTreeMap::new(),
+            city_specialty: BTreeMap::new(),
             counters: IdCounters::default(),
         }
+    }
+
+    /// Bu oyundaki "ucuz ham" eşleşmesini döner. State'te tanımlı ise onu,
+    /// yoksa derleme zamanı default'una düşer. NPC ve UI bu helper'ı kullanır.
+    #[must_use]
+    pub fn cheap_raw_for(&self, city: CityId) -> ProductKind {
+        self.city_specialty
+            .get(&city)
+            .copied()
+            .unwrap_or_else(|| city.cheap_raw())
+    }
+
+    /// Baseline fiyatı + aktif şok çarpımı. Baseline yoksa `None`. Şok yoksa
+    /// baseline aynen döner. NPC ve UI bu helper'ı çağırır.
+    #[must_use]
+    pub fn effective_baseline(&self, city: CityId, product: ProductKind) -> Option<Money> {
+        let base = self.price_baseline.get(&(city, product)).copied()?;
+        let shock = self.active_shocks.get(&(city, product));
+        let pct = shock.map_or(0, |s| s.multiplier_pct);
+        if pct == 0 {
+            return Some(base);
+        }
+        // base × (100 + pct) / 100. i32 → i64 widening ile overflow güvenli.
+        let multiplier = 100i64 + i64::from(pct);
+        let cents = base
+            .as_cents()
+            .saturating_mul(multiplier)
+            .saturating_div(100);
+        Some(Money::from_cents(cents.max(1)))
+    }
+
+    /// Tick'e gelindiğinde expire olan tüm şokları temizler. Tick lifecycle'ın
+    /// en başında çağrılır.
+    pub fn clear_expired_shocks(&mut self, current: Tick) {
+        self.active_shocks
+            .retain(|_, shock| current.is_before(shock.expires_at));
     }
 
     /// Sezonun ilerleme yüzdesi. Kolaylık getter'ı.

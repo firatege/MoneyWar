@@ -12,7 +12,7 @@
 
 use moneywar_domain::{
     CaravanId, CityId, Command, ContractId, ContractState, EventId, FactoryId, GameEvent,
-    ListingKind, LoanId, Money, NewsTier, OrderId, PlayerId, ProductKind, Tick,
+    ListingKind, LoanId, Money, NewsTier, OrderId, OrderSide, PlayerId, ProductKind, Tick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -502,6 +502,65 @@ impl LogEntry {
         }
     }
 
+    /// Emir oyuncu tarafından çekildi. Pro-rata ceza uygulanır.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn order_cancelled(
+        tick: Tick,
+        order_id: OrderId,
+        player: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        side: OrderSide,
+        leftover_qty: u32,
+        remaining_ticks: u32,
+        ttl_ticks: u32,
+        penalty: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::OrderCancelled {
+                order_id,
+                player,
+                city,
+                product,
+                side,
+                leftover_qty,
+                remaining_ticks,
+                ttl_ticks,
+                penalty,
+            },
+        }
+    }
+
+    /// Emir TTL sıfıra indi, kalıntı miktar kitaptan düştü. `leftover_qty`
+    /// hiç eşleşmemiş miktar — submit'te kilit almadığımız için sahibinin
+    /// bakiyesine dokunmuyoruz.
+    #[must_use]
+    pub fn order_expired(
+        tick: Tick,
+        order_id: OrderId,
+        player: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        side: OrderSide,
+        leftover_qty: u32,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::OrderExpired {
+                order_id,
+                player,
+                city,
+                product,
+                side,
+                leftover_qty,
+            },
+        }
+    }
+
     /// Bir fill settle edilemedi (buyer cash yetmiyor veya seller stok yetmiyor).
     /// State dokunulmaz, para korunumu ihlal edilmez. Sadece log'a kayıt.
     #[must_use]
@@ -590,6 +649,32 @@ pub enum LogEvent {
         seller: PlayerId,
         quantity: u32,
         reason: String,
+    },
+
+    /// Emir TTL doldu, kalıntı (eşleşmeyen) miktar kitaptan düştü.
+    /// `leftover_qty` eşleşmeden kalan miktar; sahibinin cash/stok'una
+    /// dokunulmaz — submit sırasında kilit alınmıyordu (bluff alanı).
+    OrderExpired {
+        order_id: OrderId,
+        player: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        side: OrderSide,
+        leftover_qty: u32,
+    },
+
+    /// Oyuncu emri erken çekti. Ceza `penalty = notional × pct × remaining/ttl`.
+    /// `penalty` nakitten düşüldü (yetmezse mevcut nakit kadar kesildi).
+    OrderCancelled {
+        order_id: OrderId,
+        player: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        side: OrderSide,
+        leftover_qty: u32,
+        remaining_ticks: u32,
+        ttl_ticks: u32,
+        penalty: Money,
     },
 
     /// Oyuncu yeni fabrika kurdu. Sanayici tekeli.

@@ -42,6 +42,140 @@ impl std::fmt::Display for Preset {
     }
 }
 
+/// NPC kompozisyonu — kaç Sanayici + Tüccar + Alıcı + Esnaf + Spekülatör
+/// spawn edilsin.
+///
+/// - **Sanayici**: fabrika kurar, ham → finished üretir
+/// - **Tüccar**: arbitraj (al-sat şehirler arası)
+/// - **Alıcı**: saf alıcı — sadece buy emri (`AliciNpc` davranışı)
+/// - **Esnaf**: saf satıcı — sadece sell emri (`EsnafNpc` davranışı),
+///   dükkanda duran, devasa stok, arz tarafı dengeliyor
+/// - **Spekülatör**: her tick aynı (city, product) için hem bid hem ask
+///   emir verir. Market making — spread daraltır, "mallar bekliyor" sorununu
+///   doğrudan çözer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NpcComposition {
+    pub sanayici: u8,
+    pub tuccar: u8,
+    pub alici: u8,
+    pub esnaf: u8,
+    #[serde(default)]
+    pub spekulator: u8,
+}
+
+impl NpcComposition {
+    /// Default: 2 Sanayici + 2 Tüccar + 3 Alıcı + 2 Esnaf + 2 Spekülatör = 11 NPC.
+    /// Tek oyunculu modda bile pazar canlı — spekülatör spread'i hemen daraltır,
+    /// alıcı/esnaf arz-talebi taşır, sanayici/tüccar rekabet yaratır.
+    #[must_use]
+    pub const fn default_const() -> Self {
+        Self {
+            sanayici: 2,
+            tuccar: 2,
+            alici: 3,
+            esnaf: 2,
+            spekulator: 2,
+        }
+    }
+
+    #[must_use]
+    pub const fn total(&self) -> u8 {
+        self.sanayici
+            .saturating_add(self.tuccar)
+            .saturating_add(self.alici)
+            .saturating_add(self.esnaf)
+            .saturating_add(self.spekulator)
+    }
+}
+
+impl Default for NpcComposition {
+    fn default() -> Self {
+        Self::default_const()
+    }
+}
+
+/// Runtime dengeleme knob'ları — `moneywar.toml` ile override edilebilir.
+///
+/// `balance.rs`'deki `pub const`'lar compile-time sabit kalır; burası sadece
+/// **kullanıcı ayarlaması beklenen** değerler (TTL, cancel penalty, cooldown,
+/// NPC kompozisyonu).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GameBalance {
+    /// Emir wizard'da pre-fill edilecek default TTL.
+    pub default_order_ttl: u32,
+    /// Kullanıcının seçebileceği en uzun TTL.
+    pub max_order_ttl: u32,
+    /// Erken çekme cezası yüzdesi (`notional × pct × remaining_ticks / ttl_ticks`).
+    /// Faz 2'de devreye girer — şimdilik sadece config'de tutuluyor.
+    pub cancel_penalty_pct: u32,
+    /// Emir bittikten sonra aynı `(player, city, product)` için
+    /// yeni emir kabul edilmeden önce geçmesi gereken tick sayısı.
+    /// Faz 2'de devreye girer.
+    pub relist_cooldown_ticks: u32,
+    /// NPC kompozisyonu (kaç Sanayici/Tüccar/Alıcı spawn edilsin).
+    pub npcs: NpcComposition,
+}
+
+impl GameBalance {
+    /// TTL alt sınırı — emirler en az 1 clear pass'e katılmalı.
+    pub const MIN_ORDER_TTL: u32 = 1;
+    /// TTL üst sınırı (hardcoded sanity cap).
+    pub const MAX_ORDER_TTL_HARD: u32 = 50;
+
+    #[must_use]
+    pub const fn default_const() -> Self {
+        Self {
+            default_order_ttl: 3,
+            max_order_ttl: 10,
+            cancel_penalty_pct: 2,
+            relist_cooldown_ticks: 2,
+            npcs: NpcComposition::default_const(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.default_order_ttl < Self::MIN_ORDER_TTL
+            || self.default_order_ttl > self.max_order_ttl
+        {
+            return Err(DomainError::Validation(format!(
+                "default_order_ttl must be in [{}, max_order_ttl={}], got {}",
+                Self::MIN_ORDER_TTL,
+                self.max_order_ttl,
+                self.default_order_ttl
+            )));
+        }
+        if self.max_order_ttl > Self::MAX_ORDER_TTL_HARD {
+            return Err(DomainError::Validation(format!(
+                "max_order_ttl must be ≤ {}, got {}",
+                Self::MAX_ORDER_TTL_HARD,
+                self.max_order_ttl
+            )));
+        }
+        if self.cancel_penalty_pct > 100 {
+            return Err(DomainError::Validation(format!(
+                "cancel_penalty_pct must be ≤ 100, got {}",
+                self.cancel_penalty_pct
+            )));
+        }
+        if self.npcs.total() > RoomConfig::MAX_NPC {
+            return Err(DomainError::Validation(format!(
+                "npc composition total must be ≤ {}, got {}",
+                RoomConfig::MAX_NPC,
+                self.npcs.total()
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Default for GameBalance {
+    fn default() -> Self {
+        Self::default_const()
+    }
+}
+
 /// Oda ayarları. Motor bu config'i okuyup tick mantığını ona göre işler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomConfig {
@@ -52,6 +186,9 @@ pub struct RoomConfig {
     pub season_ticks: u32,
     pub npc_count: u8,
     pub max_human_players: u8,
+    /// Runtime knob'ları (TTL, ceza, cooldown).
+    #[serde(default)]
+    pub balance: GameBalance,
 }
 
 impl RoomConfig {
@@ -79,6 +216,7 @@ impl RoomConfig {
             season_ticks: 90,
             npc_count: 3,
             max_human_players: 5,
+            balance: GameBalance::default_const(),
         }
     }
 
@@ -91,6 +229,7 @@ impl RoomConfig {
             season_ticks: 150,
             npc_count: 4,
             max_human_players: 5,
+            balance: GameBalance::default_const(),
         }
     }
 
@@ -103,6 +242,7 @@ impl RoomConfig {
             season_ticks: 350,
             npc_count: 5,
             max_human_players: 5,
+            balance: GameBalance::default_const(),
         }
     }
 
@@ -119,9 +259,17 @@ impl RoomConfig {
             season_ticks,
             npc_count,
             max_human_players,
+            balance: GameBalance::default_const(),
         };
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Mevcut config'in üstüne yeni `balance` takar (preset/tick değişmez).
+    #[must_use]
+    pub const fn with_balance(mut self, balance: GameBalance) -> Self {
+        self.balance = balance;
+        self
     }
 
     /// Config doğrulaması. Tüm aralıklar ve invariantlar.
@@ -309,5 +457,46 @@ mod tests {
         let c = RoomConfig::uzun();
         let back: RoomConfig = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(c, back);
+    }
+
+    #[test]
+    fn npc_composition_total_sums_parts() {
+        let c = NpcComposition {
+            sanayici: 2,
+            tuccar: 2,
+            alici: 4,
+            esnaf: 2,
+            spekulator: 1,
+        };
+        assert_eq!(c.total(), 11);
+    }
+
+    #[test]
+    fn npc_composition_default_is_2_2_3_2_2() {
+        let c = NpcComposition::default_const();
+        assert_eq!(c.sanayici, 2);
+        assert_eq!(c.tuccar, 2);
+        assert_eq!(c.alici, 3);
+        assert_eq!(c.esnaf, 2);
+        assert_eq!(c.spekulator, 2);
+        assert_eq!(c.total(), 11);
+    }
+
+    #[test]
+    fn game_balance_rejects_excessive_npc_composition() {
+        let b = GameBalance {
+            default_order_ttl: 3,
+            max_order_ttl: 10,
+            cancel_penalty_pct: 2,
+            relist_cooldown_ticks: 2,
+            npcs: NpcComposition {
+                sanayici: 10,
+                tuccar: 10,
+                alici: 10,
+                esnaf: 5,
+                spekulator: 5,
+            },
+        };
+        assert!(b.validate().is_err());
     }
 }
