@@ -25,6 +25,7 @@
 //! `decide_all_npcs` üzerinden sıralı işler (`BTreeMap` `player_id` ASC).
 
 mod error;
+pub mod fuzzy;
 
 pub use error::NpcError;
 
