@@ -538,15 +538,21 @@ impl NpcBehavior for EsnafNpc {
         };
         let ttl = state.config.balance.default_order_ttl;
 
-        // Yarı-aktif: tick'in %30'unda sessiz (dükkan kapalı), %70 aktif.
-        // Aktif olduğunda 2-3 satış emri verir — pazarda görülebilir arz
-        // tutarlı şekilde olsun, oyuncu "kimse satmıyor" hissine kapılmasın.
-        // Eski %50 sessiz + 1-2 emir çok zayıftı.
-        if rng.random_ratio(3, 10) {
+        // Sezon faza göre aktivite — Hasat döneminde piyasada arz çöküşünü
+        // önlemek için Esnaflar daha aktif olur:
+        // - Bahar/Yaz: %30 sessiz, 2-3 emir (mevcut)
+        // - Hasat:     %10 sessiz, 3-5 emir (arz pompalama)
+        let progress = state.season_progress();
+        let (silence_ratio, max_orders) = if progress.is_late() {
+            ((1, 10), 5)
+        } else {
+            ((3, 10), 3)
+        };
+        if rng.random_ratio(silence_ratio.0, silence_ratio.1) {
             return Vec::new();
         }
 
-        let order_count = rng.random_range(2u32..=3);
+        let order_count = rng.random_range(2u32..=max_orders);
         let mut cmds = Vec::new();
         for seq in 0..order_count {
             let product = if rng.random_ratio(6, 10) {
@@ -624,7 +630,9 @@ impl NpcBehavior for SpekulatorNpc {
             let have = player.inventory.get(city, product);
             if have > 0 {
                 let ask_cents = (market_cents * 103) / 100;
-                let qty = have.min(rng.random_range(5u32..=15));
+                // Eski 5-15 birim arzı çok azdı; 10-25 birim ile spread
+                // dolulu daha güçlü, sezon-sonu arz çöküşüne dirençli.
+                let qty = have.min(rng.random_range(10u32..=25));
                 let id = OrderId::new(npc_order_id(self_id, tick, seq));
                 seq += 1;
                 if let Ok(o) = MarketOrder::new_with_ttl(
@@ -644,7 +652,7 @@ impl NpcBehavior for SpekulatorNpc {
 
             // Bid (al) — nakit yetiyorsa
             let bid_cents = (market_cents * 97) / 100;
-            let qty = rng.random_range(5u32..=15);
+            let qty = rng.random_range(10u32..=25);
             let total = bid_cents.saturating_mul(i64::from(qty));
             if player.cash.as_cents() >= total {
                 let id = OrderId::new(npc_order_id(self_id, tick, seq));
