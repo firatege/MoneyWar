@@ -1362,11 +1362,9 @@ fn seed_world(
         Role::Sanayici => 25_000_i64,
         Role::Tuccar => 40_000_i64,
     };
-    let role_label = human_role.display_name();
-    let human_name = match custom_player_name {
-        Some(name) => format!("{name} ({role_label})"),
-        None => format!("Sen ({role_label})"),
-    };
+    // Saf isim — leaderboard'da `[Sanayici]` etiketi rolü zaten gösteriyor,
+    // isimde tekrar ekleme yapma.
+    let human_name = custom_player_name.unwrap_or_else(|| "Sen".to_string());
     let mut human = Player::new(
         HUMAN_ID,
         human_name,
@@ -5043,9 +5041,6 @@ fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
         _ => "  ",
     };
     let is_human = sc.player_id == HUMAN_ID;
-    // Rol etiketi — NPC kind varsa onu, yoksa human role'üne göre.
-    // Leaderboard filter zaten Alıcı/Esnaf/Spekülatör'ü çıkarıyor; burada
-    // sadece Sanayici/Tüccar bekleniyor. Role rengini stile uygula.
     let role_label = player
         .map(|p| match p.npc_kind {
             Some(kind) => kind.label(),
@@ -5057,7 +5052,6 @@ fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        // NPC: role rengini kullan (Sanayici turuncu, Tüccar mavi)
         let color = match role_label {
             "Sanayici" => Color::Rgb(210, 140, 80),
             "Tüccar" => Color::Rgb(120, 180, 240),
@@ -5065,11 +5059,20 @@ fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
         };
         Style::default().fg(color)
     };
+    // Skor fog'u: kendi skorun her zaman açık, rakibin skoru 5K'ya yuvarlanır
+    // ve `~` prefix'i ile fog hissi verir. Sıra + seviye görünür, mikro
+    // detay gizli. Game over reveal'da exact değerler açılır.
+    let score_label = if is_human {
+        compact_money(sc.total)
+    } else {
+        let cents = sc.total.as_cents();
+        let lira = cents / 100;
+        let rounded_lira = (lira / 5_000) * 5_000;
+        let rounded = Money::from_lira(rounded_lira).unwrap_or(Money::ZERO);
+        format!("~{}", compact_money(rounded))
+    };
     Span::styled(
-        format!(
-            "{medal} {raw_name} [{role_label}] {}",
-            compact_money(sc.total)
-        ),
+        format!("{medal} {raw_name} [{role_label}] {score_label}"),
         style,
     )
 }
