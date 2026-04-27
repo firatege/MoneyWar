@@ -4,6 +4,7 @@ members = [
     "crates/moneywar-domain",
     "crates/moneywar-engine",
     "crates/moneywar-npc",
+    "crates/moneywar-net",
     "crates/moneywar-server",
     "crates/moneywar-cli",
 ]
@@ -51,10 +52,17 @@ rand_chacha = "0.9"
 ratatui = "0.29"
 crossterm = "0.28"
 
+# Network (LAN multiplayer)
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+futures-util = "0.3"
+
 # Intra-workspace
 moneywar-domain = { path = "crates/moneywar-domain" }
 moneywar-engine = { path = "crates/moneywar-engine" }
 moneywar-npc = { path = "crates/moneywar-npc" }
+moneywar-net = { path = "crates/moneywar-net" }
 
 [profile.dev]
 opt-level = 0
