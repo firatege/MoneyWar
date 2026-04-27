@@ -33,6 +33,7 @@
     clippy::doc_markdown
 )]
 
+mod game;
 mod lobby;
 mod world;
 
@@ -43,7 +44,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use moneywar_domain::{PlayerId, RoomId};
+use moneywar_domain::{Command, GameState, PlayerId, RoomId};
 use moneywar_net::{
     ClientMessage, DEFAULT_TICK_MS, PROTOCOL_VERSION, RejectReason, ServerMessage, decode_client,
     encode_server,
@@ -102,10 +103,16 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Server'ın paylaşılan durumu — tek room, monoton player_id sayacı.
-struct ServerState {
-    next_player_id: u64,
-    lobby: Lobby,
+/// Server'ın paylaşılan durumu — tek room.
+#[derive(Debug)]
+pub struct ServerState {
+    pub next_player_id: u64,
+    pub lobby: Lobby,
+    /// Aktif oyun state'i — `start_game` set eder, tick döngüsü mutate eder.
+    /// `None` → henüz lobide.
+    pub game: Option<GameState>,
+    /// Tick batch'ine girmeyi bekleyen insan komutları. Game loop drain eder.
+    pub pending_commands: Vec<Command>,
 }
 
 impl ServerState {
@@ -119,6 +126,8 @@ impl ServerState {
                     .unwrap_or(1)
                     .max(1),
             )),
+            game: None,
+            pending_commands: Vec::new(),
         }
     }
 
@@ -361,12 +370,28 @@ async fn handle_client_message(
                 start_game(state).await;
             }
         }
-        ClientMessage::SubmitCommand { .. } => {
-            // Sprint 3'te tick batch'ine eklenecek.
-            info!(
-                "player_id={}: SubmitCommand henüz desteklenmiyor (Sprint 3)",
-                player_id.value()
-            );
+        ClientMessage::SubmitCommand { command } => {
+            // DispatchCaravan'ın requester'ı placeholder=0 → engine validate eder.
+            // Diğer komutlar için actor mismatch'te reddet.
+            let actor = command.requester();
+            if actor.value() != 0 && actor != player_id {
+                warn!(
+                    "player_id={}: başkasının (#{}) adına emir reddedildi",
+                    player_id.value(),
+                    actor.value()
+                );
+                send_to(
+                    state,
+                    player_id,
+                    ServerMessage::CommandRejected {
+                        command,
+                        reason: "actor mismatch".into(),
+                    },
+                )
+                .await;
+                return Ok(true);
+            }
+            game::enqueue_command(state, command).await;
         }
         ClientMessage::Ping { nonce } => {
             send_to(state, player_id, ServerMessage::Pong { nonce }).await;
@@ -399,7 +424,8 @@ async fn send_to(state: &Arc<Mutex<ServerState>>, player_id: PlayerId, msg: Serv
     }
 }
 
-/// Tüm oyuncular ready basınca initial state üret + GameStart broadcast et.
+/// Tüm oyuncular ready basınca initial state üret + GameStart broadcast et +
+/// game loop'u spawn et.
 async fn start_game(state: &Arc<Mutex<ServerState>>) {
     let initial_state = {
         let mut s = state.lock().await;
@@ -411,6 +437,7 @@ async fn start_game(state: &Arc<Mutex<ServerState>>) {
         initial_state.players.values().filter(|p| !p.is_npc).count(),
         initial_state.players.values().filter(|p| p.is_npc).count(),
     );
+    game::install_initial_state(state, initial_state.clone()).await;
     broadcast(
         state,
         &ServerMessage::GameStart {
@@ -419,6 +446,7 @@ async fn start_game(state: &Arc<Mutex<ServerState>>) {
         },
     )
     .await;
+    game::spawn_game_loop(state.clone(), DEFAULT_TICK_MS);
 }
 
 /// Tek bir mesajı framed stream'e yaz — encode hatasını yutmaz.

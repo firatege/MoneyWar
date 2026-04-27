@@ -14,6 +14,7 @@ use moneywar_net::{LobbyEntry, MAX_HUMAN_PLAYERS, ServerMessage};
 use tokio::sync::mpsc;
 
 /// Bir bağlı oyuncunun lobi durumu + dışarı yazma kanalı.
+#[derive(Debug)]
 pub struct LobbySlot {
     pub name: String,
     pub role: Option<Role>,
@@ -24,6 +25,7 @@ pub struct LobbySlot {
 }
 
 /// Oda durumu — host + slot map. `room_id` server boyunca sabit (Sprint 2).
+#[derive(Debug)]
 pub struct Lobby {
     pub room_id: RoomId,
     pub host: Option<PlayerId>,
