@@ -1,6 +1,6 @@
 # 💰 MoneyWar
 
-Tick-tabanlı ekonomi simülasyon oyunu. **Rust workspace** olarak yazıldı; saf motor + terminal TUI.
+Tick-tabanlı ekonomi simülasyon oyunu. **Rust workspace** olarak yazıldı; saf motor + terminal TUI + LAN multiplayer.
 
 > Oyun tasarım dokümanı: [`docs/game-design.md`](docs/game-design.md)
 > Mimari plan: [`docs/architecture.md`](docs/architecture.md)
@@ -10,9 +10,9 @@ Tick-tabanlı ekonomi simülasyon oyunu. **Rust workspace** olarak yazıldı; sa
 
 ## 🎮 Oyunu dene
 
-### Seçenek 1 — Hazır binary indir (Rust gerekmez)
+### Seçenek 1 — Hazır binary (Rust gerekmez)
 
-[GitHub Releases](https://github.com/firatege/MoneyWar/releases) sayfasından sistemine uygun dosyayı indir, aç, çalıştır:
+[GitHub Releases](https://github.com/firatege/MoneyWar/releases) sayfasından indir, aç, çalıştır:
 
 | Sistem | İndir | Çalıştır |
 |---|---|---|
@@ -21,36 +21,77 @@ Tick-tabanlı ekonomi simülasyon oyunu. **Rust workspace** olarak yazıldı; sa
 | Linux (x64) | `moneywar-x86_64-unknown-linux-gnu.tar.gz` | `./moneywar` |
 | Windows (x64) | `moneywar-x86_64-pc-windows-msvc.zip` | `moneywar.exe` |
 
-### Seçenek 2 — Rust ile tek komut kurulum
-
-Rust kurulu ise ([`rustup`](https://rustup.rs)):
-
-```bash
-cargo install --git https://github.com/firatege/MoneyWar moneywar-cli
-moneywar
-```
-
-### Seçenek 3 — Kaynaktan derle
+### Seçenek 2 — Kaynaktan derle
 
 ```bash
 git clone https://github.com/firatege/MoneyWar.git
 cd MoneyWar
-cargo run -p moneywar-cli
+./mw solo            # tek-oyunculu TUI
+```
+
+`./mw` proje köküne eklenmiş kısayol scripti. Uzun `cargo run -p ...` komutlarını saklar:
+
+```bash
+./mw help            # tüm komutlar
+./mw solo            # tek-oyunculu TUI
+./mw server          # LAN sunucu (port 7878)
+./mw connect 192.168.1.42:7878 Ali   # LAN client
+./mw build           # release build (binary'ler target/release/'e)
+./mw test            # cargo test --workspace
+./mw check           # fmt + clippy (CI ile aynı)
 ```
 
 ---
 
-## Geliştirici hızlı başlangıç
+## 🌐 LAN multiplayer
+
+İki kişi aynı ağda gerçek zamanlı oynayabilir.
 
 ```bash
-# Test + build
-cargo test --workspace
+# Bir kişi (host):
+./mw server                    # default port 7878
 
-# CLI'ı aç (renkli TUI, tek ekran)
-cargo run -p moneywar-cli
+# Diğer kişi (her client kendi terminalinde):
+./mw connect <host-ip>:7878 Ali
+./mw connect <host-ip>:7878 Veli
 ```
 
-İçeri girince **rol seç** (`1` Sanayici / `2` Tüccar), oyunu başlat. `?` ile komutlar, `i` ile nasıl oynanır açılır.
+**Lobide:** `t` Tüccar, `s` Sanayici, `r` ready toggle. Herkes Ready basınca oyun başlar.
+
+**Oyunda (stdin komutları):**
+
+| Komut | İşlev |
+|---|---|
+| `i` | Durumum (cash + envanter) |
+| `l` | Skor tablosu |
+| `b ist pamuk 50 6.0` | BUY 50 pamuk @ 6₺ İstanbul |
+| `s ank kumas 30 18.0` | SELL 30 kumaş @ 18₺ Ankara |
+| `f ist kumas` | BuildFactory (Sanayici) |
+| `c izm` | BuyCaravan, İzmir'den başla |
+| `?` | Yardım |
+| `q` | Çık |
+
+Şehirler: `ist`/`izm`/`ank`. Ürünler: `pamuk`/`bugday`/`zeytin`/`kumas`/`un`/`yag`.
+
+> **Not:** Multiplayer şu an stdout-mode (TUI yok). Sprint 4'te ratatui'ye entegre edilecek. Tek-oyunculuda zengin TUI mevcut — `./mw solo`.
+
+**LAN dışından oynamak için:** [Tailscale](https://tailscale.com), [ZeroTier](https://www.zerotier.com) veya [Hamachi](https://vpn.net) gibi virtual LAN aracı kurun (5 dakikalık setup, NAT/router sorunu yok).
+
+---
+
+## 🛠 Tek-oyunculu CLI
+
+`./mw solo` ile aç. Rol seç (`1` Sanayici / `2` Tüccar). İçeride:
+
+| Tuş | İşlev |
+|---|---|
+| `Space` | Bir tick ilerlet |
+| `t` | Auto-sim aç/kapa (300ms tick) |
+| `?` / `h` | Yardım (tüm komutlar) |
+| `i` | Nasıl oynanır |
+| `b/s/f/c/d/l/o/a/y/...` | Tek-tuş wizard'lar (Buy/Sell/Build/Caravan/Dispatch/Loan/Offer/Accept/...) |
+| `:` | Komut modu (gelişmiş) |
+| `q` / `Esc` | Çık |
 
 ---
 
@@ -61,22 +102,25 @@ MoneyWar/
 ├── crates/
 │   ├── moneywar-domain/   # Saf veri tipleri (Money, Player, GameState, Command, ...)
 │   ├── moneywar-engine/   # Tick motoru — advance_tick pure fn + batch auction
-│   ├── moneywar-npc/      # NPC davranışları (NpcBehavior trait + MarketMaker)
-│   ├── moneywar-server/   # (Faz 9) axum + WebSocket
-│   └── moneywar-cli/      # Terminal TUI (ratatui + crossterm)
+│   ├── moneywar-npc/      # NPC davranışları (DSS + 7 kişilik arketipi)
+│   ├── moneywar-net/      # LAN protokolü (postcard wire format, ClientMsg/ServerMsg)
+│   ├── moneywar-server/   # Tokio TCP authoritative server (lobby + game loop)
+│   └── moneywar-cli/      # Terminal TUI (ratatui) + LAN client
 ├── docs/
 │   ├── game-design.md     # Oyun tasarım kararları (§0-§12)
 │   ├── architecture.md    # Mimari + faz planı
 │   └── API.md             # Public API cheat-sheet
-└── .github/workflows/     # CI (fmt + clippy + test)
+├── mw                     # Kısayol scripti (./mw help)
+└── .github/workflows/     # CI (fmt + clippy + test) + release (4 platform binary)
 ```
 
 **Katman kuralları:**
 - `domain` hiçbir crate'e bağlı değil.
 - `engine` sadece `domain` — tokio/I/O yok, saf fonksiyonlar, deterministik.
 - `npc` domain + engine.
-- `server` hepsi + tokio/axum/sqlx.
-- `cli` domain + engine + npc (server'a dokunmaz).
+- `net` domain + serde + postcard.
+- `server` hepsi + tokio + tracing.
+- `cli` domain + engine + npc + net (TUI tarafı server'a dokunmaz).
 
 ---
 
@@ -84,23 +128,15 @@ MoneyWar/
 
 | Faz | Konu | Durum |
 |---|---|---|
-| 0 | Workspace setup | ✅ |
-| 1 | Domain tipleri | ✅ |
-| 2 | Saf tick motoru iskeleti | ✅ |
-| 3A | Order book submit/cancel | ✅ |
-| 3B | Batch auction matching | ✅ |
-| 3C | Settlement + saturation + price history | ✅ |
-| 4A | Fabrika + üretim pass | ✅ |
-| 4B | Kervan + taşıma pass | ✅ |
-| 5 | Kontrat + escrow + settlement | ✅ |
-| 5.5 | NPC banka kredi + auto-default | ✅ |
-| 6 | Haber abonelik + RNG olay motoru | ✅ |
-| 7 | Skor + leaderboard (§9) | ✅ |
-| 8 | NPC iskeleti (MarketMaker) | ✅ |
-| **CLI playtest** | ratatui TUI + komut sistemi | ✅ |
-| 9 | Server + oda yönetimi (axum + WS) | ⏳ |
+| 0–8 | Workspace, domain, engine, NPC, kontrat, kredi, haber, skor | ✅ |
+| CLI playtest | ratatui TUI + komut sistemi | ✅ |
+| **MP Sprint 0** | `moneywar-net` protokol iskeleti | ✅ |
+| **MP Sprint 1** | TCP server + `--connect` heartbeat | ✅ |
+| **MP Sprint 2** | Lobby + GameStart broadcast | ✅ |
+| **MP Sprint 3** | Tick döngüsü + emir gönderme (gerçek MP) | ✅ |
+| MP Sprint 4 | TUI integration + state_hash + reconnect | ⏳ |
 | 10 | PostgreSQL persistence + kariyer | ⏳ |
-| 11 | Frontend (TS/React + ts-rs) | ⏳ |
+| 11 | Frontend (TS/React) | ⏳ |
 | 12 | Polish + E2E smoke | ⏳ |
 
 ---
@@ -111,58 +147,29 @@ Oyun dengesi tek dosyada: [`crates/moneywar-domain/src/balance.rs`](crates/money
 
 Her parametre `pub const`. Örn:
 ```rust
-pub const LOAN_INTEREST_RATE_PERCENT: u32 = 15;
-pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 10_000, 15_000, 22_000, 30_000];
-pub const EVENT_PROB_LATE_PCT: u32 = 20;
+pub const FACTORY_BATCH_SIZE: u32 = 100;
+pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 15_000, 25_000, 40_000, 60_000];
+pub const SATURATION_BASE: u32 = 250;
 ```
 
 **Workflow:**
 1. `balance.rs`'i aç, değeri değiştir.
-2. `cargo test --workspace` — invariantlar / integration testler geçiyor mu?
-3. `cargo run -p moneywar-cli` — tam sezon izle, leaderboard'a bak.
+2. `./mw test` — invariantlar / integration testler geçiyor mu?
+3. `./mw solo` — tam sezon izle, leaderboard'a bak.
 4. Commit.
-
----
-
-## CLI kullanımı
-
-**Tuşlar:**
-
-| Tuş | İşlev |
-|---|---|
-| `Space` | Bir tick ilerlet (bekleyen komutlar + NPC'ler) |
-| `s` | Auto-sim aç/kapa |
-| `:` | Komut modu (metin yaz, Enter ile gönder) |
-| `?` / `h` | Yardım (tüm komutlar) |
-| `i` | Nasıl oynanır |
-| `q` / `Esc` | Çık |
-
-**Örnek komutlar:**
-
-```
-:buy istanbul pamuk 20 7           # 20 pamuk @7₺ alım emri
-:sell istanbul kumas 10 18         # satım emri
-:build istanbul kumas              # kumaş fabrikası kur (Sanayici)
-:caravan istanbul                  # kervan al
-:ship 1 istanbul ankara pamuk 20   # kervan #1 ile 20 pamuk Ankara'ya
-:loan 10000 30                     # 10k₺ kredi, 30 tick vade
-:news gold                         # altın abonelik
-```
 
 ---
 
 ## Deterministik motor
 
-`advance_tick(state, commands) → (new_state, report)` saf fonksiyon. RNG `(room_id, tick)`'ten türetilir — aynı input, bit-perfect aynı output. Replay + property testler buna dayanıyor.
+`advance_tick(state, commands) → (new_state, report)` saf fonksiyon. RNG `(room_id, tick)`'ten türetilir — aynı input, bit-perfect aynı output. LAN multiplayer authoritative server bu sayede çalışıyor: server `advance_tick`, client'lar mirror.
 
 **Test komutları:**
 
 ```bash
-cargo test --workspace
-cargo test -p moneywar-engine        # motor unit + proptest
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
-cargo doc --workspace --open         # HTML API docs
+./mw test              # cargo test --workspace --all-targets (446+ test)
+./mw check             # fmt --check + clippy -D warnings (CI ile aynı)
+cargo doc --workspace --open    # HTML API docs
 ```
 
 ---

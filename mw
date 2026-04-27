@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# mw — MoneyWar kısayol scripti.
+#
+# Uzun cargo komutlarına "Allah'a şükür" diyenler için. Tek alt-komut +
+# bir kaç flag ile build/run/test akışını saklar.
+
+set -e
+
+# Renk kodları (CI/non-tty'de kapan).
+if [[ -t 1 ]]; then
+  C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_RST=$'\033[0m'
+  C_GREEN=$'\033[32m'; C_CYAN=$'\033[36m'; C_YELLOW=$'\033[33m'
+else
+  C_BOLD=""; C_DIM=""; C_RST=""; C_GREEN=""; C_CYAN=""; C_YELLOW=""
+fi
+
+usage() {
+  cat <<EOF
+${C_BOLD}mw${C_RST} — MoneyWar kısayolu
+
+${C_CYAN}Oyun:${C_RST}
+  ./mw solo                          Tek-oyunculu TUI (mevcut single-player)
+  ./mw server [--port N]             LAN sunucu (default port 7878)
+  ./mw connect <ip:port> [name]      Sunucuya bağlan (Sprint 3 stdout-mode)
+
+${C_CYAN}Geliştirme:${C_RST}
+  ./mw build                         Release build (4 crate)
+  ./mw test                          cargo test --workspace
+  ./mw check                         fmt + clippy (CI ile aynı)
+  ./mw fix                           cargo fmt --all (otomatik düzelt)
+
+${C_CYAN}Hızlı bilgi:${C_RST}
+  ./mw status                        Branch + son commit + workspace test sayısı
+  ./mw help                          Bu mesaj
+
+${C_DIM}Çevre değişkenleri:${C_RST}
+  MONEYWAR_NAME=Ali                  Bağlanırken görünen isim
+  RUST_LOG=debug                     Sunucu log seviyesi (default: info)
+EOF
+}
+
+cmd_solo() {
+  exec cargo run -p moneywar-cli "$@"
+}
+
+cmd_server() {
+  exec cargo run -p moneywar-server -- "$@"
+}
+
+cmd_connect() {
+  local addr="$1"
+  if [[ -z "$addr" ]]; then
+    echo "Kullanım: ./mw connect <ip:port> [name]" >&2
+    echo "Örnek:   ./mw connect 192.168.1.42:7878 Ali" >&2
+    exit 1
+  fi
+  shift || true
+  local name="${1:-${MONEYWAR_NAME:-Sen}}"
+  echo "${C_GREEN}→ ${addr} bağlanılıyor (isim: ${name})${C_RST}"
+  MONEYWAR_NAME="$name" exec cargo run -p moneywar-cli -- --connect "$addr"
+}
+
+cmd_build() {
+  echo "${C_GREEN}→ release build (4 crate)${C_RST}"
+  cargo build --workspace --release
+  echo "${C_DIM}binary'ler: target/release/moneywar  target/release/moneywar-server${C_RST}"
+}
+
+cmd_test() {
+  exec cargo test --workspace --all-targets
+}
+
+cmd_check() {
+  echo "${C_CYAN}fmt --check${C_RST}"
+  cargo fmt --all -- --check
+  echo "${C_CYAN}clippy --all-targets -D warnings${C_RST}"
+  cargo clippy --workspace --all-targets -- -D warnings
+  echo "${C_GREEN}✓ tümü temiz${C_RST}"
+}
+
+cmd_fix() {
+  echo "${C_CYAN}cargo fmt --all${C_RST}"
+  cargo fmt --all
+  echo "${C_GREEN}✓ formatlandı${C_RST}"
+}
+
+cmd_status() {
+  local branch commit
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+  commit=$(git log -1 --pretty=format:"%h %s" 2>/dev/null || echo "?")
+  echo "${C_BOLD}branch:${C_RST}  $branch"
+  echo "${C_BOLD}HEAD:${C_RST}    $commit"
+  echo
+  echo "${C_DIM}cargo test --workspace --all-targets...${C_RST}"
+  cargo test --workspace --all-targets 2>&1 \
+    | grep -E "test result:" \
+    | awk '{n+=$4} END{print "  toplam test geçen: "n}'
+}
+
+case "${1:-help}" in
+  solo)    shift; cmd_solo "$@" ;;
+  server)  shift; cmd_server "$@" ;;
+  connect) shift; cmd_connect "$@" ;;
+  build)   shift; cmd_build "$@" ;;
+  test)    shift; cmd_test "$@" ;;
+  check)   shift; cmd_check "$@" ;;
+  fix)     shift; cmd_fix "$@" ;;
+  status)  shift; cmd_status "$@" ;;
+  help|-h|--help) usage ;;
+  *)
+    echo "${C_YELLOW}bilinmeyen komut: ${1}${C_RST}" >&2
+    echo "  ./mw help" >&2
+    exit 1
+    ;;
+esac
