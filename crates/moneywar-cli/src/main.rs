@@ -927,7 +927,13 @@ impl App {
                     _ => None,
                 })
                 .sum();
-            // Aynı bucket'ın MarketCleared özetinden clearing fiyatı + karşı taraf var mıydı
+            // Bu emir bu tick'te expire mi etti? (TTL bittiyse OrderExpired var.)
+            let expired = report.entries.iter().any(|e| {
+                matches!(
+                    &e.event,
+                    LogEvent::OrderExpired { order_id, .. } if *order_id == order.id
+                )
+            });
             let cleared = report.entries.iter().find_map(|e| match &e.event {
                 LogEvent::MarketCleared {
                     city,
@@ -960,21 +966,34 @@ impl App {
                         messages.push(format!(
                             "✓ {header} → {matched_qty} eşleşti @ {clearing_price}"
                         ));
+                    } else if expired {
+                        // Emir bu tick'te bitti + kalan eşleşmedi.
+                        // Stok/cash kaybı yok (bluff alanı: submit'te lock yoktu).
+                        let kalan_yon = if matches!(order.side, OrderSide::Sell) {
+                            "stoğunda kaldı"
+                        } else {
+                            "iptal (cash dokunulmadı)"
+                        };
+                        messages.push(format!(
+                            "✓ {header} → {matched_qty} eşleşti @ {clearing_price}, kalan {leftover} {kalan_yon}"
+                        ));
                     } else {
                         messages.push(format!(
-                            "✓ {header} → {matched_qty} eşleşti @ {clearing_price}, kalan {leftover} çöpe"
+                            "✓ {header} → {matched_qty} eşleşti @ {clearing_price}, kalan {leftover} kitapta"
                         ));
                     }
                 } else {
                     messages.push(format!("✓ {header} → {matched_qty} eşleşti"));
                 }
-            } else {
+            } else if expired {
+                // Yalnızca **expire olduğunda** kırmızı uyarı — TTL boyunca
+                // emir hâlâ canlı, panik mesajı çıkmaz. Sebep analitiği aynı.
                 let reason = match cleared {
                     Some((_, _, sell_qty))
                         if matches!(order.side, OrderSide::Buy) && sell_qty == 0 =>
                     {
                         format!(
-                            "kimse {} pazarında {} satmıyor (NPC'ler diğer ürün/şehirde)",
+                            "kimse {} pazarında {} satmıyor",
                             city_short(order.city),
                             order.product
                         )
@@ -991,21 +1010,23 @@ impl App {
                     Some((Some(clearing_price), _, _)) => {
                         if matches!(order.side, OrderSide::Buy) {
                             format!(
-                                "fiyatın {} düşük — clearing {} oldu, daha yüksek teklif lazım",
+                                "fiyatın {} düşük — clearing {} oldu",
                                 order.unit_price, clearing_price
                             )
                         } else {
                             format!(
-                                "fiyatın {} yüksek — clearing {} oldu, daha düşük teklif lazım",
+                                "fiyatın {} yüksek — clearing {} oldu",
                                 order.unit_price, clearing_price
                             )
                         }
                     }
                     Some((None, _, _)) => "spread oldu, kimse kesişmedi".into(),
-                    None => "bu pazarda hiç hareket yok".into(),
+                    None => "bu pazarda hiç hareket olmadı".into(),
                 };
-                messages.push(format!("✗ {header} → eşleşme yok: {reason}"));
+                messages.push(format!("✗ {header} → TTL doldu: {reason}"));
             }
+            // Eşleşme yok + emir hâlâ canlı (TTL devam) → mesaj yok.
+            // "Henüz eşleşmedi" gürültüsü çıkarmaz; emir kitapta sessizce bekler.
         }
         // İlk mesajı status bar'a (kompakt), tümünü Son Tick log'unun başına ekle.
         if let Some(first) = messages.first() {
