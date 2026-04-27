@@ -54,30 +54,38 @@ pub fn decide_tuccar_dss(
         _ => 2,
     };
 
-    // 1. BuyCaravan adayları
+    // 1. BuyCaravan adayları — kervan ihtiyacı varsa
+    // İlk kervan agresif (BEDAVA + urgency=1), sonrakiler düşük öncelik.
+    // Kritik tuning: BuyCaravan utility her tick top-3'ü dolduruyor ve
+    // DispatchCaravan'a yer kalmıyordu. Urgency aşamalı azaltma.
     if caravan_count < max_caravans {
         let cost = Caravan::buy_cost(Role::Tuccar, u32::try_from(caravan_count).unwrap_or(0));
         if player.cash >= cost {
-            for city in CityId::ALL {
-                let action = ActionCandidate {
-                    profit_lira: 0.0, // direkt kâr yok
-                    capital_lira: money_lira(cost),
-                    risk: 0.3,
-                    urgency: if caravan_count == 0 { 1.0 } else { 0.5 },
-                    momentum: 0.0,
-                    arbitrage: 0.7, // kervan = arbitraj fırsatı için
-                    event: 0.0,
-                    hold_pressure: 0.6,
-                };
-                let score = score_action(action, weights);
-                scored.push((
-                    Command::BuyCaravan {
-                        owner: pid,
-                        starting_city: city,
-                    },
-                    score,
-                ));
-            }
+            // Şehir seçimi tek bucket — 3 ayrı aday yerine 1 (Istanbul default).
+            let starting_city = CityId::Istanbul;
+            let urgency = match caravan_count {
+                0 => 1.0,
+                1 => 0.3,
+                _ => 0.1,
+            };
+            let action = ActionCandidate {
+                profit_lira: 0.0,
+                capital_lira: money_lira(cost),
+                risk: 0.3,
+                urgency,
+                momentum: 0.0,
+                arbitrage: 0.5,
+                event: 0.0,
+                hold_pressure: 0.6,
+            };
+            let score = score_action(action, weights);
+            scored.push((
+                Command::BuyCaravan {
+                    owner: pid,
+                    starting_city,
+                },
+                score,
+            ));
         }
     }
 
@@ -119,17 +127,20 @@ pub fn decide_tuccar_dss(
                     continue;
                 }
                 let distance = here.distance_to(to);
+                // DispatchCaravan utility — eski 0.6 urgency BuyCaravan'a
+                // ezildi. Yeni: profit + arbitrage etkili olsun, urgency
+                // 1.0 (kervan varsa hareket etsin).
                 let action = ActionCandidate {
-                    profit_lira: unit_profit * f64::from(qty),
-                    capital_lira: here_price * f64::from(qty), // bağlı sermaye
-                    risk: 0.4,
-                    urgency: 0.6,
+                    profit_lira: unit_profit * f64::from(qty) * 3.0, // 3× amplifier
+                    capital_lira: here_price * f64::from(qty),
+                    risk: 0.3,
+                    urgency: 1.0,
                     momentum: price_momentum(state, to, product),
                     arbitrage: arbitrage_signal(state, product),
                     event: (event_signal(state, to, product)
-    + pending_event_signal(state, pid, to, product))
-    .min(1.0),
-                    hold_pressure: f64::from(distance) / 5.0, // uzun rota = uzun bekleme
+                        + pending_event_signal(state, pid, to, product))
+                        .min(1.0),
+                    hold_pressure: f64::from(distance) / 5.0,
                 };
                 let score = score_action(action, weights);
                 scored.push((

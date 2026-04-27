@@ -130,7 +130,9 @@ impl Inventory {
 /// `player.name.starts_with("NPC-Alıcı")` gibi kırılgan string prefix
 /// kontrolü vardı; şimdi structural ayrım. İsimler artık serbestçe
 /// güzelleştirilebilir ("Selim Bey") çünkü NPC tipi name'den bağımsız.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub enum NpcKind {
     /// Akıllı tüccar — arbitraj + kervan dispatch.
     Tuccar,
