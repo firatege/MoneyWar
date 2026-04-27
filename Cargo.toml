@@ -31,6 +31,9 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# similar_names — Rust 1.85 clippy'sinde tetikleniyor (cur/last, sell/buy
+# gibi). Domain-spesifik dış değişkenler için isim çatışması anlam taşıyor.
+similar_names = "allow"
 
 [workspace.dependencies]
 # Domain / serialization
