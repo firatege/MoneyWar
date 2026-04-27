@@ -1,0 +1,44 @@
+# MoneyWar runtime balance config.
+#
+# Bu dosyayı `moneywar.toml` olarak kopyalayıp değerleri değiştir — oyun
+# başlangıcında otomatik yüklenir. Yoksa veya invalid ise default kullanılır.
+# Startup ekranında "Config: moneywar.toml yüklendi" ibaresi onayı gösterir.
+#
+# Tüm alanlar opsiyonel — biri eksikse default_const() kullanılır.
+
+[balance]
+# Emir wizard'da / CLI komutunda pre-fill edilen TTL (tick). Emir bu kadar
+# tick kitapta kalır, her clear'de 1 azalır, 0'a düşünce OrderExpired olur.
+default_order_ttl = 3
+
+# Kullanıcının seçebileceği maksimum TTL. 1..=max_order_ttl aralığı dışı
+# reddedilir. Hard cap: 50 (domain tarafı).
+max_order_ttl = 10
+
+# Erken çekme cezası yüzdesi. Cancel'de:
+#   penalty = notional × cancel_penalty_pct / 100 × (remaining_ticks / ttl_ticks)
+# (Faz 2'de devreye girer — şu an sadece config'de saklı.)
+cancel_penalty_pct = 2
+
+# Emir bittikten (TTL doldu / withdraw / full fill) sonra aynı
+# (player, city, product) için yeni emir kabul edilmeden önce geçmesi
+# gereken tick sayısı. Flash-place'i engeller.
+# (Faz 2'de devreye girer.)
+relist_cooldown_ticks = 2
+
+# NPC kompozisyonu — seed_world bu sayılara göre NPC yaratır.
+#
+# - sanayici: fabrika kurar, ham al → bitmiş üret → sat
+# - tuccar:   arbitraj (ucuz şehirden al, pahalı şehre taşı, sat)
+# - alici:    saf alıcı — sadece buy emri, kervan/fabrika yok.
+#             Finished goods ağırlıklı bid (oyuncu üretimine talep).
+# - esnaf:    saf satıcı — sadece sell emri, devasa stok (3000 birim).
+#             Raw materials ağırlıklı arz (fabrika hammaddesini doldurur).
+#
+# Toplam MAX_NPC=20 sınırı var (domain validate).
+# Default 1/1/3/2 = 7 NPC. Arz/talep dengesi için denenmiş oran.
+[balance.npcs]
+sanayici = 1
+tuccar = 1
+alici = 3
+esnaf = 2

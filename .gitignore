@@ -35,3 +35,7 @@ web/build/
 *.profraw
 lcov.info
 coverage/
+
+# Runtime debug logs (CLI writes per-session log here)
+/debug/
+/moneywar.toml

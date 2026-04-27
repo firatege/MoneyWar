@@ -5,7 +5,7 @@
 //! # Tuşlar
 //!
 //! - `Space` — bir tick ilerlet (NPC komutları otomatik).
-//! - `s`      — auto-sim aç/kapa (her 300ms tick).
+//! - `t`      — auto-sim aç/kapa (her 300ms tick).
 //! - `q`      — çık.
 
 // CLI prototipi — pedantic lint'leri gevşek tut.
@@ -34,8 +34,8 @@
     clippy::enum_glob_use
 )]
 
-use std::io;
-use std::time::{Duration, Instant};
+use std::io::{self, BufWriter, Write};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -44,11 +44,13 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use moneywar_domain::{
-    CityId, Command, GameState, MarketOrder, Money, NewsItem, NewsTier, OrderId, OrderSide, Player,
-    PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
+    CityId, Command, GameBalance, GameState, MarketOrder, Money, NewsItem, NewsTier, NpcKind,
+    OrderId, OrderSide, Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{LogEvent, PlayerScore, advance_tick, leaderboard, rng_for, score_player};
 use moneywar_npc::{Difficulty, decide_all_npcs};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -67,8 +69,34 @@ const LOG_WINDOW: usize = 12;
 /// Son haberleri gösterirken kaç kayıt tutulsun.
 const NEWS_WINDOW: usize = 8;
 
+/// `./moneywar.toml`'u okur. Yoksa veya invalid ise default döner.
+/// Dönüş: (balance, yüklendi_mi) — yüklendiyse UI'da gösterilir.
+fn load_balance_config() -> (GameBalance, bool) {
+    let path = std::path::Path::new("moneywar.toml");
+    if !path.exists() {
+        return (GameBalance::default_const(), false);
+    }
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return (GameBalance::default_const(), false);
+    };
+
+    #[derive(serde::Deserialize, Default)]
+    struct FileRoot {
+        #[serde(default)]
+        balance: GameBalance,
+    }
+    match toml::from_str::<FileRoot>(&raw) {
+        Ok(root) => match root.balance.validate() {
+            Ok(()) => (root.balance, true),
+            Err(_) => (GameBalance::default_const(), false),
+        },
+        Err(_) => (GameBalance::default_const(), false),
+    }
+}
+
 fn main() -> Result<()> {
-    let mut app = App::new();
+    let (balance, loaded) = load_balance_config();
+    let mut app = App::new(balance, loaded);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -149,14 +177,18 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('?') => app.mode = Mode::Help,
             KeyCode::Char('i') => app.mode = Mode::Info,
             KeyCode::Char('m') => app.mode = Mode::Holdings,
+            KeyCode::Char('e') => app.mode = Mode::RecentTrades,
+            KeyCode::Char('k') => app.mode = Mode::OpenBook,
+            KeyCode::Char('v') => app.mode = Mode::CaravanPanel,
+            KeyCode::Char('g') => app.mode = Mode::DebugLog { scroll: 0 },
             // Wizard kısayolları — tek tuşla aksiyon menüsü.
             KeyCode::Char('b') => {
                 app.mode = Mode::Wizard {
                     wizard: Wizard::new(ActionKind::Buy),
                 };
             }
-            KeyCode::Char('S') => {
-                // Büyük S: SAT (küçük 's' auto-sim için ayrılı, alttaki branch).
+            KeyCode::Char('s') => {
+                // s: SAT — `b` (al) ile simetrik, küçük harf.
                 app.mode = Mode::Wizard {
                     wizard: Wizard::new(ActionKind::Sell),
                 };
@@ -215,11 +247,11 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             // News inbox / haber penceresi: küçük n (kısayol çakışmasın
             // diye haber ABONELİK büyük N'e taşındı).
             KeyCode::Char('n') => app.mode = Mode::NewsInbox,
-            // Auto-sim — küçük s.
-            KeyCode::Char('s') => {
+            // Auto-sim — `t` (tick/time). `s` satış wizard'ına ayrıldı.
+            KeyCode::Char('t') => {
                 app.auto_sim = !app.auto_sim;
                 app.set_status_info(if app.auto_sim {
-                    "Auto-sim AÇIK (s ile kapat)"
+                    "Auto-sim AÇIK (t ile kapat)"
                 } else {
                     "Auto-sim kapalı"
                 });
@@ -253,13 +285,52 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => app.mode = Mode::Command { buffer },
         },
-        Mode::Help | Mode::Info | Mode::Holdings | Mode::NewsInbox => match code {
+        Mode::Help
+        | Mode::Info
+        | Mode::Holdings
+        | Mode::NewsInbox
+        | Mode::RecentTrades
+        | Mode::OpenBook
+        | Mode::CaravanPanel => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.mode = Mode::Normal;
             }
             _ => {}
         },
+        Mode::DebugLog { scroll } => {
+            let max_scroll = app.debug_log.len().saturating_sub(1);
+            match code {
+                KeyCode::Esc | KeyCode::Enter => app.mode = Mode::Normal,
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.mode = Mode::DebugLog {
+                        scroll: (scroll + 1).min(max_scroll),
+                    };
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.mode = Mode::DebugLog {
+                        scroll: scroll.saturating_sub(1),
+                    };
+                }
+                KeyCode::PageDown | KeyCode::Char(' ') => {
+                    app.mode = Mode::DebugLog {
+                        scroll: (scroll + 20).min(max_scroll),
+                    };
+                }
+                KeyCode::PageUp => {
+                    app.mode = Mode::DebugLog {
+                        scroll: scroll.saturating_sub(20),
+                    };
+                }
+                KeyCode::Home | KeyCode::Char('0') => {
+                    app.mode = Mode::DebugLog { scroll: 0 };
+                }
+                KeyCode::End => {
+                    app.mode = Mode::DebugLog { scroll: max_scroll };
+                }
+                _ => {}
+            }
+        }
         Mode::Wizard { mut wizard } => {
             match handle_wizard_key(app, &mut wizard, code) {
                 WizardOutcome::Continue => app.mode = Mode::Wizard { wizard },
@@ -306,6 +377,19 @@ enum Mode {
     Holdings,
     /// Haber inbox overlay — n ile açılır.
     NewsInbox,
+    /// Son eşleşmeler overlay — e ile açılır. Kim kime ne sattı, fiyat, tick.
+    RecentTrades,
+    /// Açık Pazar (orderbook depth) overlay — k ile açılır. Her (şehir, ürün)
+    /// için en iyi bid/ask'lar.
+    OpenBook,
+    /// Kervan kontrol paneli — v ile açılır. Detaylı kervan listesi + hızlı dispatch.
+    CaravanPanel,
+    /// Debug log overlay — g ile açılır. Son tick'lerin ham LogEntry akışı
+    /// (tüm alanlar Debug formatı ile). Geliştirici penceresi.
+    DebugLog {
+        /// Scroll offset — 0 = en yeni, büyük değer = daha eski.
+        scroll: usize,
+    },
     /// Sezon sonu reveal — 90. tick'te otomatik açılır, tüm skorlar görünür.
     GameOver,
     /// Tek-tuş aksiyon wizard — b/s/f/c/d/l/r/n/o/a/w/x ile açılır,
@@ -357,10 +441,11 @@ impl ActionKind {
     fn schema(self) -> &'static [FieldKind] {
         use FieldKind::*;
         match self {
-            Self::Buy | Self::Sell => &[City, Product, QtyU32, PriceLira],
+            Self::Buy | Self::Sell => &[City, Product, QtyU32, PriceLira, OrderTtl],
             Self::Build => &[City, FinishedProduct],
             Self::Caravan => &[City],
-            Self::Ship => &[CaravanId, CityFrom, CityTo, Product, QtyU32],
+            // `from` kervanın konumundan otomatik alınır — wizard sormaz.
+            Self::Ship => &[CaravanId, CityTo, Product, QtyU32],
             Self::Loan => &[AmountLira, DurationTicks],
             Self::Repay => &[LoanId],
             Self::News => &[NewsTier_],
@@ -374,7 +459,6 @@ impl ActionKind {
 #[derive(Debug, Clone, Copy)]
 enum FieldKind {
     City,
-    CityFrom,
     CityTo,
     Product,
     FinishedProduct,
@@ -383,6 +467,8 @@ enum FieldKind {
     AmountLira,
     DurationTicks,
     DeliveryTick,
+    /// Emir kitapta kaç tick kalsın (1..=max_order_ttl).
+    OrderTtl,
     NewsTier_,
     OrderId_,
     CaravanId,
@@ -394,8 +480,7 @@ impl FieldKind {
     fn prompt(self) -> &'static str {
         match self {
             Self::City => "Şehir",
-            Self::CityFrom => "Nereden",
-            Self::CityTo => "Nereye",
+            Self::CityTo => "Hedef şehir",
             Self::Product => "Ürün",
             Self::FinishedProduct => "Bitmiş ürün",
             Self::QtyU32 => "Miktar (birim)",
@@ -403,6 +488,7 @@ impl FieldKind {
             Self::AmountLira => "Tutar (₺)",
             Self::DurationTicks => "Vade (tick)",
             Self::DeliveryTick => "Teslimat tick'i",
+            Self::OrderTtl => "Emir TTL (kaç tick kitapta kalsın)",
             Self::NewsTier_ => "Tier",
             Self::OrderId_ => "Açık emir seç",
             Self::CaravanId => "Kervan seç (Idle)",
@@ -419,6 +505,7 @@ impl FieldKind {
                 | Self::AmountLira
                 | Self::DurationTicks
                 | Self::DeliveryTick
+                | Self::OrderTtl
         )
     }
 }
@@ -440,6 +527,12 @@ struct Wizard {
     kind: ActionKind,
     fields: Vec<FieldValue>,
     text_buf: String,
+    /// Ship wizard'a özgü: ana (Product, Qty) çiftine ek olarak yüklenen
+    /// ekstra cargo kalemleri. Multi-product dispatch için.
+    extra_cargo: Vec<(ProductKind, u32)>,
+    /// Ship wizard'da "daha ürün ekle mi?" confirm adımında olup olmadığını
+    /// söyler. `true` iken tek seçim: 1 (ek) veya 2 (bitir).
+    confirm_more_cargo: bool,
 }
 
 impl Wizard {
@@ -448,6 +541,8 @@ impl Wizard {
             kind,
             fields: Vec::new(),
             text_buf: String::new(),
+            extra_cargo: Vec::new(),
+            confirm_more_cargo: false,
         }
     }
 
@@ -457,14 +552,34 @@ impl Wizard {
     }
 
     fn is_done(&self) -> bool {
-        self.fields.len() >= self.kind.schema().len()
+        self.fields.len() >= self.kind.schema().len() && !self.confirm_more_cargo
     }
 }
+
+#[derive(Debug, Clone)]
+struct TradeRecord {
+    tick: Tick,
+    city: CityId,
+    product: ProductKind,
+    buyer_name: String,
+    seller_name: String,
+    quantity: u32,
+    price: Money,
+}
+
+const RECENT_TRADES_WINDOW: usize = 30;
+const DEBUG_LOG_WINDOW: usize = 300;
 
 struct App {
     state: GameState,
     last_tick_log: Vec<String>,
     recent_news: Vec<NewsItem>,
+    recent_trades: Vec<TradeRecord>,
+    /// Ham LogEntry akışı — debug overlay için. Son DEBUG_LOG_WINDOW tutulur.
+    debug_log: Vec<moneywar_engine::LogEntry>,
+    /// Debug log dosyası — `debug/moneywar-{epoch}.log`. Her tick entry'ler
+    /// bu dosyaya append edilir. None → dosya açılamadı (IO hatası, sessiz).
+    debug_file: Option<BufWriter<std::fs::File>>,
     prev_prices: std::collections::BTreeMap<(CityId, ProductKind), Money>,
     auto_sim: bool,
     mode: Mode,
@@ -478,6 +593,19 @@ struct App {
     status: Option<StatusMsg>,
     /// Human `OrderId` sayacı — her yeni order için monoton artar.
     next_human_order_id: u64,
+    /// Runtime knob'lar — `moneywar.toml`'den veya default. `state.config.balance`
+    /// ile aynı değer; App burda startup ekranı için tutuyor.
+    balance: GameBalance,
+    /// TOML dosyası başarıyla yüklendi mi (UI göstergesi için).
+    balance_loaded: bool,
+    /// Tick başında hesaplanmış leaderboard. Render hot-path'i bunu okur,
+    /// her render'da yeniden hesaplamaz. Auto-sim 300ms'de render'da
+    /// 11 NPC × scoring iter çalıştırması engellendi.
+    cached_leaderboard: Vec<PlayerScore>,
+    /// Her `(city, product)` için 8-tikli sparkline string'i. Tick başında
+    /// güncelle, render'da olduğu gibi kullan. Auto-sim'de 21 hücre × 4
+    /// alloc/render sayısı sıfıra iner.
+    cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,14 +652,62 @@ enum StatusKind {
     Info,
 }
 
+/// Her oyun için epoch-nanos tabanlı room_id üretir — NPC RNG seed'i bu'dur.
+/// Aynı oturumda tekrar çağrılırsa muhtemelen farklı değer verir (nanos).
+fn random_room_id() -> RoomId {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1);
+    // 0 olursa 1 — RoomId::new(0) geçerli olsa da 1'den başlasın.
+    RoomId::new(if nanos == 0 { 1 } else { nanos })
+}
+
+/// `./debug/moneywar-{epoch}.log` dosyası açar. Klasör yoksa oluşturur.
+/// Başarısız olursa sessiz — debug opsiyoneldir, oyunu kırmasın.
+fn open_debug_file(balance: GameBalance) -> Option<BufWriter<std::fs::File>> {
+    std::fs::create_dir_all("debug").ok()?;
+    let epoch = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let path = format!("debug/moneywar-{epoch}.log");
+    let file = std::fs::File::create(&path).ok()?;
+    let mut w = BufWriter::new(file);
+    // Oturum başlığı — config + composition dump.
+    let _ = writeln!(w, "# MoneyWar debug log");
+    let _ = writeln!(w, "# session_epoch: {epoch}");
+    let _ = writeln!(
+        w,
+        "# balance: default_ttl={} max_ttl={} cancel_penalty={}% cooldown={}t",
+        balance.default_order_ttl,
+        balance.max_order_ttl,
+        balance.cancel_penalty_pct,
+        balance.relist_cooldown_ticks
+    );
+    let _ = writeln!(
+        w,
+        "# npcs: sanayici={} tuccar={} alici={} (total={})",
+        balance.npcs.sanayici,
+        balance.npcs.tuccar,
+        balance.npcs.alici,
+        balance.npcs.total()
+    );
+    let _ = writeln!(w, "# format: t{{tick}}  {{actor:<20}}  {{event:?}}");
+    let _ = writeln!(w, "# ---");
+    let _ = w.flush();
+    Some(w)
+}
+
 impl App {
-    fn new() -> Self {
+    fn new(balance: GameBalance, balance_loaded: bool) -> Self {
         // Boş state; gerçek dünya `start_game(role)` ile kurulur.
-        let state = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        let state = GameState::new(RoomId::new(1), RoomConfig::hizli().with_balance(balance));
+        let debug_file = open_debug_file(balance);
         Self {
             state,
             last_tick_log: Vec::new(),
             recent_news: Vec::new(),
+            recent_trades: Vec::new(),
+            debug_log: Vec::new(),
+            debug_file,
             prev_prices: std::collections::BTreeMap::new(),
             auto_sim: false,
             mode: Mode::Startup,
@@ -540,12 +716,46 @@ impl App {
             pending_human_cmds: Vec::new(),
             status: None,
             next_human_order_id: 1,
+            balance,
+            balance_loaded,
+            cached_leaderboard: Vec::new(),
+            cached_sparklines: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Tick advance sonrasında çağrılır — render hot-path'inde yeniden
+    /// hesaplanan değerleri tek seferde günceller. Leaderboard scoring 12
+    /// player × inventory iter, sparkline 21 hücre × min/max normalize.
+    fn refresh_caches(&mut self) {
+        self.cached_leaderboard = leaderboard(&self.state);
+        self.cached_sparklines.clear();
+        for city in CityId::ALL {
+            for product in ProductKind::ALL {
+                if let Some(history) = self.state.price_history.get(&(city, product)) {
+                    let prices: Vec<Money> = history
+                        .iter()
+                        .rev()
+                        .take(8)
+                        .map(|(_, p)| *p)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    if !prices.is_empty() {
+                        self.cached_sparklines
+                            .insert((city, product), sparkline(&prices));
+                    }
+                }
+            }
         }
     }
 
     fn start_game(&mut self, role: Role) {
-        self.state = seed_world(role, self.selected_preset.config());
+        let cfg = self.selected_preset.config().with_balance(self.balance);
+        let room_id = random_room_id();
+        self.state = seed_world(role, cfg, room_id);
         self.mode = Mode::Normal;
+        self.refresh_caches();
         // Rol'e göre ilk hamle önerisi — terminal açılır açılmaz oyuncu
         // ne yapacağını bilsin.
         let first_move = match role {
@@ -622,8 +832,12 @@ impl App {
             .collect();
 
         self.state = new_state;
-        self.last_tick_log = summarize_report(&report);
+        self.last_tick_log = summarize_report(&report, &self.state);
+        self.harvest_trades(&report);
+        self.harvest_debug_log(&report);
         self.harvest_news();
+        // Render hot-path'inde yeniden hesaplanan değerleri burada cache'le.
+        self.refresh_caches();
         // Eski status mesajı varsa temizle (yeni tick'in kendi mesajı olsun).
         self.status = None;
         // İnsanın bu tick'teki emirleri için "ne oldu" özeti — kritik UX
@@ -755,6 +969,76 @@ impl App {
         self.last_tick_log = prepend;
     }
 
+    fn harvest_trades(&mut self, report: &moneywar_engine::TickReport) {
+        let player_name = |pid: PlayerId| -> String {
+            self.state
+                .players
+                .get(&pid)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| format!("#{}", pid.value()))
+        };
+        for entry in &report.entries {
+            if let LogEvent::OrderMatched {
+                city,
+                product,
+                buyer,
+                seller,
+                quantity,
+                price,
+                ..
+            } = &entry.event
+            {
+                self.recent_trades.push(TradeRecord {
+                    tick: entry.tick,
+                    city: *city,
+                    product: *product,
+                    buyer_name: player_name(*buyer),
+                    seller_name: player_name(*seller),
+                    quantity: *quantity,
+                    price: *price,
+                });
+            }
+        }
+        // Pencere boyutunu aştık mı — baştaki eskileri at.
+        if self.recent_trades.len() > RECENT_TRADES_WINDOW {
+            let drop_count = self.recent_trades.len() - RECENT_TRADES_WINDOW;
+            self.recent_trades.drain(..drop_count);
+        }
+    }
+
+    fn harvest_debug_log(&mut self, report: &moneywar_engine::TickReport) {
+        for entry in &report.entries {
+            self.debug_log.push(entry.clone());
+        }
+        if self.debug_log.len() > DEBUG_LOG_WINDOW {
+            let drop_count = self.debug_log.len() - DEBUG_LOG_WINDOW;
+            self.debug_log.drain(..drop_count);
+        }
+        // Dosyaya da yaz — IO hatası oyunu kırmasın.
+        if let Some(f) = &mut self.debug_file {
+            for entry in &report.entries {
+                let actor_str = entry
+                    .actor
+                    .map(|a| {
+                        self.state
+                            .players
+                            .get(&a)
+                            .map(|p| p.name.clone())
+                            .unwrap_or_else(|| format!("#{}", a.value()))
+                    })
+                    .unwrap_or_else(|| "system".into());
+                let _ = writeln!(
+                    f,
+                    "t{:>3}  {:<22}  {:?}",
+                    entry.tick.value(),
+                    actor_str,
+                    entry.event
+                );
+            }
+            let _ = f.flush();
+        }
+    }
+
     fn harvest_news(&mut self) {
         if let Some(inbox) = self.state.news_inbox.get(&HUMAN_ID) {
             // Yalnız disclosed_tick <= current_tick olanları göster; son N'i tut.
@@ -777,14 +1061,120 @@ impl App {
 // Dünya kurulumu
 // ---------------------------------------------------------------------------
 
-fn seed_world(human_role: Role, config: RoomConfig) -> GameState {
-    let mut s = GameState::new(RoomId::new(1), config);
+/// Türkçe NPC ön ad havuzu — seed RNG'den deterministik dağıtılır.
+/// Anadolu/Osmanlı tüccar atmosferi: leaderboard'da "NPC-3" yerine "Selim Bey"
+/// görünür → rakip hissi.
+const NPC_FIRST_NAMES: &[&str] = &[
+    "Selim", "Hasan", "İbrahim", "Mehmet", "Ahmet", "Mustafa", "Ali", "Ömer", "Hüseyin", "Yusuf",
+    "Kemal", "Cemal", "Rıza", "Sadık", "Bekir", "Halil", "Zeynep", "Ayşe", "Fatma", "Hatice",
+    "Emine", "Hanife", "Saliha", "Naime", "Şerife", "Rukiye", "Sakine", "Hayriye", "Bedriye",
+    "Nevzat", "Şükrü", "Necati",
+];
+
+/// NPC unvanı — alt-türe göre. "Selim Bey" (Tüccar), "Hasan Usta" (Sanayici),
+/// "Zeynep Hanım" (Alıcı), "Ali Esnaf" (Esnaf).
+fn npc_title(kind: NpcKind, name: &str) -> &'static str {
+    // Kadın isimleri için "Hanım", erkekler için role'e göre.
+    let is_female = matches!(
+        name,
+        "Zeynep"
+            | "Ayşe"
+            | "Fatma"
+            | "Hatice"
+            | "Emine"
+            | "Hanife"
+            | "Saliha"
+            | "Naime"
+            | "Şerife"
+            | "Rukiye"
+            | "Sakine"
+            | "Hayriye"
+            | "Bedriye"
+    );
+    if is_female {
+        return "Hanım";
+    }
+    match kind {
+        NpcKind::Sanayici => "Usta",
+        NpcKind::Esnaf => "Esnaf",
+        NpcKind::Alici | NpcKind::Tuccar => "Bey",
+        NpcKind::Spekulator => "Efendi",
+    }
+}
+
+/// Deterministik isim üret — seed RNG'den çek, kullanılmış set'e ekle.
+/// Çakışmayı önlemek için aynı isim alındıysa üstüne suffix.
+fn pick_npc_name(
+    rng: &mut ChaCha8Rng,
+    kind: NpcKind,
+    used: &mut std::collections::BTreeSet<String>,
+) -> String {
+    for _ in 0..32 {
+        let first = NPC_FIRST_NAMES[rng.random_range(0..NPC_FIRST_NAMES.len())];
+        let title = npc_title(kind, first);
+        let candidate = format!("{first} {title}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    // Havuz tükendiyse numerik fallback (16+ NPC senaryosu).
+    let first = NPC_FIRST_NAMES[rng.random_range(0..NPC_FIRST_NAMES.len())];
+    let title = npc_title(kind, first);
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{first} {title} ({n})");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+fn seed_world(human_role: Role, config: RoomConfig, room_id: RoomId) -> GameState {
+    let composition = config.balance.npcs;
+    let mut s = GameState::new(room_id, config);
+
+    // Seed'den RNG — tüm baseline + inventory dağılımı bundan türer.
+    // Aynı room_id → aynı dünya (reproducibility için debug log'da tutulur).
+    let mut rng = ChaCha8Rng::seed_from_u64(room_id.value());
+
+    // ŞEHİR UZMANLAŞMASI — her oyun farklı.
+    // 3 ham maddeyi 3 şehre rastgele dağıt (Fisher-Yates shuffle).
+    // Bu sezon İstanbul Buğday üretebilir, sonraki oyunda Zeytin → "ezbere
+    // strateji" sorunu çözülür, oyuncu her sezon haritayı keşfeder.
+    {
+        let mut raws = ProductKind::RAW_MATERIALS;
+        for i in (1..raws.len()).rev() {
+            let j = rng.random_range(0..=i);
+            raws.swap(i, j);
+        }
+        for (city, raw) in CityId::ALL.iter().zip(raws.iter()) {
+            s.city_specialty.insert(*city, *raw);
+        }
+    }
+
+    // İsim çakışmasını önlemek için kullanılan isimleri takip et.
+    let mut used_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    // price_baseline: her (şehir × ürün) için 0.80-1.20 çarpan.
+    // Bazı şehirler pahalı, bazıları ucuz → doğal arbitraj fırsatı.
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            let base_lira = if product.is_raw() {
+                moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+            } else {
+                moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+            };
+            let multiplier: u32 = rng.random_range(80..=120);
+            let price_cents = base_lira.saturating_mul(100) * i64::from(multiplier) / 100;
+            s.price_baseline
+                .insert((city, product), Money::from_cents(price_cents));
+        }
+    }
 
     // İnsan oyuncu — rol'e göre özelleştirilmiş başlangıç paketi.
     let (starting_cash, human_name) = match human_role {
-        // Sanayici: daha az nakit, İstanbul'da pamuk stoğu (fabrika beslemesi için).
         Role::Sanayici => (50_000_i64, "Sen (Sanayici)"),
-        // Tüccar: bol nakit (kervan + arbitraj sermayesi), az stok.
         Role::Tuccar => (80_000_i64, "Sen (Tüccar)"),
     };
     let mut human = Player::new(
@@ -795,60 +1185,160 @@ fn seed_world(human_role: Role, config: RoomConfig) -> GameState {
         false,
     )
     .unwrap();
-    // Sanayici fabrikasını besleyebilmek için pamuk stoğu ile başlar.
     if matches!(human_role, Role::Sanayici) {
+        // Rastgele şehir + o şehrin **bu sezonki** ucuz ham maddesi × 70-130
+        // birim. city_specialty her oyun farklı (yukarıda shuffle).
+        let city_idx = rng.random_range(0usize..CityId::ALL.len());
+        let starter_city = CityId::ALL[city_idx];
+        let starter_raw = s.cheap_raw_for(starter_city);
+        let starter_qty: u32 = rng.random_range(70..=130);
         human
             .inventory
-            .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+            .add(starter_city, starter_raw, starter_qty)
             .unwrap();
     }
     s.players.insert(human.id, human);
 
-    // NPC #1 — Tüccar satıcı (bol stok).
-    let mut npc1 = Player::new(
-        PlayerId::new(100),
-        "NPC-Tüccar",
-        Role::Tuccar,
-        Money::from_lira(15_000).unwrap(),
-        true,
-    )
-    .unwrap();
-    for city in CityId::ALL {
-        for product in ProductKind::ALL {
-            npc1.inventory.add(city, product, 80).unwrap();
-        }
+    // NPC ID ofseti: 100, 101, 102, ... Her tip için ardışık.
+    let mut next_id: u64 = 100;
+
+    // NPC-Tüccar(lar) — arbitraj + likidite. Toplam 500 birim stok
+    // weighted random olarak 21 bucket'a dağıtılır (bazı NPC belirli bir
+    // ürün/şehirde "specialist" olur). Dumping olmasın diye sabit budget.
+    for _ in 0..composition.tuccar {
+        let name = pick_npc_name(&mut rng, NpcKind::Tuccar, &mut used_names);
+        let mut npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Tuccar,
+            Money::from_lira(15_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Tuccar);
+        distribute_inventory(&mut npc, &mut rng, 500);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
     }
-    s.players.insert(npc1.id, npc1);
 
-    // NPC #2 — Sanayici (biraz stok + bol nakit).
-    let mut npc2 = Player::new(
-        PlayerId::new(101),
-        "NPC-Sanayici",
-        Role::Sanayici,
-        Money::from_lira(30_000).unwrap(),
-        true,
-    )
-    .unwrap();
-    npc2.inventory
-        .add(CityId::Istanbul, ProductKind::Kumas, 50)
-        .unwrap();
-    npc2.inventory
-        .add(CityId::Ankara, ProductKind::Un, 50)
-        .unwrap();
-    s.players.insert(npc2.id, npc2);
+    // NPC-Sanayici(ler) — fabrika kurar, ham → bitmiş üretir.
+    // Başlangıç stoğu: 1 şehirde karışık ham + hafif finished. Böylece
+    // t1'de fabrika kurdugunda raw stoğu var, hemen üretime başlayabilir.
+    for _ in 0..composition.sanayici {
+        let name = pick_npc_name(&mut rng, NpcKind::Sanayici, &mut used_names);
+        let mut npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Sanayici,
+            Money::from_lira(30_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Sanayici);
+        let city_idx = rng.random_range(0usize..CityId::ALL.len());
+        let starter_city = CityId::ALL[city_idx];
+        // Raw starter: 30-50 birim, ürün şehrin **bu sezonki** ucuz hamı.
+        let starter_raw = s.cheap_raw_for(starter_city);
+        let raw_qty: u32 = rng.random_range(30..=50);
+        let _ = npc.inventory.add(starter_city, starter_raw, raw_qty);
+        // Finished starter: küçük — piyasaya erken birkaç emir versin.
+        let finished_idx = rng.random_range(0usize..ProductKind::FINISHED_GOODS.len());
+        let fin_qty: u32 = rng.random_range(10..=20);
+        let _ = npc.inventory.add(
+            starter_city,
+            ProductKind::FINISHED_GOODS[finished_idx],
+            fin_qty,
+        );
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
 
-    // NPC #3 — Nakit-ağırlık alıcı.
-    let npc3 = Player::new(
-        PlayerId::new(102),
-        "NPC-Alıcı",
-        Role::Tuccar,
-        Money::from_lira(50_000).unwrap(),
-        true,
-    )
-    .unwrap();
-    s.players.insert(npc3.id, npc3);
+    // NPC-Alıcı(lar) — saf alıcı, **200k bol nakit**, stok yok.
+    // 100k yetmiyordu — sezon boyu demand pressure kaybolup NPC'ler zarara
+    // gidiyordu. 200k ile sezon sonuna kadar alım gücü kalır.
+    for _ in 0..composition.alici {
+        let name = pick_npc_name(&mut rng, NpcKind::Alici, &mut used_names);
+        let npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Tuccar,
+            Money::from_lira(200_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Alici);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
+
+    // NPC-Esnaf(lar) — saf satıcı (dükkan). Devasa stok (~3000 birim
+    // dengeli dağıtım), her tick 4 sell emri verir. Kervan/fabrika yok.
+    // Cash önemli değil — sadece satıyorlar.
+    for _ in 0..composition.esnaf {
+        let name = pick_npc_name(&mut rng, NpcKind::Esnaf, &mut used_names);
+        let mut npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Tuccar,
+            Money::from_lira(10_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Esnaf);
+        distribute_inventory(&mut npc, &mut rng, 3_000);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
+
+    // NPC-Spekülatör(ler) — market maker. Hem alış hem satış emri verir,
+    // spread'i daraltır → mallar bekleyici kalmasın diye. Orta sermaye +
+    // dengeli başlangıç stoğu (~800 birim weighted) — iki yöne de likidite.
+    for _ in 0..composition.spekulator {
+        let name = pick_npc_name(&mut rng, NpcKind::Spekulator, &mut used_names);
+        let mut npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Tuccar,
+            Money::from_lira(40_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Spekulator);
+        distribute_inventory(&mut npc, &mut rng, 800);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
 
     s
+}
+
+/// Bir NPC'ye `total_budget` kadar birim stoğu, (şehir × ürün) bucket'larına
+/// weighted random olarak dağıtır. Her bucket için 0-10 arası ağırlık çekilir,
+/// ağırlıklar toplamına göre orantılı miktar verilir. Determinism: caller
+/// aynı RNG state'ini geçerse aynı sonuç.
+fn distribute_inventory(player: &mut Player, rng: &mut ChaCha8Rng, total_budget: u32) {
+    let buckets: Vec<(CityId, ProductKind)> = CityId::ALL
+        .iter()
+        .flat_map(|c| ProductKind::ALL.iter().map(move |p| (*c, *p)))
+        .collect();
+
+    // Her bucket için 0-10 arası ağırlık. Bazı bucket'lar ağırlıklı (specialist).
+    let weights: Vec<u32> = (0..buckets.len())
+        .map(|_| rng.random_range(0u32..=10))
+        .collect();
+    let total_weight: u32 = weights.iter().sum();
+    if total_weight == 0 {
+        return;
+    }
+
+    for ((city, product), w) in buckets.iter().zip(weights.iter()) {
+        let share =
+            u32::try_from(u64::from(total_budget) * u64::from(*w) / u64::from(total_weight))
+                .unwrap_or(0);
+        if share > 0 {
+            let _ = player.inventory.add(*city, *product, share);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -864,26 +1354,35 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         return;
     }
 
+    // Aktif şok varsa header altında bir satır ayır; yoksa görünmez (0 satır).
+    let shock_height: u16 = u16::from(!app.state.active_shocks.is_empty());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(10),   // middle (panels)
-            Constraint::Length(3), // leaderboard
-            Constraint::Length(1), // footer
+            Constraint::Length(3),            // header
+            Constraint::Length(shock_height), // aktif olaylar şeridi
+            Constraint::Min(10),              // middle (panels)
+            Constraint::Length(1),            // kervan status çubuğu
+            Constraint::Length(3),            // leaderboard
+            Constraint::Length(1),            // footer
         ])
         .split(area);
 
     render_header(f, chunks[0], app);
-    render_middle(f, chunks[1], app);
+    if shock_height > 0 {
+        render_active_shocks(f, chunks[1], app);
+    }
+    render_middle(f, chunks[2], app);
+    render_caravan_strip(f, chunks[3], app);
     // Command mode'dayken leaderboard yerine komut hint'i göster —
     // oyuncu hangi parametreleri girmesi gerektiğini bilsin.
     if matches!(app.mode, Mode::Command { .. }) {
-        render_command_hint(f, chunks[2], app);
+        render_command_hint(f, chunks[4], app);
     } else {
-        render_leaderboard(f, chunks[2], app);
+        render_leaderboard(f, chunks[4], app);
     }
-    render_footer(f, chunks[3], app);
+    render_footer(f, chunks[5], app);
 
     // Overlay'ler — ortada popup, arkaplanı temizle.
     match app.mode {
@@ -891,6 +1390,10 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Info => render_info_overlay(f, area, app),
         Mode::Holdings => render_holdings_overlay(f, area, app),
         Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
+        Mode::RecentTrades => render_recent_trades_overlay(f, area, app),
+        Mode::OpenBook => render_open_book_overlay(f, area, app),
+        Mode::CaravanPanel => render_caravan_panel_overlay(f, area, app),
+        Mode::DebugLog { scroll } => render_debug_log_overlay(f, area, app, scroll),
         Mode::GameOver => render_game_over_overlay(f, area, app),
         Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
         _ => {}
@@ -1000,6 +1503,33 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::raw(" ile değiştir)"),
         ]),
         Line::from(""),
+        Line::from(vec![
+            Span::styled("  📄  Config: ", Style::default().fg(Color::White)),
+            Span::styled(
+                if app.balance_loaded {
+                    "moneywar.toml yüklendi"
+                } else {
+                    "moneywar.toml yok — default balance"
+                },
+                Style::default().fg(if app.balance_loaded {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!(
+                    "TTL default={} max={}  cooldown={}t  ceza=%{}",
+                    app.balance.default_order_ttl,
+                    app.balance.max_order_ttl,
+                    app.balance.relist_cooldown_ticks,
+                    app.balance.cancel_penalty_pct,
+                ),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(""),
         Line::from(Span::styled(
             "  Skor = Nakit + Stok × ort.fiyat + Fabrika × 0.5 + Aktif escrow",
             Style::default().fg(Color::DarkGray),
@@ -1093,12 +1623,16 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     lines.push(Line::from(""));
     lines.extend([
         help_kv("SPACE", "Bir tick ilerlet (bekleyen komutlar + NPC'ler)"),
-        help_kv("s", "Auto-sim aç/kapa (300ms tick)"),
+        help_kv("t", "Auto-sim aç/kapa (300ms tick)"),
         help_kv(
             "m",
             "Varlıklarım (emir / fabrika / kervan / kontrat / kredi)",
         ),
         help_kv("n", "Haber kutusu"),
+        help_kv("e", "🔄 Son eşleşmeler (kim kime ne sattı)"),
+        help_kv("k", "📖 Açık Pazar (orderbook depth)"),
+        help_kv("v", "🚚 Kervan kontrol paneli (detaylı + cargo)"),
+        help_kv("g", "🛠 Debug log (ham event akışı, ↑↓ scroll)"),
         help_kv("?", "Bu yardım"),
         help_kv("i", "Oyun kuralları"),
         help_kv("q", "Çıkış"),
@@ -1118,8 +1652,8 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     )));
     lines.push(Line::from(""));
     let mut shortcuts = vec![
-        help_kv("b", "🛒 AL — şehir × ürün × miktar × fiyat"),
-        help_kv("S", "💸 SAT (büyük S — küçük 's' auto-sim)"),
+        help_kv("b", "🛒 AL — şehir × ürün × miktar × fiyat × TTL"),
+        help_kv("s", "💸 SAT — şehir × ürün × miktar × fiyat × TTL"),
     ];
     if matches!(role, Role::Sanayici) {
         shortcuts.push(help_kv("f", "🏭 Fabrika kur — Sanayici tekeli"));
@@ -1379,6 +1913,291 @@ fn render_info_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     f.render_widget(para, popup);
 }
 
+/// Wizard başlığında görünecek cash + maliyet satırları. Aksiyona göre
+/// ek bilgi: Build'de sıradaki fabrika maliyeti, Caravan'da kervan maliyeti.
+fn wizard_money_header(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
+    let Some(player) = app.state.players.get(&HUMAN_ID) else {
+        return Vec::new();
+    };
+    let cash = player.cash;
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let cash_span = Span::styled(
+        format!("  💰 Nakit: {cash}"),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    match wizard.kind {
+        ActionKind::Build => {
+            let built = app
+                .state
+                .factories
+                .values()
+                .filter(|f| f.owner == HUMAN_ID)
+                .count();
+            // Queue'daki BuildFactory komutları da sayılır — aynı tick'te
+            // birden çok fabrika kurarsan 2.'si "bedava" yazmasın.
+            let pending = app
+                .pending_human_cmds
+                .iter()
+                .filter(|c| matches!(c, Command::BuildFactory { owner, .. } if *owner == HUMAN_ID))
+                .count();
+            let existing = built + pending;
+            let cost =
+                moneywar_domain::Factory::build_cost(u32::try_from(existing).unwrap_or(u32::MAX));
+            let affordable = cash >= cost;
+            out.push(Line::from(vec![
+                cash_span,
+                Span::raw("   "),
+                Span::styled(
+                    format!("🏭 Yeni fabrika (#{}) maliyeti: {cost}", existing + 1),
+                    Style::default().fg(if affordable { Color::Green } else { Color::Red }),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    if affordable {
+                        "✓ yeterli".to_string()
+                    } else {
+                        format!(
+                            "✗ eksik {}",
+                            Money::from_cents(cost.as_cents().saturating_sub(cash.as_cents()))
+                        )
+                    },
+                    Style::default().fg(if affordable { Color::Green } else { Color::Red }),
+                ),
+            ]));
+            if pending > 0 {
+                out.push(Line::from(Span::styled(
+                    format!(
+                        "  ℹ Queue'da {pending} fabrika emri var — bu SPACE'te işlenince maliyet sıralı uygulanır"
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+        ActionKind::Caravan => {
+            let role = player.role;
+            let built = app
+                .state
+                .caravans
+                .values()
+                .filter(|c| c.owner == HUMAN_ID)
+                .count();
+            let pending = app
+                .pending_human_cmds
+                .iter()
+                .filter(|c| matches!(c, Command::BuyCaravan { owner, .. } if *owner == HUMAN_ID))
+                .count();
+            let existing = built + pending;
+            let cost = moneywar_domain::Caravan::buy_cost(
+                role,
+                u32::try_from(existing).unwrap_or(u32::MAX),
+            );
+            let affordable = cash >= cost;
+            out.push(Line::from(vec![
+                cash_span,
+                Span::raw("   "),
+                Span::styled(
+                    format!("🚚 Yeni kervan (#{}) maliyeti: {cost}", existing + 1),
+                    Style::default().fg(if affordable { Color::Green } else { Color::Red }),
+                ),
+            ]));
+            if pending > 0 {
+                out.push(Line::from(Span::styled(
+                    format!("  ℹ Queue'da {pending} kervan emri var"),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+        _ => {
+            // Diğer aksiyonlar: sadece cash göster.
+            out.push(Line::from(vec![cash_span]));
+        }
+    }
+    out
+}
+
+/// Wizard açıkken gösterilen pre-flight uyarıları — "kervanın yok", "bu
+/// şehirde stok 0" gibi tuş basmadan önce bilmek istediğin durum bilgisi.
+fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
+    let mut out: Vec<Line<'static>> = Vec::new();
+
+    // Dispatch wizard: idle kervan yoksa erken uyar; seçildiyse konum + ETA.
+    if matches!(wizard.kind, ActionKind::Ship) {
+        let idle_count = app
+            .state
+            .caravans
+            .values()
+            .filter(|c| c.owner == HUMAN_ID && c.is_idle())
+            .count();
+        if idle_count == 0 {
+            let any_owned = app.state.caravans.values().any(|c| c.owner == HUMAN_ID);
+            let msg = if any_owned {
+                "  ⚠ Idle kervanın yok — hepsi yolda. Varmalarını bekle ya da yeni al ('c')"
+                    .to_string()
+            } else {
+                "  ⚠ Hiç kervanın yok — önce 'c' ile kervan al".to_string()
+            };
+            out.push(Line::from(Span::styled(
+                msg,
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )));
+        }
+        // Kervan seçildiyse konumunu ve ETA bilgisini göster.
+        if let Some(FieldValue::CaravanId(cid)) = wizard.fields.first() {
+            if let Some(caravan) = app.state.caravans.get(cid) {
+                let loc = caravan.state.current_city().map(city_short).unwrap_or("?");
+                let cap = caravan.capacity;
+                out.push(Line::from(Span::styled(
+                    format!(
+                        "  📍 Kervan #{} @ {} (kapasite {} birim) — 'from' otomatik",
+                        cid.value(),
+                        loc,
+                        cap
+                    ),
+                    Style::default().fg(Color::Cyan),
+                )));
+                // Hedef seçildiyse mesafe + bozulma uyarısı.
+                if let Some(FieldValue::City(to_city)) = wizard.fields.get(1) {
+                    if let Some(from_city) = caravan.state.current_city() {
+                        let distance = from_city.distance_to(*to_city);
+                        out.push(Line::from(Span::styled(
+                            format!(
+                                "  🛣  {} → {} = {} tick yol (varış t{})",
+                                city_short(from_city),
+                                city_short(*to_city),
+                                distance,
+                                app.state.current_tick.value().saturating_add(distance)
+                            ),
+                            Style::default().fg(Color::Yellow),
+                        )));
+                        // Ürün seçildiyse bozulma kontrolü.
+                        if let Some(FieldValue::Product(p)) = wizard.fields.get(2) {
+                            if let Some(perish) = p.perishability() {
+                                let danger = distance >= perish.after_ticks;
+                                let (color, icon) = if perish.loss_percent == 100 {
+                                    (Color::Red, "☠")
+                                } else {
+                                    (Color::Yellow, "⚠")
+                                };
+                                if danger {
+                                    out.push(Line::from(Span::styled(
+                                        format!(
+                                            "  {icon} {} bozulur: {} tick sonra %{} kayıp. Rota {} tick — TEHLİKELİ!",
+                                            p, perish.after_ticks, perish.loss_percent, distance
+                                        ),
+                                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                                    )));
+                                } else {
+                                    out.push(Line::from(Span::styled(
+                                        format!(
+                                            "  ℹ {} bozulur: {} tick sonra %{} kayıp. Rota {} tick — güvenli.",
+                                            p, perish.after_ticks, perish.loss_percent, distance
+                                        ),
+                                        Style::default().fg(Color::DarkGray),
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sell wizard: şehir + ürün seçildiyse stok durumunu göster.
+    if matches!(wizard.kind, ActionKind::Sell) && wizard.fields.len() >= 2 {
+        let city = match wizard.fields.first() {
+            Some(FieldValue::City(c)) => *c,
+            _ => return out,
+        };
+        let product = match wizard.fields.get(1) {
+            Some(FieldValue::Product(p)) => *p,
+            _ => return out,
+        };
+        let stock = app
+            .state
+            .players
+            .get(&HUMAN_ID)
+            .map(|p| p.inventory.get(city, product))
+            .unwrap_or(0);
+        let (msg, color) = if stock == 0 {
+            (
+                format!(
+                    "  ⚠ {} {}'de stoğun YOK — satış eşleşirse reject olur. Kervanla taşıman lazım.",
+                    product,
+                    city_short(city)
+                ),
+                Color::Red,
+            )
+        } else {
+            (
+                format!(
+                    "  📦 {} {}'de stok: {} birim",
+                    product,
+                    city_short(city),
+                    stock
+                ),
+                Color::Green,
+            )
+        };
+        out.push(Line::from(Span::styled(
+            msg,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    // Buy wizard: şehir + ürün seçildiyse mevcut stok + son clearing fiyatı.
+    if matches!(wizard.kind, ActionKind::Buy) && wizard.fields.len() >= 2 {
+        let city = match wizard.fields.first() {
+            Some(FieldValue::City(c)) => *c,
+            _ => return out,
+        };
+        let product = match wizard.fields.get(1) {
+            Some(FieldValue::Product(p)) => *p,
+            _ => return out,
+        };
+        let my_stock = app
+            .state
+            .players
+            .get(&HUMAN_ID)
+            .map(|p| p.inventory.get(city, product))
+            .unwrap_or(0);
+        let last_price = app
+            .state
+            .price_history
+            .get(&(city, product))
+            .and_then(|v| v.last())
+            .map(|(_, p)| *p);
+        let price_str = match last_price {
+            Some(p) => format!("son fiyat {p}"),
+            None => {
+                let baseline = app
+                    .state
+                    .price_baseline
+                    .get(&(city, product))
+                    .copied()
+                    .unwrap_or(Money::ZERO);
+                format!("baseline {baseline} (henüz trade yok)")
+            }
+        };
+        out.push(Line::from(Span::styled(
+            format!(
+                "  📦 {} {}'de zaten {} birim   💹 {}",
+                product,
+                city_short(city),
+                my_stock,
+                price_str
+            ),
+            Style::default().fg(Color::Cyan),
+        )));
+    }
+
+    out
+}
+
 fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wizard: &Wizard) {
     let popup = centered_rect(70, 70, area);
     f.render_widget(Clear, popup);
@@ -1395,6 +2214,34 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
     f.render_widget(block, popup);
 
     let mut lines: Vec<Line> = Vec::new();
+
+    // Cash + ilgili maliyet bilgisi — wizard'ın üstünde hep görünür.
+    lines.extend(wizard_money_header(app, wizard));
+    // Pre-flight uyarıları — "kervan yok", "stok 0" gibi durum bildirimi.
+    lines.extend(wizard_preflight_hints(app, wizard));
+    // Multi-cargo durumu (Ship wizard): şu ana dek yüklenen ek kalemler.
+    if matches!(wizard.kind, ActionKind::Ship) && !wizard.extra_cargo.is_empty() {
+        let total: u32 = wizard.extra_cargo.iter().map(|(_, q)| *q).sum();
+        let items: Vec<String> = wizard
+            .extra_cargo
+            .iter()
+            .map(|(p, q)| format!("{q} {p}"))
+            .collect();
+        // Kapasite hesaplaması — seçili kervana göre.
+        let cap = if let Some(FieldValue::CaravanId(cid)) = wizard.fields.first() {
+            app.state.caravans.get(cid).map(|c| c.capacity)
+        } else {
+            None
+        };
+        let cap_str = cap
+            .map(|c| format!("  (kapasite {total}/{c} dolu)"))
+            .unwrap_or_default();
+        lines.push(Line::from(Span::styled(
+            format!("  📦 Yüklendi: {}{}", items.join(" + "), cap_str),
+            Style::default().fg(Color::Cyan),
+        )));
+    }
+    lines.push(Line::from(""));
 
     // Yol haritası: tamamlanan adımlar + şu anki adım göstergesi.
     if !wizard.fields.is_empty() {
@@ -1435,7 +2282,7 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
         ]));
         lines.push(Line::from(""));
         match field {
-            FieldKind::City | FieldKind::CityFrom | FieldKind::CityTo => {
+            FieldKind::City | FieldKind::CityTo => {
                 for (i, c) in CityId::ALL.iter().enumerate() {
                     lines.push(option_line(i + 1, city_short(*c), Color::Blue));
                 }
@@ -1567,7 +2414,8 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
             | FieldKind::PriceLira
             | FieldKind::AmountLira
             | FieldKind::DurationTicks
-            | FieldKind::DeliveryTick => {
+            | FieldKind::DeliveryTick
+            | FieldKind::OrderTtl => {
                 lines.push(Line::from(vec![
                     Span::raw("  "),
                     Span::styled(
@@ -1577,12 +2425,28 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                             .add_modifier(Modifier::BOLD),
                     ),
                 ]));
-                let hint = match field {
+                let hint_str: String;
+                let hint: &str = match field {
+                    FieldKind::QtyU32 if matches!(wizard.kind, ActionKind::Ship) => {
+                        "rakamlar → miktar, M → max yükle (stok × kapasite min), Enter onay"
+                    }
                     FieldKind::QtyU32 => "rakam tuşları → birim sayısı, Enter onay",
-                    FieldKind::PriceLira => "rakam tuşları → ₺ cinsinden birim fiyat, Enter onay",
-                    FieldKind::AmountLira => "rakam tuşları → toplam ₺, Enter onay",
+                    FieldKind::PriceLira => {
+                        "rakamlar + '.' veya ',' ile ondalık (örn 15.75), Enter onay"
+                    }
+                    FieldKind::AmountLira => {
+                        "rakamlar + '.' veya ',' ile ondalık (örn 10000.50), Enter onay"
+                    }
                     FieldKind::DurationTicks => "rakam tuşları → kaç tick, Enter onay",
                     FieldKind::DeliveryTick => "rakam tuşları → teslimat tick'i, Enter onay",
+                    FieldKind::OrderTtl => {
+                        let b = app.state.config.balance;
+                        hint_str = format!(
+                            "kitapta kaç tick kalsın (1..{})  boş → default {}",
+                            b.max_order_ttl, b.default_order_ttl
+                        );
+                        &hint_str
+                    }
                     _ => "",
                 };
                 lines.push(Line::from(""));
@@ -1592,6 +2456,36 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                 )));
             }
         }
+    } else if wizard.confirm_more_cargo {
+        // Ship: son (Product, Qty) yüklendi. Kullanıcı başka ürün eklemek
+        // isterse `1`, bitirmek isterse `2`/Enter.
+        let (last_prod, last_qty) = match (wizard.fields.get(2), wizard.fields.get(3)) {
+            (Some(FieldValue::Product(p)), Some(FieldValue::Number(q))) => (*p, *q),
+            _ => (ProductKind::Pamuk, 0),
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  ✓ {} × {} yüklendi.", last_prod, last_qty),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  [1] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("başka ürün ekle      "),
+            Span::styled(
+                "[2] / Enter",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" dispatch'i başlat"),
+        ]));
     } else {
         // Tüm alanlar dolu → onay ekranı.
         lines.push(Line::from(Span::styled(
@@ -2125,6 +3019,487 @@ fn render_news_inbox_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
     f.render_widget(para, inner);
 }
 
+fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(80, 80, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🔄  Son Eşleşmeler  —  kim kime ne sattı ")
+        .border_style(Style::default().fg(Color::Green));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "  En yeni eşleşmeler üstte. Kendi işlemlerin sarı.",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    if app.recent_trades.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (henüz eşleşme yok — SPACE ile tick ilerlet)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        // Başlık satırı.
+        lines.push(Line::from(Span::styled(
+            "  Tick  Satıcı               →  Alıcı                 Miktar  Ürün         Şehir     Fiyat",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  ────  ──────────────────     ──────────────────      ──────  ───────────  ────────  ─────",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        for t in app.recent_trades.iter().rev() {
+            let is_mine = t.buyer_name.starts_with("Sen") || t.seller_name.starts_with("Sen");
+            let color = if is_mine { Color::Yellow } else { Color::White };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {:>4}  {:<20}  →  {:<20}  {:>6}  {:<11}  {:<8}  {}",
+                    t.tick.value(),
+                    truncate_str(&t.seller_name, 20),
+                    truncate_str(&t.buyer_name, 20),
+                    t.quantity,
+                    format!("{}", t.product),
+                    city_short(t.city),
+                    t.price,
+                ),
+                Style::default().fg(color).add_modifier(if is_mine {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Esc / Enter / Space → kapat",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(85, 85, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📖  Açık Pazar  —  orderbook depth ")
+        .border_style(Style::default().fg(Color::Blue));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "  Her (şehir × ürün) için en iyi 3 bid (alıcı) + 3 ask (satıcı). Kendi emirlerin sarı.",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    // Sadece emir bulunan (şehir, ürün)'ü göster — determinism için BTreeMap sırası.
+    let mut any = false;
+    for ((city, product), orders) in &app.state.order_book {
+        let (mut buys, mut sells): (Vec<_>, Vec<_>) = orders
+            .iter()
+            .partition(|o| matches!(o.side, OrderSide::Buy));
+        // Best bid: yüksek fiyat önce. Best ask: düşük fiyat önce.
+        buys.sort_by(|a, b| b.unit_price.cmp(&a.unit_price));
+        sells.sort_by(|a, b| a.unit_price.cmp(&b.unit_price));
+
+        if buys.is_empty() && sells.is_empty() {
+            continue;
+        }
+        any = true;
+
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                format!("{} {}", city_short(*city), product),
+                Style::default()
+                    .fg(product_color(*product))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        // Başlık.
+        lines.push(Line::from(Span::styled(
+            "     BID (alıcı)                          │     ASK (satıcı)",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        // İlk 3'er satır yan yana.
+        for i in 0..3 {
+            let bid = buys.get(i);
+            let ask = sells.get(i);
+            let bid_text = bid.map(|o| {
+                let is_mine = o.player == HUMAN_ID;
+                let owner = app
+                    .state
+                    .players
+                    .get(&o.player)
+                    .map(|p| truncate_str(&p.name, 14))
+                    .unwrap_or_default();
+                (
+                    format!(
+                        "{:<14}  {:>6} adet @ {:>8}  (TTL {})",
+                        owner, o.quantity, o.unit_price, o.remaining_ticks
+                    ),
+                    is_mine,
+                )
+            });
+            let ask_text = ask.map(|o| {
+                let is_mine = o.player == HUMAN_ID;
+                let owner = app
+                    .state
+                    .players
+                    .get(&o.player)
+                    .map(|p| truncate_str(&p.name, 14))
+                    .unwrap_or_default();
+                (
+                    format!(
+                        "{:<14}  {:>6} adet @ {:>8}  (TTL {})",
+                        owner, o.quantity, o.unit_price, o.remaining_ticks
+                    ),
+                    is_mine,
+                )
+            });
+
+            let mut spans = vec![Span::raw("     ")];
+            match bid_text {
+                Some((txt, mine)) => spans.push(Span::styled(
+                    txt,
+                    Style::default().fg(if mine { Color::Yellow } else { Color::Green }),
+                )),
+                None => spans.push(Span::styled(
+                    format!("{:<44}", "—"),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            }
+            spans.push(Span::raw("  │  "));
+            match ask_text {
+                Some((txt, mine)) => spans.push(Span::styled(
+                    txt,
+                    Style::default().fg(if mine { Color::Yellow } else { Color::Red }),
+                )),
+                None => spans.push(Span::styled(
+                    "—".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            }
+            lines.push(Line::from(spans));
+        }
+        lines.push(Line::from(""));
+    }
+
+    if !any {
+        lines.push(Line::from(Span::styled(
+            "  (pazar boş — bir emir ver ya da SPACE ile tick ilerlet)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Esc / Enter / Space → kapat",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_caravan_panel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(85, 80, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🚚  Kervanlarım  —  detaylı yönetim ")
+        .border_style(Style::default().fg(Color::Blue));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mine: Vec<&moneywar_domain::Caravan> = app
+        .state
+        .caravans
+        .values()
+        .filter(|c| c.owner == HUMAN_ID)
+        .collect();
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "  Tüm kervanlarının anlık durumu. Hızlı dispatch için 'd' (Ship wizard).",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    if mine.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (Kervanın yok — 'c' ile satın al)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        // Başlık satırı.
+        lines.push(Line::from(Span::styled(
+            "  ID    Kapasite   Durum                              Cargo",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  ────  ────────   ─────────────────────────────────  ─────────────────",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let current = app.state.current_tick;
+        for caravan in &mine {
+            let (status, status_color): (String, Color) = match &caravan.state {
+                moneywar_domain::CaravanState::Idle { location } => {
+                    (format!("🟢 Idle @ {}", city_short(*location)), Color::Green)
+                }
+                moneywar_domain::CaravanState::EnRoute {
+                    from,
+                    to,
+                    arrival_tick,
+                    ..
+                } => {
+                    let eta = arrival_tick.value().saturating_sub(current.value());
+                    (
+                        format!(
+                            "🟡 {} → {} (t{}, {} tick kaldı)",
+                            city_short(*from),
+                            city_short(*to),
+                            arrival_tick.value(),
+                            eta
+                        ),
+                        Color::Yellow,
+                    )
+                }
+            };
+
+            // Cargo özet: EnRoute'taysa cargo items, Idle'daysa boş.
+            let cargo_str: String = match &caravan.state {
+                moneywar_domain::CaravanState::EnRoute { cargo, .. } => {
+                    let parts: Vec<String> =
+                        cargo.entries().map(|(p, q)| format!("{q} {p}")).collect();
+                    if parts.is_empty() {
+                        "—".into()
+                    } else {
+                        parts.join(" + ")
+                    }
+                }
+                moneywar_domain::CaravanState::Idle { .. } => "(boş)".into(),
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  #{:<4}  ", caravan.id.value()),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("{:>3} brm    ", caravan.capacity),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!("{status:<35}"),
+                    Style::default()
+                        .fg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(cargo_str, Style::default().fg(Color::Cyan)),
+            ]));
+        }
+
+        let idle_count = mine.iter().filter(|c| c.is_idle()).count();
+        let moving_count = mine.len() - idle_count;
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  Toplam: {}  |  Idle: {idle_count}  |  Yolda: {moving_count}",
+                mine.len()
+            ),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Esc/Enter/Space → kapat  |  d → yeni dispatch  |  c → yeni kervan al",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_debug_log_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, scroll: usize) {
+    let popup = centered_rect(90, 90, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🛠  Debug Log  —  ham LogEntry akışı ")
+        .border_style(Style::default().fg(Color::Magenta));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let total = app.debug_log.len();
+    let visible_rows = (inner.height as usize).saturating_sub(3); // header + footer payı
+    let visible_rows = visible_rows.max(1);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  ↑/k yukarı  ↓/j aşağı  PgUp/PgDn  Home/End  Esc kapat   ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("toplam {total} entry, scroll {scroll}"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    if total == 0 {
+        lines.push(Line::from(Span::styled(
+            "  (henüz log yok — SPACE ile tick ilerlet)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        // En yeni baştan: iter().rev() ile geri-sıralı görüntü, scroll offset'iyle kaydır.
+        let iter = app.debug_log.iter().rev().skip(scroll).take(visible_rows);
+        for entry in iter {
+            // Tick + actor renkli başlık, sonra Debug format'lı event tek satırda.
+            let actor_str = entry
+                .actor
+                .map(|a| {
+                    app.state
+                        .players
+                        .get(&a)
+                        .map(|p| truncate_str(&p.name, 20))
+                        .unwrap_or_else(|| format!("#{}", a.value()))
+                })
+                .unwrap_or_else(|| "system".into());
+            let event_color = debug_event_color(&entry.event);
+            let event_debug = format!("{:?}", entry.event);
+            // Event debug çok uzun olabilir — inner.width'e göre kısalt.
+            let max_width = (inner.width as usize).saturating_sub(32).max(40);
+            let event_str = if event_debug.chars().count() > max_width {
+                let mut out: String = event_debug.chars().take(max_width - 1).collect();
+                out.push('…');
+                out
+            } else {
+                event_debug
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  t{:>3}  ", entry.tick.value()),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!("{:<20}  ", actor_str),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(event_str, Style::default().fg(event_color)),
+            ]));
+        }
+    }
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn debug_event_color(event: &moneywar_engine::LogEvent) -> Color {
+    use moneywar_engine::LogEvent;
+    match event {
+        LogEvent::OrderMatched { .. } => Color::Green,
+        LogEvent::OrderExpired { .. } => Color::DarkGray,
+        LogEvent::FillRejected { .. } | LogEvent::CommandRejected { .. } => Color::Red,
+        LogEvent::CommandAccepted { .. } => Color::White,
+        LogEvent::ProductionCompleted { .. } | LogEvent::ProductionStarted { .. } => {
+            Color::LightYellow
+        }
+        LogEvent::CaravanDispatched { .. } | LogEvent::CaravanArrived { .. } => Color::Blue,
+        LogEvent::EventScheduled { .. } => Color::Magenta,
+        LogEvent::MarketCleared { .. } => Color::Gray,
+        LogEvent::LoanTaken { .. }
+        | LogEvent::LoanRepaid { .. }
+        | LogEvent::LoanDefaulted { .. } => Color::LightRed,
+        _ => Color::White,
+    }
+}
+
+/// "15.75" veya "15,75" → 1575 (cents). Ondalık yoksa lira × 100.
+/// Ondalık basamak 2'den fazlaysa truncate edilir (kuruş altı yok).
+/// Geçersiz input (harf, birden çok nokta, tamamen negatif) → None.
+fn parse_decimal_as_cents(raw: &str) -> Option<u64> {
+    let s = raw.trim().replace(',', ".");
+    if s.is_empty() {
+        return None;
+    }
+    let (whole_str, frac_str) = match s.split_once('.') {
+        Some((w, f)) => (w, f),
+        None => (s.as_str(), ""),
+    };
+    // Whole part: digits only.
+    if whole_str.is_empty() || !whole_str.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let whole: u64 = whole_str.parse().ok()?;
+    // Frac part: en fazla 2 digit kullan, eksikse sağdan sıfır doldur.
+    let frac2: String = frac_str.chars().take(2).collect();
+    if !frac2.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let padded: String = frac2
+        .chars()
+        .chain(std::iter::repeat_n('0', 2 - frac2.len()))
+        .collect();
+    let frac: u64 = if padded.is_empty() {
+        0
+    } else {
+        padded.parse().ok()?
+    };
+    whole.checked_mul(100)?.checked_add(frac)
+}
+
+/// Stringi max uzunlukta kes, uzunsa `…` ile bitir.
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
 fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let popup = centered_rect(85, 90, area);
     f.render_widget(Clear, popup);
@@ -2261,7 +3636,7 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  q veya Esc ile çık",
+        "  q ile çık",
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
@@ -2301,6 +3676,16 @@ fn help_cmd(cmd: &str, desc: &str) -> Line<'static> {
 
 fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let season = app.state.season_progress();
+    // Sezon arc faz göstergesi: erken=Bahar, orta=Yaz, geç=Hasat. Olay
+    // sıklığı ve atmosfer bu fazlara göre değişir; oyuncu görsel olarak
+    // nerede olduğunu görsün → "tickleri amaçsız geçmiyor" hissi.
+    let (phase_icon, phase_label, phase_color) = if season.is_late() {
+        ("🍂", "Hasat", Color::Rgb(220, 120, 60))
+    } else if season.is_mid() {
+        ("🌞", "Yaz", Color::Yellow)
+    } else {
+        ("🌱", "Bahar", Color::Green)
+    };
     let title = Line::from(vec![
         Span::styled(
             "  MoneyWar  ",
@@ -2322,13 +3707,22 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ),
         Span::raw("  "),
         Span::styled(
-            format!("Sezon {}", season),
-            Style::default().fg(Color::Green),
+            format!("{phase_icon} {phase_label}"),
+            Style::default()
+                .fg(phase_color)
+                .add_modifier(Modifier::BOLD),
         ),
+        Span::raw(" "),
+        Span::styled(format!("({season})"), Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(
             format!("{}", app.state.config.preset),
             Style::default().fg(Color::Magenta),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("seed {}", app.state.room_id.value() % 1_000_000),
+            Style::default().fg(Color::DarkGray),
         ),
         Span::raw("  "),
         if app.auto_sim {
@@ -2360,19 +3754,82 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     f.render_widget(para, area);
 }
 
+/// Header altında 1 satırlık aktif olay şeridi. Her aktif şok bir chip:
+/// `🌵 Ankara/Buğday +18%`, `🌧️ İzmir/Zeytin -8%`. Renkler etki yönüne göre.
+/// Şok yoksa fonksiyon çağrılmaz (layout'ta 0 satır ayrılır).
+fn render_active_shocks(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    use moneywar_domain::GameEvent;
+    let mut spans: Vec<Span> = vec![Span::styled(
+        " 📰 ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Rgb(220, 200, 80))
+            .add_modifier(Modifier::BOLD),
+    )];
+    spans.push(Span::raw(" "));
+
+    // BTreeMap zaten (CityId, ProductKind) anahtar sırasına göre stabil iter.
+    let total = app.state.active_shocks.len();
+    for (idx, ((city, product), shock)) in app.state.active_shocks.iter().enumerate().take(6) {
+        let icon = match shock.source {
+            GameEvent::Drought { .. } => "🌵",
+            GameEvent::Strike { .. } => "✊",
+            GameEvent::BumperHarvest { .. } => "🌾",
+            GameEvent::RoadClosure { .. } => "🚧",
+            GameEvent::NewMarket { .. } => "🎉",
+        };
+        let pct = shock.multiplier_pct;
+        let (sign, color) = if pct > 0 {
+            ("+", Color::LightRed)
+        } else if pct < 0 {
+            ("", Color::LightGreen) // negatif yüzde zaten "-" içeriyor
+        } else {
+            ("", Color::Gray)
+        };
+        let remaining = app
+            .state
+            .current_tick
+            .ticks_until(shock.expires_at)
+            .unwrap_or(0);
+        spans.push(Span::styled(
+            format!(
+                "{icon} {}/{} {sign}{pct}% ({remaining}t)",
+                city_short(*city),
+                product
+            ),
+            Style::default().fg(color),
+        ));
+        if idx + 1 < total.min(6) {
+            spans.push(Span::raw("  "));
+        }
+    }
+    if total > 6 {
+        spans.push(Span::styled(
+            format!("  +{} daha", total - 6),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    let line = Line::from(spans);
+    let para = Paragraph::new(line);
+    f.render_widget(para, area);
+}
+
 fn render_middle(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
 
-    // Sol sütun: player paneli (üst) + haber (alt)
+    // Sol sütun: player paneli (üst) + role-adaptive panel (alt):
+    //   Sanayici → Fabrikalarım durum tablosu
+    //   Tüccar   → Arbitraj fırsatları
+    // Haber paneli ana sayfadan çıkarıldı — `n` ile overlay'den açılır.
     let left = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(cols[0]);
     render_player_panel(f, left[0], app);
-    render_news_panel(f, left[1], app);
+    render_role_adaptive_panel(f, left[1], app);
 
     // Sağ sütun: market (üst) + tick log (alt)
     let right = Layout::default()
@@ -2642,7 +4099,7 @@ fn compact_money(money: Money) -> String {
 
 fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     // Matrix layout: ürün satır, şehir sütun — çok daha kompakt.
-    // Hücre = fiyat + ok (↑/↓/—) rengiyle.
+    // Her hücre 2 satır: 1) fiyat + delta oku, 2) 6-tik sparkline.
     let mut header = vec![ratatui::text::Text::from(Span::styled(
         "Ürün",
         Style::default()
@@ -2670,12 +4127,8 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ))];
         for city in CityId::ALL {
             let key = (city, product);
-            let last = app
-                .state
-                .price_history
-                .get(&key)
-                .and_then(|v| v.last())
-                .map(|(_, p)| *p);
+            let history = app.state.price_history.get(&key);
+            let last = history.and_then(|v| v.last()).map(|(_, p)| *p);
             let Some(price) = last else {
                 cells.push(ratatui::text::Text::from(Span::styled(
                     "  —",
@@ -2693,7 +4146,7 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             } else {
                 ("·", Color::DarkGray)
             };
-            let cell = Line::from(vec![
+            let price_line = Line::from(vec![
                 Span::styled(
                     format!("{}", price),
                     Style::default()
@@ -2702,9 +4155,21 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 ),
                 Span::styled(format!(" {arrow}"), Style::default().fg(color)),
             ]);
-            cells.push(ratatui::text::Text::from(cell));
+            // Sparkline tick başında cache'lendi — render'da sadece okuma.
+            let spark_str = app
+                .cached_sparklines
+                .get(&key)
+                .cloned()
+                .unwrap_or_default();
+            let spark_line = Line::from(Span::styled(
+                spark_str,
+                Style::default().fg(Color::Rgb(150, 180, 220)),
+            ));
+            let mut text = ratatui::text::Text::from(price_line);
+            text.lines.push(spark_line);
+            cells.push(text);
         }
-        rows.push(Row::new(cells));
+        rows.push(Row::new(cells).height(2));
     }
 
     if !any_price {
@@ -2720,54 +4185,247 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Constraint::Min(10),
         Constraint::Min(10),
     ];
+    // Sezon haritası — bu oyunda hangi şehir hangi hamı ucuza üretir.
+    // Specialty her oyun farklı (seed shuffled), oyuncu burada hızlıca görür.
+    let specialty_summary: String = CityId::ALL
+        .iter()
+        .map(|c| format!("{}→{}", city_short(*c), app.state.cheap_raw_for(*c)))
+        .collect::<Vec<_>>()
+        .join("  ·  ");
+    let title = format!(" Pazar  ·  Sezon haritası: {specialty_summary} ");
     let table = Table::new(rows, widths).header(header_row).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Pazar — her hücre o ŞEHİRDEKİ fiyat (şehirler arası: kervan!) ")
+            .title(title)
             .border_style(Style::default().fg(Color::Yellow)),
     );
     f.render_widget(table, area);
 }
 
-fn render_news_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let items: Vec<ListItem> = if app.recent_news.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            "  (henüz haber yok)",
-            Style::default().fg(Color::DarkGray),
-        )))]
-    } else {
-        app.recent_news
-            .iter()
-            .rev()
-            .map(|n| {
-                let tier_icon = match n.tier {
-                    NewsTier::Bronze => "🥉",
-                    NewsTier::Silver => "🥈",
-                    NewsTier::Gold => "🥇",
-                };
-                let tier_style = Style::default()
-                    .fg(tier_color(n.tier))
-                    .add_modifier(Modifier::BOLD);
-                let line = Line::from(vec![
-                    Span::styled(format!("{tier_icon} "), tier_style),
-                    Span::styled(
-                        format!("tick {:>2} ", n.event_tick.value()),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::raw(format_event(&n.event)),
-                ]);
-                ListItem::new(line)
-            })
-            .collect()
-    };
+/// 8-seviyeli Unicode block elements ile fiyat tarihçesi sparkline'ı.
+/// Min-max normalize + en yakın seviye. Boş slice → boş string.
+/// Tek değer → tek tepe (▄). Aralık 0 ise tüm değerler aynı → flat orta seviye.
+fn sparkline(prices: &[Money]) -> String {
+    const CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if prices.is_empty() {
+        return String::new();
+    }
+    let cents: Vec<i64> = prices.iter().map(|p| p.as_cents()).collect();
+    let min = *cents.iter().min().unwrap_or(&0);
+    let max = *cents.iter().max().unwrap_or(&0);
+    let range = (max - min).max(1);
+    cents
+        .iter()
+        .map(|c| {
+            // 0..range → 0..7 yuvarlanmış index
+            let normalized = ((c - min) * 7 + range / 2) / range;
+            let idx = normalized.clamp(0, 7) as usize;
+            CHARS[idx]
+        })
+        .collect()
+}
 
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Haber ")
-            .border_style(Style::default().fg(Color::Magenta)),
-    );
-    f.render_widget(list, area);
+/// Role-adaptive panel — Sanayici için fabrika durumu, Tüccar için arbitraj.
+/// Ana ekranda sürekli görünür, tick başında güncellenir.
+fn render_role_adaptive_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let role = app
+        .state
+        .players
+        .get(&HUMAN_ID)
+        .map(|p| p.role)
+        .unwrap_or(Role::Tuccar);
+    match role {
+        Role::Sanayici => render_my_factories_panel(f, area, app),
+        Role::Tuccar => render_arbitrage_panel(f, area, app),
+    }
+}
+
+/// Sanayici panel: her fabrikan için durum + hammadde kıtlığı uyarısı.
+fn render_my_factories_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🏭  Fabrikalarım ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let Some(player) = app.state.players.get(&HUMAN_ID) else {
+        return;
+    };
+    let my_factories: Vec<&moneywar_domain::Factory> = app
+        .state
+        .factories
+        .values()
+        .filter(|fac| fac.owner == HUMAN_ID)
+        .collect();
+
+    let mut lines: Vec<Line> = Vec::new();
+    if my_factories.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (fabrika yok — 'f' ile kur)",
+            Style::default().fg(Color::DarkGray),
+        )));
+        let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+        f.render_widget(para, inner);
+        return;
+    }
+
+    let current = app.state.current_tick;
+    for factory in my_factories {
+        let raw = factory.raw_input();
+        let have_raw = player.inventory.get(factory.city, raw);
+        let active_batch = factory.batches.first();
+
+        let status: (String, Color) = if let Some(batch) = active_batch {
+            let eta = batch
+                .completion_tick
+                .value()
+                .saturating_sub(current.value());
+            (
+                format!(
+                    "🟢 Üretiyor ({} birim, t{} biter, {} tick)",
+                    batch.units,
+                    batch.completion_tick.value(),
+                    eta
+                ),
+                Color::Green,
+            )
+        } else if have_raw < moneywar_domain::Factory::BATCH_SIZE {
+            (
+                format!(
+                    "🔴 Ham madde yok ({}: var {}, gerek {})",
+                    raw,
+                    have_raw,
+                    moneywar_domain::Factory::BATCH_SIZE
+                ),
+                Color::Red,
+            )
+        } else {
+            ("🟡 Hazır, tick'te başlar".to_string(), Color::Yellow)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(
+                    "  #{} {:<8} {:<11} ",
+                    factory.id.value(),
+                    city_short(factory.city),
+                    factory.product
+                ),
+                Style::default().fg(product_color(factory.product)),
+            ),
+            Span::styled(
+                status.0,
+                Style::default().fg(status.1).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    // Son üretim / atıl durumu özeti.
+    let total = app
+        .state
+        .factories
+        .values()
+        .filter(|fac| fac.owner == HUMAN_ID)
+        .count();
+    let active = app
+        .state
+        .factories
+        .values()
+        .filter(|fac| fac.owner == HUMAN_ID && !fac.batches.is_empty())
+        .count();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  Toplam: {total}  |  Aktif üretim: {active}  |  Atıl: {}",
+            total - active
+        ),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+/// Tüccar panel: her ürün için en kârlı (from → to) rotası. Son clearing
+/// yoksa `price_baseline` kullanılır.
+fn render_arbitrage_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 💹  Arbitraj Fırsatları ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "  Her ürün için en ucuz → en pahalı şehir (fiyat: son clearing ya da baseline)",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    // Her ürün için min/max şehir fiyatı topla.
+    let mut opportunities: Vec<(ProductKind, CityId, Money, CityId, Money, i64)> = Vec::new();
+    for product in ProductKind::ALL {
+        let mut per_city: Vec<(CityId, Money)> = Vec::new();
+        for city in CityId::ALL {
+            let price = app
+                .state
+                .price_history
+                .get(&(city, product))
+                .and_then(|v| v.last())
+                .map(|(_, p)| *p)
+                .or_else(|| app.state.price_baseline.get(&(city, product)).copied());
+            if let Some(p) = price {
+                per_city.push((city, p));
+            }
+        }
+        if per_city.len() < 2 {
+            continue;
+        }
+        per_city.sort_by_key(|(_, p)| p.as_cents());
+        let (low_city, low) = per_city[0];
+        let (high_city, high) = *per_city.last().unwrap();
+        let spread = high.as_cents() - low.as_cents();
+        if spread > 0 {
+            opportunities.push((product, low_city, low, high_city, high, spread));
+        }
+    }
+
+    // En yüksek spread üstte.
+    opportunities.sort_by_key(|t| std::cmp::Reverse(t.5));
+
+    if opportunities.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (henüz fiyat verisi yok — SPACE ile tick ilerlet)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for (product, from, low, to, high, spread) in opportunities.into_iter().take(6) {
+            let spread_money = Money::from_cents(spread);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:<11}  ", product),
+                    Style::default()
+                        .fg(product_color(product))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} {} → {} {}", city_short(from), low, city_short(to), high),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("   +{spread_money}/birim"),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 fn render_log_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2899,8 +4557,86 @@ fn hint_for(cmd: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Ana ekranda her zaman görünen tek satırlık kervan durumu.
+/// "🚚 #1 Izmir→Istanbul (t9 varış) | #2 Idle @ Ankara" gibi.
+fn render_caravan_strip(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let mine: Vec<&moneywar_domain::Caravan> = app
+        .state
+        .caravans
+        .values()
+        .filter(|c| c.owner == HUMAN_ID)
+        .collect();
+
+    let mut spans: Vec<Span> = vec![Span::styled(
+        " 🚚 Kervanlar: ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    if mine.is_empty() {
+        spans.push(Span::styled(
+            "— (kervan yok, 'c' ile al)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        for (i, caravan) in mine.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            }
+            let id = caravan.id.value();
+            match &caravan.state {
+                moneywar_domain::CaravanState::Idle { location } => {
+                    spans.push(Span::styled(
+                        format!("#{id} Idle @ {}", city_short(*location)),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
+                moneywar_domain::CaravanState::EnRoute {
+                    from,
+                    to,
+                    arrival_tick,
+                    ..
+                } => {
+                    let eta = arrival_tick
+                        .value()
+                        .saturating_sub(app.state.current_tick.value());
+                    spans.push(Span::styled(
+                        format!(
+                            "#{id} {}→{} (t{} varış, {} tick)",
+                            city_short(*from),
+                            city_short(*to),
+                            arrival_tick.value(),
+                            eta
+                        ),
+                        Style::default().fg(Color::Yellow),
+                    ));
+                }
+            }
+        }
+    }
+
+    let para = Paragraph::new(Line::from(spans));
+    f.render_widget(para, area);
+}
+
 fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let board = leaderboard(&app.state);
+    // Tick başında hesaplanmış cache'ten oku — render hot-path'inde
+    // 12 player × scoring iter çalıştırma yok.
+    // Sadece **gerçek rakipler** (insan + Sanayici + Tüccar) görünsün; likidite
+    // sağlayan tipler (Alıcı/Esnaf/Spekülatör) saklanır.
+    let filtered: Vec<&PlayerScore> = app
+        .cached_leaderboard
+        .iter()
+        .filter(|sc| {
+            app.state.players.get(&sc.player_id).is_none_or(|p| {
+                !p.has_npc_kind(NpcKind::Alici)
+                    && !p.has_npc_kind(NpcKind::Esnaf)
+                    && !p.has_npc_kind(NpcKind::Spekulator)
+            })
+        })
+        .collect();
+
     let mut spans: Vec<Span> = vec![Span::styled(
         " ★ Leaderboard ",
         Style::default()
@@ -2909,7 +4645,7 @@ fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )];
     spans.push(Span::raw("  "));
-    for (idx, sc) in board.iter().take(5).enumerate() {
+    for (idx, sc) in filtered.iter().take(10).enumerate() {
         spans.push(rank_span(idx, sc, &app.state));
         spans.push(Span::raw("  "));
     }
@@ -2920,9 +4656,8 @@ fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 }
 
 fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
-    let name = state
-        .players
-        .get(&sc.player_id)
+    let player = state.players.get(&sc.player_id);
+    let raw_name = player
         .map(|p| p.name.clone())
         .unwrap_or_else(|| format!("{}", sc.player_id));
     let medal = match idx {
@@ -2932,14 +4667,35 @@ fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
         _ => "  ",
     };
     let is_human = sc.player_id == HUMAN_ID;
+    // Rol etiketi — NPC kind varsa onu, yoksa human role'üne göre.
+    // Leaderboard filter zaten Alıcı/Esnaf/Spekülatör'ü çıkarıyor; burada
+    // sadece Sanayici/Tüccar bekleniyor. Role rengini stile uygula.
+    let role_label = player
+        .map(|p| match p.npc_kind {
+            Some(kind) => kind.label(),
+            None => p.role.display_name(),
+        })
+        .unwrap_or("?");
     let style = if is_human {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        // NPC: role rengini kullan (Sanayici turuncu, Tüccar mavi)
+        let color = match role_label {
+            "Sanayici" => Color::Rgb(210, 140, 80),
+            "Tüccar" => Color::Rgb(120, 180, 240),
+            _ => Color::White,
+        };
+        Style::default().fg(color)
     };
-    Span::styled(format!("{medal} {name:<14} {}", sc.total), style)
+    Span::styled(
+        format!(
+            "{medal} {raw_name} [{role_label}] {}",
+            compact_money(sc.total)
+        ),
+        style,
+    )
 }
 
 fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2999,37 +4755,32 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 ));
                 spans.push(Span::raw("  "));
             }
+            // Sadeleştirilmiş footer — sadece kritik tuşlar. Tüm liste için `?`.
             spans.extend_from_slice(&[
                 hotkey("SPACE"),
-                Span::raw(" tick  "),
-                hotkey("b"),
-                Span::raw("/"),
-                hotkey("S"),
-                Span::raw(" al/sat  "),
-                hotkey("f"),
-                Span::raw(" fab  "),
-                hotkey("c"),
-                Span::raw("/"),
-                hotkey("d"),
-                Span::raw(" kervan  "),
-                hotkey("m"),
-                Span::raw(" varlık  "),
+                Span::styled(" tick", Style::default().fg(Color::Gray)),
+                Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
+                hotkey("b/s"),
+                Span::styled(" al-sat", Style::default().fg(Color::Gray)),
+                Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
                 hotkey("?"),
-                Span::raw(" tüm tuşlar  "),
+                Span::styled(" tüm tuşlar", Style::default().fg(Color::Gray)),
+                Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
                 hotkey("q"),
-                Span::raw(" çık"),
+                Span::styled(" çık", Style::default().fg(Color::Gray)),
             ]);
             f.render_widget(Paragraph::new(Line::from(spans)), area);
         }
     }
 }
 
+/// Tuş rozeti — minimal: `[SPACE]` formatı. Eski versiyonda her tuş için
+/// dolu bg-render vardı; çok yer kapsıyordu, bracket'a indirildi.
 fn hotkey(label: &str) -> Span<'static> {
     Span::styled(
-        format!(" {label} "),
+        format!("[{label}]"),
         Style::default()
-            .bg(Color::DarkGray)
-            .fg(Color::White)
+            .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
     )
 }
@@ -3059,6 +4810,32 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
         }
         return WizardOutcome::Continue;
     }
+    // Ship wizard'da "daha ürün ekle?" confirm adımı — multi-product cargo.
+    if wizard.confirm_more_cargo {
+        match code {
+            KeyCode::Char('1') => {
+                // Ek ürün: ana Product+Qty'yi extra_cargo'ya taşı, fields'ı Product'a geri sar.
+                if let (Some(FieldValue::Number(qty)), Some(FieldValue::Product(prod))) =
+                    (wizard.fields.get(3).cloned(), wizard.fields.get(2).cloned())
+                {
+                    if let Ok(q32) = u32::try_from(qty) {
+                        wizard.extra_cargo.push((prod, q32));
+                    }
+                }
+                wizard.fields.truncate(2); // CaravanId + CityTo kalsın
+                wizard.confirm_more_cargo = false;
+                return WizardOutcome::Continue;
+            }
+            KeyCode::Char('2') | KeyCode::Enter => {
+                wizard.confirm_more_cargo = false;
+                return match build_command_from_wizard(app, wizard) {
+                    Ok(cmd) => WizardOutcome::Submitted(cmd),
+                    Err(e) => WizardOutcome::Error(e),
+                };
+            }
+            _ => return WizardOutcome::Continue,
+        }
+    }
     // Tüm alanlar tamam → Enter ile gönder.
     if wizard.is_done() {
         if matches!(code, KeyCode::Enter) {
@@ -3073,17 +4850,98 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
         return WizardOutcome::Continue;
     };
     if field.is_text() {
+        let is_money = matches!(field, FieldKind::PriceLira | FieldKind::AmountLira);
+        // Ship wizard Qty adımında `M` ile max yükle — stok × kalan kapasite min.
+        if matches!(wizard.kind, ActionKind::Ship)
+            && matches!(field, FieldKind::QtyU32)
+            && matches!(code, KeyCode::Char('m') | KeyCode::Char('M'))
+        {
+            let cid = match wizard.fields.first() {
+                Some(FieldValue::CaravanId(id)) => *id,
+                _ => return WizardOutcome::Continue,
+            };
+            let product = match wizard.fields.get(2) {
+                Some(FieldValue::Product(p)) => *p,
+                _ => return WizardOutcome::Continue,
+            };
+            let (from_city, capacity) = match app.state.caravans.get(&cid) {
+                Some(c) => match c.state.current_city() {
+                    Some(city) => (city, c.capacity),
+                    None => return WizardOutcome::Continue,
+                },
+                None => return WizardOutcome::Continue,
+            };
+            let stock = app
+                .state
+                .players
+                .get(&HUMAN_ID)
+                .map(|p| p.inventory.get(from_city, product))
+                .unwrap_or(0);
+            let used: u32 = wizard.extra_cargo.iter().map(|(_, q)| *q).sum();
+            let remaining_cap = capacity.saturating_sub(used);
+            let max_load = stock.min(remaining_cap);
+            if max_load == 0 {
+                return WizardOutcome::Error(format!(
+                    "max yüklenecek miktar 0 ({product} stok: {stock}, kapasite: {remaining_cap})"
+                ));
+            }
+            wizard.text_buf = max_load.to_string();
+            return WizardOutcome::Continue;
+        }
         match code {
             KeyCode::Char(c) if c.is_ascii_digit() => wizard.text_buf.push(c),
+            // Para alanlarında ondalık ayıracı: `.` veya `,`. Sadece bir kez,
+            // ve başta değil.
+            KeyCode::Char('.') | KeyCode::Char(',')
+                if is_money && !wizard.text_buf.is_empty() && !wizard.text_buf.contains('.') =>
+            {
+                wizard.text_buf.push('.');
+            }
             KeyCode::Enter => {
-                let parsed: Result<u64, _> = wizard.text_buf.parse();
+                // OrderTtl boş bırakılabilir → default kullanılır.
+                if matches!(field, FieldKind::OrderTtl) && wizard.text_buf.is_empty() {
+                    let default_ttl = app.state.config.balance.default_order_ttl;
+                    wizard
+                        .fields
+                        .push(FieldValue::Number(u64::from(default_ttl)));
+                    wizard.text_buf.clear();
+                    return WizardOutcome::Continue;
+                }
+                // Para alanları için ondalık → cents. Diğer alanlar için
+                // basit pozitif tam sayı.
+                let parsed: Option<u64> = if is_money {
+                    parse_decimal_as_cents(&wizard.text_buf)
+                } else {
+                    wizard.text_buf.parse::<u64>().ok()
+                };
                 match parsed {
-                    Ok(n) if n > 0 => {
+                    Some(n) if n > 0 => {
+                        // OrderTtl üst sınırını burada kontrol et.
+                        if matches!(field, FieldKind::OrderTtl) {
+                            let max = u64::from(app.state.config.balance.max_order_ttl);
+                            if n > max {
+                                return WizardOutcome::Error(format!(
+                                    "TTL en fazla {max} tick olabilir"
+                                ));
+                            }
+                        }
                         wizard.fields.push(FieldValue::Number(n));
                         wizard.text_buf.clear();
+                        // Ship wizard'da Qty alanı bittiğinde: "daha ürün ekle mi?"
+                        // confirm adımını aktifleştir. Kapasite dolmadıysa loop mümkün.
+                        if matches!(wizard.kind, ActionKind::Ship)
+                            && matches!(field, FieldKind::QtyU32)
+                        {
+                            wizard.confirm_more_cargo = true;
+                        }
                     }
                     _ => {
-                        return WizardOutcome::Error("geçerli bir pozitif sayı gir".into());
+                        let msg = if is_money {
+                            "geçerli fiyat gir (örn: 15 veya 15.75)"
+                        } else {
+                            "geçerli bir pozitif sayı gir"
+                        };
+                        return WizardOutcome::Error(msg.into());
                     }
                 }
             }
@@ -3103,9 +4961,7 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
     }
     let idx = (idx - 1) as usize;
     let val = match field {
-        FieldKind::City | FieldKind::CityFrom | FieldKind::CityTo => {
-            CityId::ALL.get(idx).map(|c| FieldValue::City(*c))
-        }
+        FieldKind::City | FieldKind::CityTo => CityId::ALL.get(idx).map(|c| FieldValue::City(*c)),
         FieldKind::Product => ProductKind::ALL.get(idx).map(|p| FieldValue::Product(*p)),
         FieldKind::FinishedProduct => ProductKind::FINISHED_GOODS
             .get(idx)
@@ -3185,14 +5041,16 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
             let city = pick_city(0)?;
             let product = pick_product(1)?;
             let qty = u32::try_from(pick_number(2)?).map_err(|_| "miktar çok büyük")?;
-            let price_lira = i64::try_from(pick_number(3)?).map_err(|_| "fiyat çok büyük")?;
-            let price = Money::from_lira(price_lira).map_err(|e| format!("{e}"))?;
+            // PriceLira alanı zaten cents olarak saklanıyor (wizard'da ondalık → cents).
+            let price_cents = i64::try_from(pick_number(3)?).map_err(|_| "fiyat çok büyük")?;
+            let price = Money::from_cents(price_cents);
+            let ttl = u32::try_from(pick_number(4)?).map_err(|_| "TTL çok büyük")?;
             let side = if matches!(wizard.kind, ActionKind::Buy) {
                 OrderSide::Buy
             } else {
                 OrderSide::Sell
             };
-            let order = MarketOrder::new(
+            let order = MarketOrder::new_with_ttl(
                 app.next_order_id(),
                 HUMAN_ID,
                 city,
@@ -3201,6 +5059,7 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
                 qty,
                 price,
                 tick,
+                ttl,
             )
             .map_err(|e| format!("{e}"))?;
             Ok(Command::SubmitOrder(order))
@@ -3223,12 +5082,29 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
                 Some(FieldValue::CaravanId(id)) => *id,
                 _ => return Err("kervan eksik".into()),
             };
-            let from = pick_city(1)?;
-            let to = pick_city(2)?;
-            let product = pick_product(3)?;
-            let qty = u32::try_from(pick_number(4)?).map_err(|_| "miktar çok büyük")?;
+            // `from` kervan konumundan otomatik alınır — wizard'da sorulmuyor.
+            let from = app
+                .state
+                .caravans
+                .get(&cid)
+                .and_then(|c| c.state.current_city())
+                .ok_or_else(|| "kervan idle değil, konumu okunamıyor".to_string())?;
+            let to = pick_city(1)?;
             let mut cargo = moneywar_domain::CargoSpec::new();
-            cargo.add(product, qty).map_err(|e| format!("{e}"))?;
+            // Önce extra_cargo'daki önceki kalemleri ekle.
+            for (prod, qty) in &wizard.extra_cargo {
+                cargo.add(*prod, *qty).map_err(|e| format!("{e}"))?;
+            }
+            // Sonra ana (Product, Qty) — fields[2,3] varsa.
+            if let (Some(FieldValue::Product(product)), Some(FieldValue::Number(qty))) =
+                (f.get(2), f.get(3))
+            {
+                let qty32 = u32::try_from(*qty).map_err(|_| "miktar çok büyük")?;
+                cargo.add(*product, qty32).map_err(|e| format!("{e}"))?;
+            }
+            if cargo.is_empty() {
+                return Err("en az 1 ürün yüklemen lazım".into());
+            }
             Ok(Command::DispatchCaravan {
                 caravan_id: cid,
                 from,
@@ -3237,9 +5113,10 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
             })
         }
         ActionKind::Loan => {
-            let amount_lira = i64::try_from(pick_number(0)?).map_err(|_| "tutar çok büyük")?;
+            // AmountLira alanı cents olarak saklanıyor (ondalık destekli).
+            let amount_cents = i64::try_from(pick_number(0)?).map_err(|_| "tutar çok büyük")?;
             let duration = u32::try_from(pick_number(1)?).map_err(|_| "vade çok büyük")?;
-            let amount = Money::from_lira(amount_lira).map_err(|e| format!("{e}"))?;
+            let amount = Money::from_cents(amount_cents);
             Ok(Command::TakeLoan {
                 player: HUMAN_ID,
                 amount,
@@ -3270,8 +5147,9 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
         ActionKind::Offer => {
             let product = pick_product(0)?;
             let qty = u32::try_from(pick_number(1)?).map_err(|_| "miktar")?;
-            let price_lira = i64::try_from(pick_number(2)?).map_err(|_| "fiyat")?;
-            let unit_price = Money::from_lira(price_lira).map_err(|e| format!("{e}"))?;
+            // PriceLira alanı cents olarak saklanıyor (ondalık destekli).
+            let price_cents = i64::try_from(pick_number(2)?).map_err(|_| "fiyat")?;
+            let unit_price = Money::from_cents(price_cents);
             let city = pick_city(3)?;
             let delivery_n = u32::try_from(pick_number(4)?).map_err(|_| "delivery_tick")?;
             let delivery_tick = Tick::new(delivery_n);
@@ -3356,10 +5234,10 @@ fn parse_offer_cmd(args: &[&str], proposed_tick: Tick) -> Result<Command, String
     let quantity: u32 = args[1]
         .parse()
         .map_err(|_| format!("geçersiz miktar: {}", args[1]))?;
-    let price_lira: i64 = args[2]
-        .parse()
-        .map_err(|_| format!("geçersiz fiyat: {}", args[2]))?;
-    let unit_price = Money::from_lira(price_lira).map_err(|e| format!("{e}"))?;
+    let price_cents: i64 = parse_decimal_as_cents(args[2])
+        .and_then(|c| i64::try_from(c).ok())
+        .ok_or_else(|| format!("geçersiz fiyat: {} (örn: 15 veya 15.75)", args[2]))?;
+    let unit_price = Money::from_cents(price_cents);
     let city = parse_city(args[3])?;
     let delivery: u32 = args[4]
         .parse()
@@ -3373,10 +5251,10 @@ fn parse_offer_cmd(args: &[&str], proposed_tick: Tick) -> Result<Command, String
         ));
     }
     let deposit = if args.len() == 6 {
-        let d: i64 = args[5]
-            .parse()
-            .map_err(|_| format!("geçersiz deposit: {}", args[5]))?;
-        Money::from_lira(d).map_err(|e| format!("{e}"))?
+        let d_cents: i64 = parse_decimal_as_cents(args[5])
+            .and_then(|c| i64::try_from(c).ok())
+            .ok_or_else(|| format!("geçersiz deposit: {}", args[5]))?;
+        Money::from_cents(d_cents)
     } else {
         let total = unit_price
             .checked_mul_scalar(i64::from(quantity))
@@ -3430,19 +5308,33 @@ fn parse_order_cmd(
     args: &[&str],
     tick: Tick,
 ) -> Result<Command, String> {
-    if args.len() != 4 {
-        return Err("kullanım: buy/sell <şehir> <ürün> <miktar> <fiyat>".into());
+    if !(4..=5).contains(&args.len()) {
+        return Err("kullanım: buy/sell <şehir> <ürün> <miktar> <fiyat> [ttl]".into());
     }
     let city = parse_city(args[0])?;
     let product = parse_product(args[1])?;
     let qty: u32 = args[2]
         .parse()
         .map_err(|_| format!("geçersiz miktar: {}", args[2]))?;
-    let price_lira: i64 = args[3]
-        .parse()
-        .map_err(|_| format!("geçersiz fiyat: {}", args[3]))?;
-    let price = Money::from_lira(price_lira).map_err(|e| format!("fiyat hatası: {e}"))?;
-    let order = MarketOrder::new(
+    // Fiyat ondalık destekli: "15" veya "15.75" veya "15,75" → cents.
+    let price_cents: i64 = parse_decimal_as_cents(args[3])
+        .and_then(|c| i64::try_from(c).ok())
+        .ok_or_else(|| format!("geçersiz fiyat: {} (örn: 15 veya 15.75)", args[3]))?;
+    let price = Money::from_cents(price_cents);
+    let balance = app.state.config.balance;
+    let ttl: u32 = if let Some(arg) = args.get(4) {
+        let n: u32 = arg.parse().map_err(|_| format!("geçersiz ttl: {arg}"))?;
+        if n == 0 || n > balance.max_order_ttl {
+            return Err(format!(
+                "ttl 1..{} aralığında olmalı",
+                balance.max_order_ttl
+            ));
+        }
+        n
+    } else {
+        balance.default_order_ttl
+    };
+    let order = MarketOrder::new_with_ttl(
         app.next_order_id(),
         HUMAN_ID,
         city,
@@ -3451,6 +5343,7 @@ fn parse_order_cmd(
         qty,
         price,
         tick,
+        ttl,
     )
     .map_err(|e| format!("emir oluşturulamadı: {e}"))?;
     Ok(Command::SubmitOrder(order))
@@ -3523,10 +5416,10 @@ fn parse_loan_cmd(args: &[&str]) -> Result<Command, String> {
     if args.len() != 2 {
         return Err("kullanım: loan <miktar_lira> <vade_tick>".into());
     }
-    let amount_lira: i64 = args[0]
-        .parse()
-        .map_err(|_| format!("geçersiz miktar: {}", args[0]))?;
-    let amount = Money::from_lira(amount_lira).map_err(|e| format!("miktar hatası: {e}"))?;
+    let amount_cents: i64 = parse_decimal_as_cents(args[0])
+        .and_then(|c| i64::try_from(c).ok())
+        .ok_or_else(|| format!("geçersiz miktar: {} (örn: 1000 veya 1000.50)", args[0]))?;
+    let amount = Money::from_cents(amount_cents);
     let duration: u32 = args[1]
         .parse()
         .map_err(|_| format!("geçersiz vade: {}", args[1]))?;
@@ -3777,87 +5670,210 @@ fn format_event(event: &moneywar_domain::GameEvent) -> String {
     }
 }
 
-fn summarize_report(report: &moneywar_engine::TickReport) -> Vec<String> {
+fn summarize_report(report: &moneywar_engine::TickReport, state: &GameState) -> Vec<String> {
     let tick = report.tick.value();
-    let mut out = Vec::new();
-    out.push(format!("── Tick {tick} ──"));
 
-    let mut matches = 0;
-    let mut rejects = 0;
-    let mut events = Vec::<String>::new();
-    let mut production = 0;
-    let mut caravan_arrivals = 0;
-    let mut contracts_settled = Vec::<String>::new();
-    let mut loans = Vec::<String>::new();
+    let player_name = |pid: PlayerId| -> String {
+        state
+            .players
+            .get(&pid)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("#{}", pid.value()))
+    };
+
+    // İki akım: önce counters + human-özel satırları topla, sonra tek temiz çıktı.
+    let mut human_lines: Vec<String> = Vec::new();
+    let mut events_lines: Vec<String> = Vec::new();
+    let mut total_matches: u32 = 0;
+    let mut human_matches: u32 = 0;
+    let mut human_production: u32 = 0;
+    let mut npc_production: u32 = 0;
+    let mut human_arrivals: u32 = 0;
+    let mut npc_arrivals: u32 = 0;
+    let mut rejects: u32 = 0;
+    let mut contracts_events: u32 = 0;
 
     for entry in &report.entries {
         match &entry.event {
             LogEvent::OrderMatched {
-                quantity, price, ..
+                quantity,
+                price,
+                city,
+                product,
+                buyer,
+                seller,
+                ..
             } => {
-                matches += 1;
-                out.push(format!("  • {} adet eşleşti @ {}", quantity, price));
+                total_matches += 1;
+                let buyer_human = *buyer == HUMAN_ID;
+                let seller_human = *seller == HUMAN_ID;
+                if buyer_human || seller_human {
+                    human_matches += 1;
+                    let verb = if seller_human { "sattın" } else { "aldın" };
+                    let other = if seller_human {
+                        player_name(*buyer)
+                    } else {
+                        player_name(*seller)
+                    };
+                    human_lines.push(format!(
+                        "  🔄 {verb}: {} {} @ {} {} (→ {})",
+                        quantity,
+                        product,
+                        city_short(*city),
+                        price,
+                        other
+                    ));
+                }
             }
             LogEvent::CommandRejected { reason, .. } => {
-                rejects += 1;
-                out.push(format!("  ✗ REJECT: {reason}"));
+                if entry.actor == Some(HUMAN_ID) {
+                    rejects += 1;
+                    human_lines.push(format!("  ✗ REJECT: {reason}"));
+                }
             }
             LogEvent::EventScheduled {
                 game_event,
                 event_tick,
                 ..
             } => {
-                events.push(format!(
-                    "tick {}'te {}",
+                events_lines.push(format!(
+                    "  🎲 tick {}'te: {}",
                     event_tick.value(),
                     format_event(game_event)
                 ));
             }
             LogEvent::ProductionCompleted { units, product, .. } => {
-                production += *units;
-                out.push(format!("  ✓ Üretim: {} {} envantere", units, product));
+                if entry.actor == Some(HUMAN_ID) {
+                    human_production += *units;
+                    human_lines.push(format!("  🏭 +{} {} üretim tamam", units, product));
+                } else {
+                    npc_production += *units;
+                }
             }
             LogEvent::CaravanArrived {
                 city, cargo_total, ..
             } => {
-                caravan_arrivals += 1;
-                out.push(format!(
-                    "  🚚 Kervan {} vardı ({} birim)",
-                    city_short(*city),
-                    cargo_total
-                ));
+                if entry.actor == Some(HUMAN_ID) {
+                    human_arrivals += 1;
+                    human_lines.push(format!(
+                        "  🚚 kervan {} vardı ({} birim)",
+                        city_short(*city),
+                        cargo_total
+                    ));
+                } else {
+                    npc_arrivals += 1;
+                }
             }
             LogEvent::ContractSettled { final_state, .. } => match final_state {
                 moneywar_domain::ContractState::Fulfilled => {
-                    contracts_settled.push("fulfilled".into());
-                    out.push("  ✓ Kontrat teslim edildi".into());
+                    contracts_events += 1;
+                    human_lines.push("  ✓ kontrat teslim edildi".into());
                 }
                 moneywar_domain::ContractState::Breached { .. } => {
-                    contracts_settled.push("breach".into());
-                    out.push("  ⚠ Kontrat caydı (breach)".into());
+                    contracts_events += 1;
+                    human_lines.push("  ⚠ kontrat caydı (breach)".into());
                 }
                 _ => {}
             },
             LogEvent::LoanRepaid { amount_paid, .. } => {
-                loans.push(format!("ödendi {amount_paid}"));
-                out.push(format!("  💰 Kredi ödendi: {amount_paid}"));
+                if entry.actor == Some(HUMAN_ID) {
+                    human_lines.push(format!("  💰 kredi ödendi: {amount_paid}"));
+                }
             }
             LogEvent::LoanDefaulted { seized, .. } => {
-                loans.push(format!("default ({seized})"));
-                out.push(format!("  ⚠ Kredi DEFAULT (el koydu: {seized})"));
+                if entry.actor == Some(HUMAN_ID) {
+                    human_lines.push(format!("  ⚠ kredi DEFAULT (çekildi: {seized})"));
+                }
+            }
+            // NPC chatter — rakipler "yaşıyor" hissi versin. Sadece dramatic
+            // eylemler: fabrika kuruldu, kervan satın alındı, kervan dispatch.
+            // Sıradan SubmitOrder spam'i atlanıyor (zaten match satırı var).
+            LogEvent::FactoryBuilt { owner, city, .. } if *owner != HUMAN_ID => {
+                events_lines.push(format!(
+                    "  🏭 {} {}'da fabrika kurdu",
+                    player_name(*owner),
+                    city_short(*city)
+                ));
+            }
+            LogEvent::CaravanBought {
+                owner,
+                starting_city,
+                ..
+            } if *owner != HUMAN_ID => {
+                events_lines.push(format!(
+                    "  🐪 {} {}'da kervan aldı",
+                    player_name(*owner),
+                    city_short(*starting_city)
+                ));
+            }
+            LogEvent::CaravanDispatched {
+                from,
+                to,
+                cargo_total,
+                ..
+            } => {
+                if let Some(actor) = entry.actor {
+                    if actor != HUMAN_ID {
+                        events_lines.push(format!(
+                            "  🚂 {} {} → {} ({} birim)",
+                            player_name(actor),
+                            city_short(*from),
+                            city_short(*to),
+                            cargo_total
+                        ));
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    if !events.is_empty() {
-        for e in events {
-            out.push(format!("  🎲 Yeni olay: {e}"));
+    // Başlık — kompakt özet.
+    let mut out = Vec::new();
+    let mut summary_parts: Vec<String> = Vec::new();
+    if total_matches > 0 {
+        summary_parts.push(format!("🔄 {total_matches} match"));
+    }
+    if human_production + npc_production > 0 {
+        summary_parts.push(format!("🏭 +{} üretim", human_production + npc_production));
+    }
+    if human_arrivals + npc_arrivals > 0 {
+        summary_parts.push(format!("🚚 {} varış", human_arrivals + npc_arrivals));
+    }
+    if contracts_events > 0 {
+        summary_parts.push(format!("📜 {contracts_events} kontrat"));
+    }
+    if rejects > 0 {
+        summary_parts.push(format!("✗ {rejects} reject"));
+    }
+    let header = if summary_parts.is_empty() {
+        format!("── Tick {tick} ── (sakin)")
+    } else {
+        format!("── Tick {tick} ── {}", summary_parts.join(" · "))
+    };
+    out.push(header);
+
+    // Human'ın işlemleri detay olarak.
+    out.extend(human_lines);
+
+    // NPC trafiği tek satır özet (sadece NPC-NPC match ya da NPC üretim/varış varsa).
+    let npc_matches = total_matches.saturating_sub(human_matches);
+    if npc_matches > 0 || npc_production > 0 || npc_arrivals > 0 {
+        let mut npc_parts: Vec<String> = Vec::new();
+        if npc_matches > 0 {
+            npc_parts.push(format!("{npc_matches} match"));
         }
+        if npc_production > 0 {
+            npc_parts.push(format!("+{npc_production} üretim"));
+        }
+        if npc_arrivals > 0 {
+            npc_parts.push(format!("{npc_arrivals} varış"));
+        }
+        out.push(format!("  · NPC trafik: {}", npc_parts.join(", ")));
     }
-    if matches == 0 && rejects == 0 && production == 0 && caravan_arrivals == 0 {
-        out.push("  (sakin tick)".into());
-    }
+
+    // Yeni olaylar (haber) — son, nadir ama önemli.
+    out.extend(events_lines);
 
     out
 }

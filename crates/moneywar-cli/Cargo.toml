@@ -25,3 +25,7 @@ moneywar-npc.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
