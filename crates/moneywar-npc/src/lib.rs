@@ -24,8 +24,8 @@
 //! `decide` RNG alır; aynı (state, rng) → aynı komut seti. Motor, NPC'leri
 //! `decide_all_npcs` üzerinden sıralı işler (`BTreeMap` `player_id` ASC).
 
-mod error;
 pub mod dss;
+mod error;
 pub mod fuzzy;
 
 pub use error::NpcError;

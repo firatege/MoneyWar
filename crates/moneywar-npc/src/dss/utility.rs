@@ -94,7 +94,10 @@ mod tests {
 
     #[test]
     fn zero_action_zero_score() {
-        let s = score_action(ActionCandidate::zero(), weights_for(Personality::Aggressive));
+        let s = score_action(
+            ActionCandidate::zero(),
+            weights_for(Personality::Aggressive),
+        );
         assert_eq!(s, 0.0);
     }
 

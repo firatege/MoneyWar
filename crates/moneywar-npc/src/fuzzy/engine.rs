@@ -171,15 +171,12 @@ mod tests {
                 c: 0.5,
             },
         );
-        let e = Engine::new()
-            .add_var(cash)
-            .add_var(stock)
-            .add_rule(
-                Rule::new()
-                    .when("cash", "yuksek")
-                    .when("stock", "bos")
-                    .then("buy", 1.0),
-            );
+        let e = Engine::new().add_var(cash).add_var(stock).add_rule(
+            Rule::new()
+                .when("cash", "yuksek")
+                .when("stock", "bos")
+                .then("buy", 1.0),
+        );
 
         let mut inputs = Inputs::new();
         inputs.insert("cash", 0.8); // yuksek degree = (0.8-0.5)/0.5 = 0.6

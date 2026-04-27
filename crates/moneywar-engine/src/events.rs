@@ -76,7 +76,12 @@ pub(crate) fn advance_events(
 ///
 /// Esnaf yoksa noop (defansif). Süre etkisi yok — eklenen stok kalıcı.
 fn apply_supply_boost(state: &mut GameState, rng: &mut ChaCha8Rng, event: GameEvent) {
-    let GameEvent::BumperHarvest { city, product, severity } = event else {
+    let GameEvent::BumperHarvest {
+        city,
+        product,
+        severity,
+    } = event
+    else {
         return;
     };
     let bonus: u32 = match severity {

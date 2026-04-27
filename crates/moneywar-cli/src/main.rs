@@ -34,8 +34,12 @@
     clippy::enum_glob_use
 )]
 
+use std::collections::VecDeque;
 use std::io::{self, BufWriter, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+mod chatter;
+use chatter::{ChatterEntry, generate_chatter};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -128,16 +132,15 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
             Mode::Normal
                 | Mode::DebugLog { .. }
                 | Mode::MarketIntel
+                | Mode::Contracts
                 | Mode::RecentTrades
                 | Mode::NewsInbox
                 | Mode::OpenBook
                 | Mode::CaravanPanel
                 | Mode::Holdings
+                | Mode::Chatter
         );
-        if app.auto_sim
-            && auto_ok
-            && last_auto_tick.elapsed() >= Duration::from_millis(300)
-        {
+        if app.auto_sim && auto_ok && last_auto_tick.elapsed() >= Duration::from_millis(300) {
             app.step_one_tick();
             last_auto_tick = Instant::now();
         }
@@ -214,6 +217,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('i') => app.mode = Mode::Info,
             KeyCode::Char('m') => app.mode = Mode::Holdings,
             KeyCode::Char('r') => app.mode = Mode::MarketIntel,
+            KeyCode::Char('y') => app.mode = Mode::Contracts,
             KeyCode::Char('e') => app.mode = Mode::RecentTrades,
             KeyCode::Char('k') => app.mode = Mode::OpenBook,
             KeyCode::Char('v') => app.mode = Mode::CaravanPanel,
@@ -285,6 +289,8 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             // News inbox / haber penceresi: küçük n (kısayol çakışmasın
             // diye haber ABONELİK büyük N'e taşındı).
             KeyCode::Char('n') => app.mode = Mode::NewsInbox,
+            // NPC söylenti akışı — kişiliğe-uygun yorumlar (j = jurnal/söylenti).
+            KeyCode::Char('j') => app.mode = Mode::Chatter,
             // Auto-sim — `t` (tick/time). `s` satış wizard'ına ayrıldı.
             KeyCode::Char('t') => {
                 app.auto_sim = !app.auto_sim;
@@ -330,7 +336,9 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         | Mode::RecentTrades
         | Mode::OpenBook
         | Mode::CaravanPanel
-        | Mode::MarketIntel => match code {
+        | Mode::MarketIntel
+        | Mode::Contracts
+        | Mode::Chatter => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.mode = Mode::Normal;
@@ -434,6 +442,11 @@ enum Mode {
     /// Pazar verileri (intel) overlay — `r` ile açılır. Her (şehir × ürün)
     /// için ort.fiyat + tahmini toplam stok aralığı. Bireysel detay gizli.
     MarketIntel,
+    /// Kontrat panel — `y` ile açılır. Pano (Proposed Public) + benim
+    /// aktif kontratlarım + geçmiş (Fulfilled/Breached).
+    Contracts,
+    /// NPC söylenti akışı — `j` ile açılır. Kişiliğe-uygun chatter satırları.
+    Chatter,
     /// Tek-tuş aksiyon wizard — b/s/f/c/d/l/r/n/o/a/w/x ile açılır,
     /// adım adım komut kurar, ezbere parametre gerektirmez.
     Wizard {
@@ -653,7 +666,11 @@ struct App {
     /// Startup'ta Tab ile değiştirilebilen seçili rol. Enter ile başlatma için.
     /// `1`/`2` direkt seçim akışı korunur — bu sadece alternatif.
     selected_role: Role,
+    /// NPC söylenti akışı — son CHATTER_WINDOW satır. Engine'e dokunmaz, UI-only.
+    chatter_log: VecDeque<ChatterEntry>,
 }
+
+const CHATTER_WINDOW: usize = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PresetChoice {
@@ -769,6 +786,7 @@ impl App {
             cached_sparklines: std::collections::BTreeMap::new(),
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
+            chatter_log: VecDeque::with_capacity(CHATTER_WINDOW),
         }
     }
 
@@ -891,6 +909,7 @@ impl App {
         self.harvest_trades(&report);
         self.harvest_debug_log(&report);
         self.harvest_news();
+        self.harvest_chatter(&report);
         // Render hot-path'inde yeniden hesaplanan değerleri burada cache'le.
         self.refresh_caches();
         // Eski status mesajı varsa temizle (yeni tick'in kendi mesajı olsun).
@@ -1131,6 +1150,18 @@ impl App {
     fn game_over(&self) -> bool {
         self.state.current_tick.value() >= self.state.config.season_ticks
     }
+
+    /// Bu tick'in raporundan kişiliğe uygun NPC söylenti satırlarını üretir,
+    /// `chatter_log`'un sonuna ekler. Tampon `CHATTER_WINDOW` ile sınırlı.
+    fn harvest_chatter(&mut self, report: &moneywar_engine::TickReport) {
+        let new_lines = generate_chatter(&self.state, report);
+        for line in new_lines {
+            if self.chatter_log.len() >= CHATTER_WINDOW {
+                self.chatter_log.pop_front();
+            }
+            self.chatter_log.push_back(line);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1332,7 +1363,7 @@ fn seed_world(
         .with_personality(personality);
         // EventTrader sanayici de Gold tier — pre-positioning'le ham stoklar.
         // (Insertion sonrası — npc.id kullanmak için.)
-        let _et_sanayici = matches!(personality, Personality::EventTrader);
+        let et_sanayici = matches!(personality, Personality::EventTrader);
         let city_idx = rng.random_range(0usize..CityId::ALL.len());
         let starter_city = CityId::ALL[city_idx];
         // Raw starter: 30-50 birim, ürün şehrin **bu sezonki** ucuz hamı.
@@ -1349,7 +1380,7 @@ fn seed_world(
         );
         let npc_id = npc.id;
         s.players.insert(npc_id, npc);
-        if _et_sanayici {
+        if et_sanayici {
             s.news_subscriptions.insert(npc_id, NewsTier::Gold);
         }
         next_id += 1;
@@ -1496,6 +1527,8 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::OpenBook => render_open_book_overlay(f, area, app),
         Mode::CaravanPanel => render_caravan_panel_overlay(f, area, app),
         Mode::MarketIntel => render_market_intel_overlay(f, area, app),
+        Mode::Contracts => render_contracts_overlay(f, area, app),
+        Mode::Chatter => render_chatter_overlay(f, area, app),
         Mode::DebugLog { scroll } => render_debug_log_overlay(f, area, app, scroll),
         Mode::GameOver => render_game_over_overlay(f, area, app),
         Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
@@ -1638,7 +1671,9 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     f.render_widget(table, chunks[0]);
 
     let tier_hint = match tier {
-        NewsTier::Bronze => "Bronz: kategorik (yok/az/orta/bol). Net görmek için `:news silver` aboneliği.",
+        NewsTier::Bronze => {
+            "Bronz: kategorik (yok/az/orta/bol). Net görmek için `:news silver` aboneliği."
+        }
         NewsTier::Silver => "Gümüş: 5'e yuvarlanmış. Tam rakam için `:news gold`.",
         NewsTier::Gold => "Altın: tam çözünürlük.",
     };
@@ -1655,6 +1690,221 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
         )),
     ]);
     f.render_widget(info, chunks[1]);
+}
+
+/// Kontrat panel — `y` ile açılır. Üç bölüm:
+/// 1. **Pano** (Proposed Public): NPC önerilerini gör, kabul et
+/// 2. **Aktif** (Active): senin taraf olduğun, teslim bekleyenler
+/// 3. **Geçmiş** (Fulfilled/Breached): son 5 sezon-içi kontrat
+fn render_contracts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    use moneywar_domain::ContractState;
+    let popup = centered_rect(90, 85, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📜  Kontratlar  —  Anlaşma Masası ")
+        .border_style(Style::default().fg(Color::Magenta));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    let player_name = |pid: PlayerId| -> String {
+        app.state
+            .players
+            .get(&pid)
+            .map(|p| truncate_str(&p.name, 16))
+            .unwrap_or_else(|| format!("#{}", pid.value()))
+    };
+
+    // 1) Pano: Proposed + Public + benim olmayan
+    lines.push(Line::from(Span::styled(
+        "  📋 PANO (kabul edilebilir kontratlar)",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let mut pano_count = 0;
+    for (cid, c) in &app.state.contracts {
+        if c.state != ContractState::Proposed {
+            continue;
+        }
+        if !c.listing.is_public() {
+            continue;
+        }
+        if c.seller == HUMAN_ID {
+            continue; // benim önerim, panoda göstermenin anlamı yok
+        }
+        pano_count += 1;
+        let total = c.total_value().map(|m| format!("{m}")).unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                format!("#{}", cid.value()),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(player_name(c.seller), Style::default().fg(Color::White)),
+            Span::raw(" → SAT "),
+            Span::styled(
+                format!("{} {}", c.quantity, c.product),
+                Style::default().fg(product_color(c.product)),
+            ),
+            Span::raw(" @ "),
+            Span::styled(
+                format!("{}", c.unit_price),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::styled(
+                format!(
+                    "  → {} t{}",
+                    city_short(c.delivery_city),
+                    c.delivery_tick.value()
+                ),
+                Style::default().fg(Color::Blue),
+            ),
+            Span::styled(
+                format!("  (toplam {total}, kapora {})", c.buyer_deposit),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+    if pano_count == 0 {
+        lines.push(Line::from(Span::styled(
+            "    (panoda kabul edilebilir kontrat yok)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::from(""));
+
+    // 2) Aktif: benim taraf olduğum (seller veya accepted_by)
+    lines.push(Line::from(Span::styled(
+        "  🤝 AKTİF (benim taraf olduğum, teslim bekleyen)",
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    let mut aktif_count = 0;
+    let now = app.state.current_tick.value();
+    for (cid, c) in &app.state.contracts {
+        if c.state != ContractState::Active {
+            continue;
+        }
+        if c.seller != HUMAN_ID && c.accepted_by != Some(HUMAN_ID) {
+            continue;
+        }
+        aktif_count += 1;
+        let i_am_seller = c.seller == HUMAN_ID;
+        let other = if i_am_seller {
+            c.accepted_by.map(player_name).unwrap_or_default()
+        } else {
+            player_name(c.seller)
+        };
+        let role = if i_am_seller { "SAT" } else { "AL" };
+        let remaining = c.delivery_tick.value().saturating_sub(now);
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                format!("#{}", cid.value()),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                role,
+                Style::default()
+                    .fg(if i_am_seller {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!("{} {}", c.quantity, c.product),
+                Style::default().fg(product_color(c.product)),
+            ),
+            Span::raw(" @ "),
+            Span::styled(
+                format!("{}", c.unit_price),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::styled(
+                format!(
+                    "  → {} t{} ({}t kaldı)  ",
+                    city_short(c.delivery_city),
+                    c.delivery_tick.value(),
+                    remaining
+                ),
+                Style::default().fg(Color::Blue),
+            ),
+            Span::styled(format!("({other})"), Style::default().fg(Color::Gray)),
+        ]));
+    }
+    if aktif_count == 0 {
+        lines.push(Line::from(Span::styled(
+            "    (aktif kontratın yok)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::from(""));
+
+    // 3) Benim önerilerim (Proposed + seller=me)
+    let my_proposals: Vec<_> = app
+        .state
+        .contracts
+        .iter()
+        .filter(|(_, c)| c.state == ContractState::Proposed && c.seller == HUMAN_ID)
+        .collect();
+    if !my_proposals.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  📤 BENİM ÖNERİLERİM (henüz kabul yok)",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )));
+        for (cid, c) in &my_proposals {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    format!("#{}", cid.value()),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw(" SAT "),
+                Span::styled(
+                    format!("{} {}", c.quantity, c.product),
+                    Style::default().fg(product_color(c.product)),
+                ),
+                Span::raw(" @ "),
+                Span::styled(
+                    format!("{}", c.unit_price),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    format!(
+                        "  → {} t{}",
+                        city_short(c.delivery_city),
+                        c.delivery_tick.value()
+                    ),
+                    Style::default().fg(Color::Blue),
+                ),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // İpucu
+    lines.push(Line::from(Span::styled(
+        "  Komutlar: `:accept #N` panodan kabul · `:offer ...` yeni öner · Esc kapat",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -1951,6 +2201,11 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         help_kv("e", "🔄 Son eşleşmeler (kim kime ne sattı)"),
         help_kv("k", "📖 Açık Pazar (orderbook depth)"),
         help_kv("r", "📊 Pazar raporu (ort. fiyat + tahmini stok aralığı)"),
+        help_kv("y", "📜 Kontratlar (pano + aktif + benim önerilerim)"),
+        help_kv(
+            "j",
+            "💬 Söylenti akışı (NPC'ler kişiliklerine göre yorumluyor)",
+        ),
         help_kv("v", "🚚 Kervan kontrol paneli (detaylı + cargo)"),
         help_kv("g", "🛠 Debug log (ham event akışı, ↑↓ scroll)"),
         help_kv("?", "Bu yardım"),
@@ -2632,8 +2887,25 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
         lines.push(Line::from(""));
         match field {
             FieldKind::City | FieldKind::CityTo => {
-                for (i, c) in CityId::ALL.iter().enumerate() {
-                    lines.push(option_line(i + 1, city_short(*c), Color::Blue));
+                let cities = smart_cities_for_wizard(&app.state, wizard);
+                for (i, c) in cities.iter().enumerate() {
+                    let label = if matches!(wizard.kind, ActionKind::Offer) {
+                        let stock = app
+                            .state
+                            .players
+                            .get(&HUMAN_ID)
+                            .and_then(|p| {
+                                wizard.fields.first().and_then(|fv| match fv {
+                                    FieldValue::Product(prod) => Some(p.inventory.get(*c, *prod)),
+                                    _ => None,
+                                })
+                            })
+                            .unwrap_or(0);
+                        format!("{}  (stok {})", city_short(*c), stock)
+                    } else {
+                        city_short(*c).to_string()
+                    };
+                    lines.push(option_line(i + 1, &label, Color::Blue));
                 }
             }
             FieldKind::Product => {
@@ -2827,6 +3099,28 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                     format!("  💡 {hint}"),
                     Style::default().fg(Color::DarkGray),
                 )));
+                if let Some(default) = offer_default_for(&app.state, wizard, field) {
+                    if default > 0 {
+                        let pretty = match field {
+                            FieldKind::PriceLira => i64::try_from(default)
+                                .map(|c| format!("{}", Money::from_cents(c)))
+                                .unwrap_or_else(|_| default.to_string()),
+                            _ => default.to_string(),
+                        };
+                        let label = match field {
+                            FieldKind::QtyU32 => "stoğum",
+                            FieldKind::PriceLira => "piyasa × 1.05",
+                            FieldKind::DeliveryTick => "şimdi + 5 tick",
+                            _ => "",
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("  ✨ Boş Enter → {pretty}  ({label})"),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    }
+                }
             }
         }
     } else if wizard.confirm_more_cargo {
@@ -2933,15 +3227,19 @@ fn filtered_products_for_wizard(
     role: Role,
     kind: ActionKind,
 ) -> Vec<ProductKind> {
+    // Offer = kontrat satıcı tarafı; mantık olarak Sell ile aynı —
+    // Sanayici sadece bitmiş ürünleri satar, Tüccar her şey.
     let mut candidates: Vec<ProductKind> = match (role, kind) {
-        (Role::Sanayici, ActionKind::Sell) => ProductKind::FINISHED_GOODS.to_vec(),
+        (Role::Sanayici, ActionKind::Sell | ActionKind::Offer) => {
+            ProductKind::FINISHED_GOODS.to_vec()
+        }
         (Role::Sanayici, ActionKind::Buy) => ProductKind::RAW_MATERIALS.to_vec(),
         _ => ProductKind::ALL.to_vec(),
     };
 
     let player = state.players.get(&HUMAN_ID);
     match kind {
-        ActionKind::Sell => {
+        ActionKind::Sell | ActionKind::Offer => {
             if let Some(p) = player {
                 candidates.sort_by_key(|prod| {
                     let total: u32 = CityId::ALL.iter().map(|c| p.inventory.get(*c, *prod)).sum();
@@ -2974,6 +3272,62 @@ fn filtered_products_for_wizard(
         _ => {}
     }
     candidates
+}
+
+/// Offer wizard'ında numerik alanlar için akıllı default. Boş Enter → bu değer
+/// otomatik kullanılır. Hint'lerde de gösterilir. Cents bazlı (Number alanı bu
+/// birime saklanıyor: PriceLira para → cents, Qty/Tick → ham sayı).
+fn offer_default_for(state: &GameState, wizard: &Wizard, field: FieldKind) -> Option<u64> {
+    if !matches!(wizard.kind, ActionKind::Offer) {
+        return None;
+    }
+    let product = match wizard.fields.first() {
+        Some(FieldValue::Product(p)) => *p,
+        _ => return None,
+    };
+    match field {
+        FieldKind::QtyU32 => state.players.get(&HUMAN_ID).map(|p| {
+            CityId::ALL
+                .iter()
+                .map(|c| u64::from(p.inventory.get(*c, product)))
+                .sum::<u64>()
+        }),
+        FieldKind::PriceLira => {
+            let prices: Vec<i64> = CityId::ALL
+                .iter()
+                .filter_map(|c| state.effective_baseline(*c, product).map(Money::as_cents))
+                .collect();
+            if prices.is_empty() {
+                return None;
+            }
+            let len = i64::try_from(prices.len()).ok()?;
+            let avg: i64 = prices.iter().sum::<i64>() / len;
+            // %5 üstü — kontrat marjı.
+            let suggested = (avg * 105) / 100;
+            u64::try_from(suggested).ok().filter(|n| *n > 0)
+        }
+        FieldKind::DeliveryTick => {
+            // Wizard build sırasında `tick = current.next()` kullanılıyor;
+            // teslim tick'i bunun en az +5 sonrası olsun.
+            Some(u64::from(state.current_tick.value().saturating_add(6)))
+        }
+        _ => None,
+    }
+}
+
+/// Wizard şehir seçim sırası — context'e göre. Offer wizard'ında: zaten seçilen
+/// ürün için stoğu en yüksek şehir başa. Diğer durumlarda CityId::ALL aynısı.
+fn smart_cities_for_wizard(state: &GameState, wizard: &Wizard) -> Vec<CityId> {
+    let mut cities = CityId::ALL.to_vec();
+    if matches!(wizard.kind, ActionKind::Offer) {
+        if let Some(FieldValue::Product(prod)) = wizard.fields.first() {
+            if let Some(p) = state.players.get(&HUMAN_ID) {
+                let prod = *prod;
+                cities.sort_by_key(|c| std::cmp::Reverse(p.inventory.get(*c, prod)));
+            }
+        }
+    }
+    cities
 }
 
 fn option_line(num: usize, label: &str, color: Color) -> Line<'static> {
@@ -3482,6 +3836,70 @@ fn render_news_inbox_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
     f.render_widget(para, inner);
 }
 
+fn render_chatter_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(80, 80, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 💬  Söylenti Akışı  —  NPC'ler ne diyor ")
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if app.chatter_log.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (henüz söylenti yok — birkaç tick ilerlet, NPC'ler kıpırdayınca dolar)",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    } else {
+        // En yeni en üstte — son N satırı tersten yaz.
+        for entry in app.chatter_log.iter().rev().take(40) {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  t{:>3}  ", entry.tick.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{} ", entry.emoji),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:<14}", truncate_speaker(&entry.speaker, 14)),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(entry.text.clone(), Style::default().fg(Color::White)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Herhangi bir tuşa bas → kapat",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn truncate_speaker(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max - 1).collect();
+    out.push('…');
+    out
+}
+
 fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let popup = centered_rect(80, 80, area);
     f.render_widget(Clear, popup);
@@ -3605,17 +4023,19 @@ fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ]));
 
         // BID chip satırı — owner yok, sadece miktar @ fiyat.
-        let mut bid_spans: Vec<Span> = vec![Span::styled(
-            "    BID  ",
-            Style::default().fg(Color::Green),
-        )];
+        let mut bid_spans: Vec<Span> =
+            vec![Span::styled("    BID  ", Style::default().fg(Color::Green))];
         for o in buys.iter().take(4) {
             let mine = o.player == HUMAN_ID;
             let star = if mine { "⭐" } else { "" };
             let style = Style::default().fg(if mine { Color::Yellow } else { Color::Green });
             bid_spans.push(Span::styled(
                 format!("{star}{}@{}", o.quantity, o.unit_price),
-                if mine { style.add_modifier(Modifier::BOLD) } else { style },
+                if mine {
+                    style.add_modifier(Modifier::BOLD)
+                } else {
+                    style
+                },
             ));
             bid_spans.push(Span::raw("  "));
         }
@@ -3630,7 +4050,11 @@ fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             let style = Style::default().fg(if mine { Color::Yellow } else { Color::Red });
             ask_spans.push(Span::styled(
                 format!("{star}{}@{}", o.quantity, o.unit_price),
-                if mine { style.add_modifier(Modifier::BOLD) } else { style },
+                if mine {
+                    style.add_modifier(Modifier::BOLD)
+                } else {
+                    style
+                },
             ));
             ask_spans.push(Span::raw("  "));
         }
@@ -3972,9 +4396,9 @@ fn format_log_event(event: &moneywar_engine::LogEvent, state: &GameState) -> Str
             units,
             ..
         } => format!("✨ ÜRT-BİT {city}/{product} +{units}"),
-        LogEvent::FactoryIdle {
-            city, reason, ..
-        } => format!("💤 ATIL fabrika @ {city} — {reason}"),
+        LogEvent::FactoryIdle { city, reason, .. } => {
+            format!("💤 ATIL fabrika @ {city} — {reason}")
+        }
         LogEvent::CaravanBought {
             owner,
             starting_city,
@@ -4059,7 +4483,11 @@ fn format_log_event(event: &moneywar_engine::LogEvent, state: &GameState) -> Str
             game_event,
             event_tick,
             ..
-        } => format!("🎲 OLAY t{}: {}", event_tick.value(), format_event(game_event)),
+        } => format!(
+            "🎲 OLAY t{}: {}",
+            event_tick.value(),
+            format_event(game_event)
+        ),
         // _ => match'ini #[non_exhaustive] enum için tutuyoruz.
         _ => format!("{event:?}"),
     }
@@ -4798,11 +5226,7 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Span::styled(format!(" {arrow}"), Style::default().fg(color)),
             ]);
             // Sparkline tick başında cache'lendi — render'da sadece okuma.
-            let spark_str = app
-                .cached_sparklines
-                .get(&key)
-                .cloned()
-                .unwrap_or_default();
+            let spark_str = app.cached_sparklines.get(&key).cloned().unwrap_or_default();
             let spark_line = Line::from(Span::styled(
                 spark_str,
                 Style::default().fg(Color::Rgb(150, 180, 220)),
@@ -5563,6 +5987,18 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
                     wizard.text_buf.clear();
                     return WizardOutcome::Continue;
                 }
+                // Offer wizard: boş Enter → akıllı default (qty=stok, price=
+                // market×1.05, delivery_tick=current+6). Kullanıcı `0` ile
+                // başlayıp custom değer girebilir.
+                if wizard.text_buf.is_empty() {
+                    if let Some(default) = offer_default_for(&app.state, wizard, field) {
+                        if default > 0 {
+                            wizard.fields.push(FieldValue::Number(default));
+                            wizard.text_buf.clear();
+                            return WizardOutcome::Continue;
+                        }
+                    }
+                }
                 // Para alanları için ondalık → cents. Diğer alanlar için
                 // basit pozitif tam sayı.
                 let parsed: Option<u64> = if is_money {
@@ -5632,7 +6068,10 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
         _ => return WizardOutcome::Continue,
     };
     let val = match field {
-        FieldKind::City | FieldKind::CityTo => CityId::ALL.get(idx).map(|c| FieldValue::City(*c)),
+        FieldKind::City | FieldKind::CityTo => {
+            let cities = smart_cities_for_wizard(&app.state, wizard);
+            cities.get(idx).map(|c| FieldValue::City(*c))
+        }
         FieldKind::Product => {
             let role = app
                 .state

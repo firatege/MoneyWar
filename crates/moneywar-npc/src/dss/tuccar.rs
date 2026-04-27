@@ -25,9 +25,9 @@ use crate::dss::inputs::{
     arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
     money_lira, pending_event_signal, price_momentum,
 };
+use crate::dss::utility::{ActionCandidate, score_action};
 use crate::dss::weights_for;
 use moneywar_domain::Personality;
-use crate::dss::utility::{ActionCandidate, score_action};
 
 const TOP_K: usize = 3;
 
@@ -140,7 +140,7 @@ pub fn decide_tuccar_dss(
                     arbitrage: arbitrage_signal(state, product),
                     event: (event_signal(state, to, product)
                         + pending_event_signal(state, pid, to, product))
-                        .min(1.0),
+                    .min(1.0),
                     hold_pressure: f64::from(distance) / 5.0,
                 };
                 let score = score_action(action, weights);
@@ -182,8 +182,8 @@ pub fn decide_tuccar_dss(
             momentum: price_momentum(state, *city, *product),
             arbitrage: arbitrage_signal(state, *product),
             event: (event_signal(state, *city, *product)
-    + pending_event_signal(state, pid, *city, *product))
-    .min(1.0),
+                + pending_event_signal(state, pid, *city, *product))
+            .min(1.0),
             hold_pressure: 0.0,
         };
         let score = score_action(action, weights);
@@ -216,11 +216,11 @@ pub fn decide_tuccar_dss(
 
     // Adaptive difficulty + cluster post-process
     let human_id = find_human(state);
-    let lead_boost = human_id
-        .map(|hid| (human_lead_ratio(state, hid) - 1.0).clamp(0.0, 2.0))
-        .unwrap_or(0.0);
+    let lead_boost = human_id.map_or(0.0, |hid| {
+        (human_lead_ratio(state, hid) - 1.0).clamp(0.0, 2.0)
+    });
 
-    for (cmd, score) in scored.iter_mut() {
+    for (cmd, score) in &mut scored {
         *score *= 1.0 + lead_boost * 0.3;
         if let Some((city, product)) = cmd_target_bucket(cmd) {
             let cs = cluster_signal(state, pid, personality, city, product);
@@ -248,9 +248,7 @@ fn find_human(state: &GameState) -> Option<PlayerId> {
 fn cmd_target_bucket(cmd: &Command) -> Option<(CityId, ProductKind)> {
     match cmd {
         Command::SubmitOrder(order) => Some((order.city, order.product)),
-        Command::DispatchCaravan { to, cargo, .. } => {
-            cargo.entries().next().map(|(p, _)| (*to, p))
-        }
+        Command::DispatchCaravan { to, cargo, .. } => cargo.entries().next().map(|(p, _)| (*to, p)),
         _ => None,
     }
 }

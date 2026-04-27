@@ -3,6 +3,22 @@
 //! `cargo test -p moneywar-npc --test dss_tuning -- --nocapture` ile çıktı
 //! gözükür. Test her zaman geçer (assertion'lar gevşek), amaç **rapor**.
 
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::map_unwrap_or,
+    clippy::doc_markdown,
+    clippy::uninlined_format_args,
+    clippy::too_many_lines,
+    clippy::unnested_or_patterns,
+    clippy::semicolon_if_nothing_returned,
+    clippy::needless_pass_by_value,
+    clippy::missing_panics_doc
+)]
+
 use moneywar_domain::{
     CityId, GameState, Money, NpcKind, Personality, Player, PlayerId, ProductKind, Role,
     RoomConfig, RoomId, Tick,
@@ -10,10 +26,7 @@ use moneywar_domain::{
 use moneywar_engine::{advance_tick, leaderboard, rng_for};
 use moneywar_npc::{Difficulty, decide_all_npcs};
 
-fn run_full_season(
-    difficulty: Difficulty,
-    personality_dist: &[Personality],
-) -> SeasonReport {
+fn run_full_season(difficulty: Difficulty, personality_dist: &[Personality]) -> SeasonReport {
     run_full_season_with_human_cash(difficulty, personality_dist, 40_000)
 }
 
@@ -184,7 +197,9 @@ fn run_full_season_with_human_cash(
                 LogEvent::ContractAccepted { .. } => total_contracts_accepted += 1,
                 LogEvent::ContractSettled { final_state, .. } => match final_state {
                     moneywar_domain::ContractState::Fulfilled => total_contracts_fulfilled += 1,
-                    moneywar_domain::ContractState::Breached { .. } => total_contracts_breached += 1,
+                    moneywar_domain::ContractState::Breached { .. } => {
+                        total_contracts_breached += 1
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -392,8 +407,7 @@ fn tuning_personality_comparison() {
     results.sort_by(|a, b| {
         let ta = a.1 + a.2;
         let tb = b.1 + b.2;
-        tb.partial_cmp(&ta)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        tb.partial_cmp(&ta).unwrap_or(std::cmp::Ordering::Equal)
     });
     for (p, t, s, d) in &results {
         println!(
@@ -421,11 +435,7 @@ fn tuning_adaptive_difficulty() {
         ("Aşırı lider (500K)", 500_000),
     ];
     for (label, cash) in cases {
-        let report = run_full_season_with_human_cash(
-            Difficulty::Expert,
-            &Personality::ALL,
-            cash,
-        );
+        let report = run_full_season_with_human_cash(Difficulty::Expert, &Personality::ALL, cash);
         let tuccar_avg = report
             .npc_pnl_by_kind
             .get(&NpcKind::Tuccar)

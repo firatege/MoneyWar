@@ -9,7 +9,11 @@
 //! - 💀 Cartel: büyük miktar kontrat → manipülasyon
 //! - ⚡ Aggressive: kontrat nadir öner (hızlı satış sever)
 //! - 🎲 EventTrader: olay yaklaşırken sabit fiyat lock
-#![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::doc_markdown
+)]
 
 use moneywar_domain::{
     CityId, Command, ContractId, ContractProposal, ContractState, GameState, ListingKind, Money,
@@ -38,10 +42,9 @@ pub fn propose_contract_candidates(
     };
 
     // Kişilik bazlı filtre — Aggressive ve Momentum kontrat sevmez
-    let kontrat_zaten_var = state
-        .contracts
-        .values()
-        .any(|c| c.seller == pid && matches!(c.state, ContractState::Proposed | ContractState::Active));
+    let kontrat_zaten_var = state.contracts.values().any(|c| {
+        c.seller == pid && matches!(c.state, ContractState::Proposed | ContractState::Active)
+    });
     if kontrat_zaten_var {
         return Vec::new(); // Aynı NPC bir kontrat aktifken yenisini önermez
     }

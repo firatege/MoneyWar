@@ -37,11 +37,7 @@ impl Mf {
 /// Eğer `a == b` (kenar dik), `x ≥ a` ise 1 yoksa 0.
 fn slope_left(x: f64, a: f64, b: f64) -> f64 {
     if (b - a).abs() < f64::EPSILON {
-        if x >= a {
-            1.0
-        } else {
-            0.0
-        }
+        if x >= a { 1.0 } else { 0.0 }
     } else {
         (x - a) / (b - a)
     }
@@ -52,11 +48,7 @@ fn slope_left(x: f64, a: f64, b: f64) -> f64 {
 /// (ya da `x ≤ d`) ise 1 yoksa 0.
 fn slope_right(x: f64, b: f64, c: f64) -> f64 {
     if (c - b).abs() < f64::EPSILON {
-        if x <= c {
-            1.0
-        } else {
-            0.0
-        }
+        if x <= c { 1.0 } else { 0.0 }
     } else {
         (c - x) / (c - b)
     }

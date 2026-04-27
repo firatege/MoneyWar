@@ -5,6 +5,22 @@
 //! lifecycle tamamı (events + production + transport + contracts + loans +
 //! clearing) beklenen sıra ile işliyor.
 
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::map_unwrap_or,
+    clippy::doc_markdown,
+    clippy::uninlined_format_args,
+    clippy::too_many_lines,
+    clippy::unnested_or_patterns,
+    clippy::semicolon_if_nothing_returned,
+    clippy::needless_pass_by_value,
+    clippy::missing_panics_doc
+)]
+
 use moneywar_domain::{
     CityId, Command, GameState, MarketOrder, Money, NpcKind, OrderId, OrderSide, Personality,
     Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
@@ -273,12 +289,7 @@ fn fuzzy_expert_runs_without_crash_and_produces_commands() {
     let pids: Vec<PlayerId> = state
         .players
         .iter()
-        .filter(|(_, p)| {
-            matches!(
-                p.npc_kind,
-                Some(NpcKind::Sanayici) | Some(NpcKind::Tuccar)
-            )
-        })
+        .filter(|(_, p)| matches!(p.npc_kind, Some(NpcKind::Sanayici) | Some(NpcKind::Tuccar)))
         .map(|(id, _)| *id)
         .collect();
     for (i, pid) in pids.iter().enumerate() {

@@ -27,9 +27,9 @@ use crate::dss::inputs::{
     arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
     money_lira, pending_event_signal, price_momentum, price_ratio,
 };
+use crate::dss::utility::{ActionCandidate, score_action};
 use crate::dss::weights_for;
 use moneywar_domain::Personality;
-use crate::dss::utility::{ActionCandidate, score_action};
 
 const TOP_K: usize = 3;
 
@@ -48,11 +48,7 @@ pub fn decide_sanayici_dss(
     let weights = weights_for(personality);
     let ttl = state.config.balance.default_order_ttl;
 
-    let factory_count = state
-        .factories
-        .values()
-        .filter(|f| f.owner == pid)
-        .count();
+    let factory_count = state.factories.values().filter(|f| f.owner == pid).count();
 
     let mut scored: Vec<(Command, f64)> = Vec::new();
     let mut seq: u32 = 0;
@@ -72,18 +68,13 @@ pub fn decide_sanayici_dss(
                 let Some(raw) = product.raw_input() else {
                     continue;
                 };
-                let raw_price = state
-                    .effective_baseline(city, raw)
-                    .unwrap_or(Money::ZERO);
+                let raw_price = state.effective_baseline(city, raw).unwrap_or(Money::ZERO);
                 let fin_price = state
                     .effective_baseline(city, product)
                     .unwrap_or(Money::ZERO);
                 let margin = money_lira(fin_price) - money_lira(raw_price);
                 // Beklenen kâr — sezonun kalanında ~10 batch × margin × 10 birim
-                let remaining_ticks = state
-                    .config
-                    .season_ticks
-                    .saturating_sub(tick.value());
+                let remaining_ticks = state.config.season_ticks.saturating_sub(tick.value());
                 let est_batches = (remaining_ticks / 4) as f64;
                 // Build profit forecast'i × 0.5 — DSS BuildFactory'yi sermaye
                 // sıkıştırmaya kadar agresif kuruyordu. Yarıya bölüp Sat
@@ -98,7 +89,7 @@ pub fn decide_sanayici_dss(
                     arbitrage: arbitrage_signal(state, product),
                     event: (event_signal(state, city, product)
                         + pending_event_signal(state, pid, city, product))
-                        .min(1.0),
+                    .min(1.0),
                     hold_pressure: 0.7,
                 };
                 let score = score_action(action, weights) * factory_urgency_dampen;
@@ -148,8 +139,8 @@ pub fn decide_sanayici_dss(
             momentum: price_momentum(state, factory.city, raw),
             arbitrage: arbitrage_signal(state, raw),
             event: (event_signal(state, factory.city, raw)
-    + pending_event_signal(state, pid, factory.city, raw))
-    .min(1.0),
+                + pending_event_signal(state, pid, factory.city, raw))
+            .min(1.0),
             hold_pressure: 0.4,
         };
         let score = score_action(action, weights);
@@ -198,8 +189,8 @@ pub fn decide_sanayici_dss(
             momentum: price_momentum(state, city, product),
             arbitrage: arbitrage_signal(state, product),
             event: (event_signal(state, city, product)
-    + pending_event_signal(state, pid, city, product))
-    .min(1.0),
+                + pending_event_signal(state, pid, city, product))
+            .min(1.0),
             hold_pressure: 0.0, // satınca rahatlama
         };
         let score = score_action(action, weights);
@@ -236,10 +227,7 @@ pub fn decide_sanayici_dss(
     let (mut builds, others): (Vec<_>, Vec<_>) = scored
         .into_iter()
         .partition(|(c, _)| matches!(c, Command::BuildFactory { .. }));
-    builds.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    builds.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let mut scored: Vec<(Command, f64)> = others;
     if let Some(best_build) = builds.into_iter().next() {
         scored.push(best_build);
@@ -247,13 +235,13 @@ pub fn decide_sanayici_dss(
 
     // Adaptive difficulty: insan lider ise (>1.5×) NPC'ler agresifleşir.
     let human_id = find_human(state);
-    let lead_boost = human_id
-        .map(|hid| (human_lead_ratio(state, hid) - 1.0).clamp(0.0, 2.0))
-        .unwrap_or(0.0);
+    let lead_boost = human_id.map_or(0.0, |hid| {
+        (human_lead_ratio(state, hid) - 1.0).clamp(0.0, 2.0)
+    });
 
     // Bandwagon (cluster): post-process scored — aynı arketipli NPC'lerin
     // aktif emirlerine bias ekle.
-    for (cmd, score) in scored.iter_mut() {
+    for (cmd, score) in &mut scored {
         // Adaptive boost
         *score *= 1.0 + lead_boost * 0.3;
         // Cluster signal — aksiyonun (city, product)'unu çıkar
@@ -336,8 +324,13 @@ mod tests {
     fn empty_state_returns_no_commands() {
         let s = GameState::new(RoomId::new(1), RoomConfig::hizli());
         let mut rng = ChaCha8Rng::from_seed([0u8; 32]);
-        let cmds =
-            decide_sanayici_dss(&s, PlayerId::new(999), Personality::Aggressive, &mut rng, Tick::new(1));
+        let cmds = decide_sanayici_dss(
+            &s,
+            PlayerId::new(999),
+            Personality::Aggressive,
+            &mut rng,
+            Tick::new(1),
+        );
         assert!(cmds.is_empty());
     }
 

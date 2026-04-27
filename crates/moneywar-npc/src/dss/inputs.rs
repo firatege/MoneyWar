@@ -1,5 +1,9 @@
 //! Aksiyon sinyalleri için ortak yardımcılar — `GameState`'ten utility AI
-#![allow(clippy::cast_precision_loss, clippy::cast_lossless)]
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_lossless,
+    clippy::doc_markdown
+)]
 //!
 //! girdilerini hesaplar.
 //!
@@ -167,16 +171,11 @@ pub fn money_lira(m: Money) -> f64 {
 ///
 /// İnsan score / NPC ortalama. Insan yoksa 1.0 (nötr).
 #[must_use]
-pub fn human_lead_ratio(
-    state: &GameState,
-    human_id: moneywar_domain::PlayerId,
-) -> f64 {
+pub fn human_lead_ratio(state: &GameState, human_id: moneywar_domain::PlayerId) -> f64 {
     use crate::dss::inputs::money_lira;
-    let human_score = state
-        .players
-        .get(&human_id)
-        .map(|p| money_lira(p.cash) + p.inventory.total_units() as f64 * 5.0)
-        .unwrap_or(0.0);
+    let human_score = state.players.get(&human_id).map_or(0.0, |p| {
+        money_lira(p.cash) + p.inventory.total_units() as f64 * 5.0
+    });
     let mut npc_scores: Vec<f64> = state
         .players
         .iter()
@@ -186,10 +185,9 @@ pub fn human_lead_ratio(
             }
             // Sadece rakip NPC'leri (Sanayici/Tüccar)
             match p.npc_kind {
-                Some(moneywar_domain::NpcKind::Tuccar)
-                | Some(moneywar_domain::NpcKind::Sanayici) => Some(
-                    money_lira(p.cash) + p.inventory.total_units() as f64 * 5.0,
-                ),
+                Some(moneywar_domain::NpcKind::Tuccar | moneywar_domain::NpcKind::Sanayici) => {
+                    Some(money_lira(p.cash) + p.inventory.total_units() as f64 * 5.0)
+                }
                 _ => None,
             }
         })
@@ -233,15 +231,12 @@ pub fn cluster_signal(
     if same_archetype_ids.is_empty() {
         return 0.0;
     }
-    let total: u32 = state
-        .order_book
-        .get(&(city, product))
-        .map_or(0, |orders| {
-            orders
-                .iter()
-                .filter(|o| same_archetype_ids.contains(&o.player))
-                .map(|o| o.quantity)
-                .sum()
-        });
+    let total: u32 = state.order_book.get(&(city, product)).map_or(0, |orders| {
+        orders
+            .iter()
+            .filter(|o| same_archetype_ids.contains(&o.player))
+            .map(|o| o.quantity)
+            .sum()
+    });
     (f64::from(total) / 100.0).clamp(0.0, 1.0)
 }
