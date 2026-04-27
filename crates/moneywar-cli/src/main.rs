@@ -1499,8 +1499,6 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     let popup = centered_rect(90, 75, area);
     f.render_widget(Clear, popup);
 
-    // Başlıkta gerçek window — rolling avg max 5 tick ama oyun başında daha az
-    // tick var. Yanıltıcı "son 5 tick" yerine actual count.
     let window_actual = app
         .state
         .price_history
@@ -1513,7 +1511,8 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     } else {
         format!("son {window_actual} tick")
     };
-    let title = format!(" 📊  Pazar Verileri  —  ort. fiyat ({window_label}) + stok (fog) ");
+    let title =
+        format!(" 📊  Pazar Verileri  —  ort. fiyat ({window_label}) + aktif arz/talep ");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -1521,8 +1520,10 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    // Matrix layout: ürün satır, şehir sütun. Her hücre = "fiyat ~stok-aralık".
-    // 18 satırlık liste yerine 6 satır × 3 sütun → ekrana kompakt sığar.
+    // Her (city, product) için aktif order book'tan arz (SELL toplam) +
+    // talep (BUY toplam) hesapla. Stoktan değil — emirlerden.
+    // Stok bilgisi (envanterde ne kadar var) oyuncu için pratik değil;
+    // satışa çıkmış mal + alıcı baskısı asıl strateji sinyali.
     let mut header_cells: Vec<ratatui::text::Text> = vec![ratatui::text::Text::from(Span::styled(
         "Ürün",
         Style::default()
@@ -1548,20 +1549,18 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 .add_modifier(Modifier::BOLD),
         ))];
         for city in CityId::ALL {
-            let total: u64 = app
+            // Aktif emirler — order book'tan SELL/BUY toplam.
+            let (sell_qty, buy_qty): (u32, u32) = app
                 .state
-                .players
-                .values()
-                .map(|p| u64::from(p.inventory.get(city, product)))
-                .sum();
-            let stock_label = if total == 0 {
-                "—".to_string()
-            } else {
-                let band = (total / 8).max(50);
-                let low = total.saturating_sub(band);
-                let high = total.saturating_add(band);
-                format!("~{low}-{high}")
-            };
+                .order_book
+                .get(&(city, product))
+                .map(|orders| {
+                    orders.iter().fold((0u32, 0u32), |(s, b), o| match o.side {
+                        OrderSide::Sell => (s + o.quantity, b),
+                        OrderSide::Buy => (s, b + o.quantity),
+                    })
+                })
+                .unwrap_or((0, 0));
             let avg = app
                 .state
                 .rolling_avg_price(city, product, 5)
@@ -1570,23 +1569,37 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 Some(m) => format!("{m}"),
                 None => "—".to_string(),
             };
-            // İki satırlı hücre: 1) fiyat, 2) stok aralığı.
+
+            // İki satır: 1) fiyat, 2) arz/talep (yeşil/mavi).
             let price_line = Line::from(Span::styled(
                 price_label,
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ));
-            let stock_line = Line::from(Span::styled(
-                stock_label,
-                Style::default().fg(if total > 0 {
-                    Color::Green
-                } else {
-                    Color::DarkGray
-                }),
-            ));
+            let supply_color = if sell_qty == 0 {
+                Color::DarkGray
+            } else {
+                Color::Green
+            };
+            let demand_color = if buy_qty == 0 {
+                Color::DarkGray
+            } else {
+                Color::Cyan
+            };
+            let activity_line = Line::from(vec![
+                Span::styled(
+                    format!("arz {sell_qty}"),
+                    Style::default().fg(supply_color),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("tlp {buy_qty}"),
+                    Style::default().fg(demand_color),
+                ),
+            ]);
             let mut text = ratatui::text::Text::from(price_line);
-            text.lines.push(stock_line);
+            text.lines.push(activity_line);
             cells.push(text);
         }
         rows.push(Row::new(cells).height(2));
@@ -1600,7 +1613,6 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     ];
     let table = Table::new(rows, widths).header(header_row);
 
-    // İki bölge: tablo + altta info satırı.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(14), Constraint::Length(2)])
@@ -1609,7 +1621,7 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
 
     let info = Paragraph::new(vec![
         Line::from(Span::styled(
-            "Bireysel stok gizli — rakamlar tahmini aralık (~total ±bant).",
+            "arz = şu an satıştaki birim · tlp = bid'de bekleyen birim",
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),

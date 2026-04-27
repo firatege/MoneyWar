@@ -537,15 +537,15 @@ impl NpcBehavior for EsnafNpc {
         };
         let ttl = state.config.balance.default_order_ttl;
 
-        // Yarı-pasif: tick'in %50'sinde tamamen sessiz (dükkan kapalı).
-        // Aktif olduğunda 1-2 satış emri verir, 4 değil — Esnaflar piyasaya
-        // dominant olmasın, oyuncu emirleri de yer bulsun. "Pazardaki dükkanlar"
-        // hissi var ama piyasayı dolduran ana güç oyuncu/Spekulator/Tüccar.
-        if rng.random_ratio(1, 2) {
+        // Yarı-aktif: tick'in %30'unda sessiz (dükkan kapalı), %70 aktif.
+        // Aktif olduğunda 2-3 satış emri verir — pazarda görülebilir arz
+        // tutarlı şekilde olsun, oyuncu "kimse satmıyor" hissine kapılmasın.
+        // Eski %50 sessiz + 1-2 emir çok zayıftı.
+        if rng.random_ratio(3, 10) {
             return Vec::new();
         }
 
-        let order_count = rng.random_range(1u32..=2);
+        let order_count = rng.random_range(2u32..=3);
         let mut cmds = Vec::new();
         for seq in 0..order_count {
             let product = if rng.random_ratio(6, 10) {
