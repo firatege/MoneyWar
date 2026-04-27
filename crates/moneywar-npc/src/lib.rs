@@ -297,11 +297,11 @@ fn decide_tuccar(
             owner: pid,
             starting_city: pick_city(rng),
         });
-    } else if caravan_count < 3
+    } else if caravan_count < 4
         && player.cash >= moneywar_domain::Caravan::buy_cost(Role::Tuccar, caravan_count)
-        && rng.random_ratio(1, 6)
+        && rng.random_ratio(1, 3)
     {
-        // %16 olasılık ile yeni kervan al.
+        // %33 olasılık + 4 kervana kadar — eski %16 + 3'lük cap çok yavaştı.
         cmds.push(Command::BuyCaravan {
             owner: pid,
             starting_city: pick_city(rng),
@@ -314,12 +314,12 @@ fn decide_tuccar(
         .values()
         .filter(|c| c.owner == pid && c.is_idle())
         .collect();
-    for caravan in my_idle_caravans.iter().take(2) {
+    // Eski take(2) → take(4) — birden çok kervan aynı tickte dispatch eder.
+    for caravan in my_idle_caravans.iter().take(4) {
         let here = caravan
             .state
             .current_city()
             .expect("idle caravan has location");
-        // En kârlı (product, to_city) çiftini bul.
         let mut best: Option<(ProductKind, CityId, i64)> = None;
         for product in ProductKind::ALL {
             let here_price = market_or_base(state, here, product).as_cents();
@@ -329,8 +329,9 @@ fn decide_tuccar(
                 }
                 let there_price = market_or_base(state, to, product).as_cents();
                 let profit = there_price - here_price;
-                if profit > best.map_or(0, |(_, _, p)| p) && profit > 50 {
-                    // 0.50₺/birim üstü kâr beklenirse aday.
+                // Eski 50 cents (0.50₺) → 25 cents — daha düşük kâr
+                // eşiği, daha çok dispatch fırsatı.
+                if profit > best.map_or(0, |(_, _, p)| p) && profit > 25 {
                     best = Some((product, to, profit));
                 }
             }

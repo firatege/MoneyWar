@@ -2370,8 +2370,37 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
                             ),
                             Style::default().fg(Color::Yellow),
                         )));
-                        // Ürün seçildiyse bozulma kontrolü.
+                        // Ürün seçildiyse stok ve bozulma kontrolü.
                         if let Some(FieldValue::Product(p)) = wizard.fields.get(2) {
+                            // Kervan'ın bulunduğu şehirdeki oyuncu stoğu.
+                            let stock_here = app
+                                .state
+                                .players
+                                .get(&HUMAN_ID)
+                                .map(|pl| pl.inventory.get(from_city, *p))
+                                .unwrap_or(0);
+                            if stock_here == 0 {
+                                out.push(Line::from(Span::styled(
+                                    format!(
+                                        "  ⚠ {} stoğun {}'de YOK — kervan bu şehirden yükler. Önce ya buraya stok taşı ya farklı kervan seç.",
+                                        p,
+                                        city_short(from_city)
+                                    ),
+                                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                                )));
+                            } else {
+                                out.push(Line::from(Span::styled(
+                                    format!(
+                                        "  📦 {} {}'de stoğun: {} birim (kervan kapasitesi {})",
+                                        p,
+                                        city_short(from_city),
+                                        stock_here,
+                                        cap
+                                    ),
+                                    Style::default().fg(Color::Green),
+                                )));
+                            }
+                            // Bozulma kontrolü.
                             if let Some(perish) = p.perishability() {
                                 let danger = distance >= perish.after_ticks;
                                 let (color, icon) = if perish.loss_percent == 100 {
