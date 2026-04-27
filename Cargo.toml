@@ -53,7 +53,7 @@ ratatui = "0.29"
 crossterm = "0.28"
 
 # Network (LAN multiplayer)
-tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["net", "io-util", "io-std", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1"
 futures-util = { version = "0.3", features = ["sink"] }

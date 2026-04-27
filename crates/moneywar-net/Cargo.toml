@@ -14,7 +14,7 @@ categories.workspace = true
 [dependencies]
 moneywar-domain.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+postcard = { version = "1", features = ["alloc"] }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
