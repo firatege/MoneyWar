@@ -56,14 +56,12 @@ pub fn decide_sanayici_dss(
     let mut scored: Vec<(Command, f64)> = Vec::new();
     let mut seq: u32 = 0;
 
-    // 1. BuildFactory adayları — fabrika sayısı < 2 ise
-    // Sanayici starter cash 30K. 2 fabrika maliyeti 15K (1. bedava + 2. 15K)
-    // → 15K cash kalır ham ve operasyon için. 3+ fabrika sermayeyi çökertir.
-    if factory_count < 2 {
-        let factory_urgency_dampen: f64 = match factory_count {
-            0 => 1.0,
-            _ => 0.5,
-        };
+    // 1. BuildFactory adayları — sadece 1 fabrika moduna sok
+    // Matematik: 1 fabrika (bedava) × 30 batch × 10 × 12₺ marj = 3.6K kâr.
+    // 2 fabrika: 7.2K kâr - 15K maliyet = -7.8K. Yani 2. fabrika **zarar**.
+    // DSS Sanayici tek-fabrika sezona oynayacak şekilde bırak — pozitif PnL.
+    if factory_count < 1 {
+        let factory_urgency_dampen: f64 = 1.0;
         for city in CityId::ALL {
             for product in ProductKind::FINISHED_GOODS {
                 let cost = Factory::build_cost(u32::try_from(factory_count).unwrap_or(0));
@@ -219,6 +217,21 @@ pub fn decide_sanayici_dss(
         ) {
             scored.push((Command::SubmitOrder(o), score));
         }
+    }
+
+    // BuildFactory adaylarından sadece **en yüksek utility'li 1 tane** tut.
+    // Aksi takdirde 9 aday (3 city × 3 finished) top-3'ü dolduruyordu —
+    // tek NPC bir tickte 3 fabrika kuruyordu! "Single best build" filter.
+    let (mut builds, others): (Vec<_>, Vec<_>) = scored
+        .into_iter()
+        .partition(|(c, _)| matches!(c, Command::BuildFactory { .. }));
+    builds.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut scored: Vec<(Command, f64)> = others;
+    if let Some(best_build) = builds.into_iter().next() {
+        scored.push(best_build);
     }
 
     // Adaptive difficulty: insan lider ise (>1.5×) NPC'ler agresifleşir.
