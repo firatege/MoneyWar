@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn second_factory_costs_10k_and_debits_cash() {
+    fn second_factory_costs_15k_and_debits_cash() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, Role::Sanayici, 50_000);
@@ -283,7 +283,7 @@ mod tests {
             ProductKind::Kumas,
         )
         .unwrap();
-        // İkinci 10k.
+        // İkinci 15k.
         process_build_factory(
             &mut s,
             &mut r,
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(s.factories.len(), 2);
         assert_eq!(
             s.players[&PlayerId::new(1)].cash,
-            Money::from_lira(40_000).unwrap()
+            Money::from_lira(35_000).unwrap()
         );
     }
 
@@ -304,7 +304,7 @@ mod tests {
     fn build_factory_insufficient_funds_is_rejected() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
-        add_player(&mut s, 1, Role::Sanayici, 1_000); // < 10k for 2nd
+        add_player(&mut s, 1, Role::Sanayici, 1_000); // < 15k for 2nd
         process_build_factory(
             &mut s,
             &mut r,
@@ -333,10 +333,9 @@ mod tests {
     }
 
     #[test]
-    fn production_starts_when_raw_available_and_completes_after_two_ticks() {
+    fn production_starts_when_raw_available_and_completes_after_three_ticks() {
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
-        // Pamuk hazır
         s.players
             .get_mut(&pid)
             .unwrap()
@@ -354,7 +353,7 @@ mod tests {
         )
         .unwrap();
 
-        // Tick 1: üretim başlar (batch added, raw consumed).
+        // Tick 1: üretim başlar (batch eklenir, raw consume).
         advance_production(&mut s, &mut r, Tick::new(1));
         assert_eq!(
             s.players[&pid]
@@ -364,34 +363,37 @@ mod tests {
         );
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
 
-        // Tick 2: tick 1'de eklenen batch hâlâ kuyrukta, yeni batch başlar.
+        // Tick 2: hiçbir batch tamamlanmaz (completion_tick=4), yeni batch başlar.
         let mut r2 = TickReport::new(Tick::new(2));
         advance_production(&mut s, &mut r2, Tick::new(2));
+        assert_eq!(s.factories.values().next().unwrap().batches.len(), 2);
+
+        // Tick 3: yine tamamlanma yok, yeni batch başlar.
+        let mut r3 = TickReport::new(Tick::new(3));
+        advance_production(&mut s, &mut r3, Tick::new(3));
+        assert_eq!(s.factories.values().next().unwrap().batches.len(), 3);
         assert_eq!(
             s.players[&pid]
                 .inventory
-                .get(CityId::Istanbul, ProductKind::Pamuk),
-            80
+                .get(CityId::Istanbul, ProductKind::Kumas),
+            0
         );
-        assert_eq!(s.factories.values().next().unwrap().batches.len(), 2);
 
-        // Tick 3: ilk batch tamamlanır (completion_tick=3), yeni batch başlar.
-        let mut r3 = TickReport::new(Tick::new(3));
-        advance_production(&mut s, &mut r3, Tick::new(3));
+        // Tick 4: ilk batch tamamlanır (tick 1 + 3 = 4), yeni batch başlar.
+        let mut r4 = TickReport::new(Tick::new(4));
+        advance_production(&mut s, &mut r4, Tick::new(4));
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Kumas),
             10
         );
-        // 2 batch hala kuyrukta (tick 2'de başlayan + tick 3'te başlayan).
-        assert_eq!(s.factories.values().next().unwrap().batches.len(), 2);
-        // Pamuk 70 kaldı (10 tüketildi).
+        // Pamuk 60 kaldı (4 batch × 10).
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            70
+            60
         );
     }
 

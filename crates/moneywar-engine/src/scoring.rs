@@ -258,18 +258,16 @@ mod tests {
     fn factory_value_uses_half_of_build_cost_and_skips_idle() {
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
-        // 3 fabrika: cost table 0 / 10k / 15k → skor katkı 0 / 5k / 7.5k = 12.5k.
+        // 3 fabrika: cost table 0 / 15k / 25k → skor katkı 0 + 7.5k + 12.5k = 20k.
         for i in 1..=3u64 {
             let fid = moneywar_domain::FactoryId::new(i);
             let mut f = Factory::new(fid, pid, CityId::Istanbul, ProductKind::Kumas).unwrap();
-            // Son üretim tick 5 varsayalım, current 10 → 5 tick geçti, atıl değil.
             f.last_production_tick = Some(Tick::new(5));
             s.factories.insert(fid, f);
         }
         s.current_tick = Tick::new(10);
         let sc = score_player(&s, pid);
-        // Expected: 0 + 5k + 7.5k = 12500
-        assert_eq!(sc.factory_value, Money::from_lira(12_500).unwrap());
+        assert_eq!(sc.factory_value, Money::from_lira(20_000).unwrap());
     }
 
     #[test]

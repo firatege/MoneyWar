@@ -42,17 +42,20 @@
 /// Her fabrika tick başına bu kadar ham madde → bitmiş ürün (§10).
 pub const FACTORY_BATCH_SIZE: u32 = 10;
 
-/// Batch başlatıldıktan kaç tick sonra biter (§4, tentatif).
-pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
+/// Batch başlatıldıktan kaç tick sonra biter (§4).
+/// Eski 2 → 3: Sanayici %150 marj × hızlı batch ile aşırı kârlıydı, üretim
+/// süresini uzatıp Tüccar arbitrajına denge getirildi.
+pub const FACTORY_PRODUCTION_TICKS: u32 = 3;
 
 // =============================================================================
 // Fabrika
 // =============================================================================
 
-/// `§10` kurulum maliyet tablosu — `existing_count` index'i ile oku.
+/// Kurulum maliyet tablosu — `existing_count` index'i ile oku.
 /// İlk fabrika bedava (starter), sonra artan maliyet.
-/// `existing_count >= len()` için son eleman kullanılır (5+ sabit 30k).
-pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 10_000, 15_000, 22_000, 30_000];
+/// Eski [0, 10K, 15K, 22K, 30K] → +%50: scale-up daha pahalı, "3 fabrika kur
+/// ezbere strateji" daha bilinçli yatırım gerektirir.
+pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 15_000, 25_000, 40_000, 60_000];
 
 // =============================================================================
 // Kervan

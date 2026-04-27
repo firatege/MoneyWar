@@ -205,19 +205,19 @@ mod tests {
     #[test]
     fn build_cost_follows_design_schedule() {
         assert_eq!(Factory::build_cost(0), Money::ZERO);
-        assert_eq!(Factory::build_cost(1), Money::from_lira(10_000).unwrap());
-        assert_eq!(Factory::build_cost(2), Money::from_lira(15_000).unwrap());
-        assert_eq!(Factory::build_cost(3), Money::from_lira(22_000).unwrap());
-        assert_eq!(Factory::build_cost(4), Money::from_lira(30_000).unwrap());
-        // 5+ hep 30k
-        assert_eq!(Factory::build_cost(5), Money::from_lira(30_000).unwrap());
-        assert_eq!(Factory::build_cost(10), Money::from_lira(30_000).unwrap());
+        assert_eq!(Factory::build_cost(1), Money::from_lira(15_000).unwrap());
+        assert_eq!(Factory::build_cost(2), Money::from_lira(25_000).unwrap());
+        assert_eq!(Factory::build_cost(3), Money::from_lira(40_000).unwrap());
+        assert_eq!(Factory::build_cost(4), Money::from_lira(60_000).unwrap());
+        // 5+ hep son tablo değeri
+        assert_eq!(Factory::build_cost(5), Money::from_lira(60_000).unwrap());
+        assert_eq!(Factory::build_cost(10), Money::from_lira(60_000).unwrap());
     }
 
     #[test]
     fn batch_size_and_duration_constants() {
         assert_eq!(Factory::BATCH_SIZE, 10);
-        assert_eq!(Factory::PRODUCTION_TICKS, 2);
+        assert_eq!(Factory::PRODUCTION_TICKS, 3);
     }
 
     #[test]

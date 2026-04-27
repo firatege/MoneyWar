@@ -1319,16 +1319,16 @@ fn seed_world(
         next_id += 1;
     }
 
-    // NPC-Alıcı(lar) — saf alıcı, **200k bol nakit**, stok yok.
-    // 100k yetmiyordu — sezon boyu demand pressure kaybolup NPC'ler zarara
-    // gidiyordu. 200k ile sezon sonuna kadar alım gücü kalır.
+    // NPC-Alıcı(lar) — saf alıcı, 100k nakit, stok yok.
+    // Eski 200K çoktu — sezon sonunda NPC'ler 100K+ kullanılmamış parayla
+    // kalıyordu. 3 NPC × 100K = 300K toplam talep, hâlâ bol ama atık az.
     for _ in 0..composition.alici {
         let name = pick_npc_name(&mut rng, NpcKind::Alici, &mut used_names);
         let npc = Player::new(
             PlayerId::new(next_id),
             name,
             Role::Tuccar,
-            Money::from_lira(200_000).unwrap(),
+            Money::from_lira(100_000).unwrap(),
             true,
         )
         .unwrap()
