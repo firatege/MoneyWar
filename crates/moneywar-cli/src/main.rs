@@ -188,6 +188,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('?') => app.mode = Mode::Help,
             KeyCode::Char('i') => app.mode = Mode::Info,
             KeyCode::Char('m') => app.mode = Mode::Holdings,
+            KeyCode::Char('r') => app.mode = Mode::MarketIntel,
             KeyCode::Char('e') => app.mode = Mode::RecentTrades,
             KeyCode::Char('k') => app.mode = Mode::OpenBook,
             KeyCode::Char('v') => app.mode = Mode::CaravanPanel,
@@ -224,7 +225,8 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                     wizard: Wizard::new(ActionKind::Loan),
                 };
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('R') => {
+                // Repay (büyük R) — küçük `r` artık MarketIntel raporuna ayrıldı.
                 app.mode = Mode::Wizard {
                     wizard: Wizard::new(ActionKind::Repay),
                 };
@@ -302,7 +304,8 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         | Mode::NewsInbox
         | Mode::RecentTrades
         | Mode::OpenBook
-        | Mode::CaravanPanel => match code {
+        | Mode::CaravanPanel
+        | Mode::MarketIntel => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
                 app.mode = Mode::Normal;
@@ -403,6 +406,9 @@ enum Mode {
     },
     /// Sezon sonu reveal — 90. tick'te otomatik açılır, tüm skorlar görünür.
     GameOver,
+    /// Pazar verileri (intel) overlay — `r` ile açılır. Her (şehir × ürün)
+    /// için ort.fiyat + tahmini toplam stok aralığı. Bireysel detay gizli.
+    MarketIntel,
     /// Tek-tuş aksiyon wizard — b/s/f/c/d/l/r/n/o/a/w/x ile açılır,
     /// adım adım komut kurar, ezbere parametre gerektirmez.
     Wizard {
@@ -1577,6 +1583,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::RecentTrades => render_recent_trades_overlay(f, area, app),
         Mode::OpenBook => render_open_book_overlay(f, area, app),
         Mode::CaravanPanel => render_caravan_panel_overlay(f, area, app),
+        Mode::MarketIntel => render_market_intel_overlay(f, area, app),
         Mode::DebugLog { scroll } => render_debug_log_overlay(f, area, app, scroll),
         Mode::GameOver => render_game_over_overlay(f, area, app),
         Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
@@ -1587,6 +1594,114 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
     if let Some(toast) = &app.active_toast {
         render_toast(f, area, toast);
     }
+}
+
+/// Pazar intel overlay — `r` ile açılır. Her (şehir × ürün) için:
+/// - Rolling avg fiyat (son 5 tick clearing'i)
+/// - Toplam stok **aralığı** (fog: exact yerine ±bant)
+///
+/// Bireysel detay (kim ne kadar tutuyor) gizli — sadece piyasanın toplam
+/// büyüklüğü görünür. Oyuncu makro-strateji kurabilir ama rakip mikrosunu
+/// göremez.
+fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(80, 80, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📊  Pazar Verileri  —  son 5 tick (fog) ")
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "  Şehirde toplam ne kadar mal var? Ortalama fiyat nedir?",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Bireysel stok gizli — rakamlar tahmini aralık.",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:<10} {:<11} {:>10}      {}",
+            "Şehir", "Ürün", "Ort. fiyat", "Tahmini stok"
+        ),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            // Toplam stok — tüm oyuncuların inventory'sinin (city, product) hücresi.
+            let total: u64 = app
+                .state
+                .players
+                .values()
+                .map(|p| u64::from(p.inventory.get(city, product)))
+                .sum();
+            // Fog: bant = max(50, total/8). 0 ise "yok".
+            let stock_label = if total == 0 {
+                "—".to_string()
+            } else {
+                let band = (total / 8).max(50);
+                let low = total.saturating_sub(band);
+                let high = total.saturating_add(band);
+                format!("~{low}–{high}")
+            };
+            // Ortalama fiyat — son 5 tick rolling avg, yoksa baseline (effective).
+            let avg = app
+                .state
+                .rolling_avg_price(city, product, 5)
+                .or_else(|| app.state.effective_baseline(city, product));
+            let price_label = match avg {
+                Some(m) => format!("{m}"),
+                None => "—".to_string(),
+            };
+            let highlight = total > 0;
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:<10} ", city_short(city)),
+                    Style::default().fg(Color::Blue),
+                ),
+                Span::styled(
+                    format!("{:<11} ", product),
+                    Style::default().fg(product_color(product)),
+                ),
+                Span::styled(
+                    format!("{:>10}      ", price_label),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    stock_label,
+                    Style::default().fg(if highlight {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "  Esc / Enter / Space ile kapat",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 /// Achievement toast — ekranın üst-orta noktasında 1 satırlık parlak şerit.
@@ -1879,6 +1994,7 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         help_kv("n", "Haber kutusu"),
         help_kv("e", "🔄 Son eşleşmeler (kim kime ne sattı)"),
         help_kv("k", "📖 Açık Pazar (orderbook depth)"),
+        help_kv("r", "📊 Pazar raporu (ort. fiyat + tahmini stok aralığı)"),
         help_kv("v", "🚚 Kervan kontrol paneli (detaylı + cargo)"),
         help_kv("g", "🛠 Debug log (ham event akışı, ↑↓ scroll)"),
         help_kv("?", "Bu yardım"),
@@ -1914,7 +2030,7 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         help_kv("a", "✅ Kontrat kabul"),
         help_kv("w", "↩  Kontrat geri çek (withdraw)"),
         help_kv("l", "💰 Kredi al"),
-        help_kv("r", "💳 Kredi öde"),
+        help_kv("R", "💳 Kredi öde (büyük R — küçük 'r' Pazar raporu)"),
         help_kv("N", "📰 Haber abonelik (büyük N — küçük 'n' inbox)"),
     ]);
     lines.extend(shortcuts);
