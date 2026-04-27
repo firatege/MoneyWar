@@ -417,25 +417,25 @@ mod tests {
     #[test]
     fn saturation_formula_matches_design() {
         let c = RoomConfig::hizli();
-        // 25 + (n-2) × 5 (anti-snowball, tetiklenebilir aralıkta):
-        // 2 players → 25
-        // 3 players → 30
-        // 4 players → 35
-        // 5 players → 40
-        // 12 players → 75
-        assert_eq!(c.saturation_threshold(2), 25);
-        assert_eq!(c.saturation_threshold(3), 30);
-        assert_eq!(c.saturation_threshold(4), 35);
-        assert_eq!(c.saturation_threshold(5), 40);
-        assert_eq!(c.saturation_threshold(12), 75);
+        // 250 + (n-2) × 50 (anti-snowball, hacim 10× ölçek):
+        // 2 players → 250
+        // 3 players → 300
+        // 4 players → 350
+        // 5 players → 400
+        // 12 players → 750
+        assert_eq!(c.saturation_threshold(2), 250);
+        assert_eq!(c.saturation_threshold(3), 300);
+        assert_eq!(c.saturation_threshold(4), 350);
+        assert_eq!(c.saturation_threshold(5), 400);
+        assert_eq!(c.saturation_threshold(12), 750);
     }
 
     #[test]
     fn saturation_handles_below_min() {
         let c = RoomConfig::hizli();
         // player_count < SATURATION_MIN_PLAYERS → base eşiğe sabitlenir.
-        assert_eq!(c.saturation_threshold(0), 25);
-        assert_eq!(c.saturation_threshold(1), 25);
+        assert_eq!(c.saturation_threshold(0), 250);
+        assert_eq!(c.saturation_threshold(1), 250);
     }
 
     #[test]

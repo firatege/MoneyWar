@@ -20,7 +20,7 @@ fn init_state() -> GameState {
     .unwrap();
     sanayici
         .inventory
-        .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+        .add(CityId::Istanbul, ProductKind::Pamuk, 1000)
         .unwrap();
     s.players.insert(sanayici.id, sanayici);
 
@@ -49,12 +49,12 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     };
     let (s1, _r1) = advance_tick(&s0, &[build]).unwrap();
     assert_eq!(s1.factories.len(), 1);
-    // Tick 1 sonu üretim döngüsü: batch başladı, pamuk 10 tüketildi → 90 kaldı.
+    // Tick 1 sonu üretim döngüsü: batch başladı, pamuk 100 tüketildi → 900 kaldı (10× ölçek).
     assert_eq!(
         s1.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Pamuk),
-        90
+        900
     );
     assert_eq!(s1.factories.values().next().unwrap().batches.len(), 1);
 
@@ -65,7 +65,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
         s2.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Pamuk),
-        80
+        800
     );
 
     // Tick 3: yeni batch başlar, hâlâ tamamlanma yok.
@@ -83,9 +83,12 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     let kumas = s4.players[&PlayerId::new(1)]
         .inventory
         .get(CityId::Istanbul, ProductKind::Kumas);
-    assert_eq!(kumas, 10, "10 kumas produced after 3 tick delay");
+    assert_eq!(
+        kumas, 100,
+        "100 kumas produced after 3 tick delay (10× ölçek)"
+    );
 
-    // Tick 5: Sanayici 5 kumas satar; Tüccar 5 kumas alır.
+    // Tick 5: Sanayici 50 kumas satar; Tüccar 50 kumas alır (10× ölçek).
     let sell = Command::SubmitOrder(
         MarketOrder::new(
             OrderId::new(1),
@@ -93,7 +96,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             CityId::Istanbul,
             ProductKind::Kumas,
             OrderSide::Sell,
-            5,
+            50,
             Money::from_lira(18).unwrap(),
             Tick::new(5),
         )
@@ -106,7 +109,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             CityId::Istanbul,
             ProductKind::Kumas,
             OrderSide::Buy,
-            5,
+            50,
             Money::from_lira(20).unwrap(),
             Tick::new(5),
         )
@@ -114,7 +117,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     );
     let (s5, _r5) = advance_tick(&s4, &[sell, buy]).unwrap();
 
-    // Midpoint price = (20 + 18) / 2 = 19₺. 5 × 19 = 95₺.
+    // Midpoint price = (20 + 18) / 2 = 19₺. 50 × 19 = 950₺.
     let expected_price = Money::from_lira(19).unwrap();
     assert_eq!(
         s5.price_history[&(CityId::Istanbul, ProductKind::Kumas)]
@@ -123,19 +126,19 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             .1,
         expected_price
     );
-    // Tüccar envanterinde 5 kumas.
+    // Tüccar envanterinde 50 kumas.
     assert_eq!(
         s5.players[&PlayerId::new(2)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Kumas),
-        5
+        50
     );
-    // Tick 5'te ikinci batch tamamlanır (started=2, completion=5). 10 - 5 + 10 = 15.
+    // Tick 5'te ikinci batch tamamlanır (started=2, completion=5). 100 - 50 + 100 = 150.
     assert_eq!(
         s5.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Kumas),
-        15
+        150
     );
     // Para korunumu: 200_000₺ × 100 cent.
     let s = s5.players[&PlayerId::new(1)].cash.as_cents();

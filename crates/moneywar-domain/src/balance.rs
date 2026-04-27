@@ -40,7 +40,8 @@
 // =============================================================================
 
 /// Her fabrika tick başına bu kadar ham madde → bitmiş ürün (§10).
-pub const FACTORY_BATCH_SIZE: u32 = 10;
+/// 10 → 100: tüccar oyunu hissi için tüm hacim 10× ölçeklendi.
+pub const FACTORY_BATCH_SIZE: u32 = 100;
 
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
 /// Eski 2 → 3: Sanayici %150 marj × hızlı batch ile aşırı kârlıydı, üretim
@@ -62,10 +63,12 @@ pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 15_000, 25_000, 40_000, 60_00
 // =============================================================================
 
 /// Sanayici kervanı kapasitesi (§10).
-pub const CARAVAN_CAPACITY_SANAYICI: u32 = 20;
+/// 20 → 200: hacim 10× ölçek revizyonu.
+pub const CARAVAN_CAPACITY_SANAYICI: u32 = 200;
 
 /// Tüccar kervanı kapasitesi — daha büyük (§10).
-pub const CARAVAN_CAPACITY_TUCCAR: u32 = 50;
+/// 50 → 500: hacim 10× ölçek revizyonu.
+pub const CARAVAN_CAPACITY_TUCCAR: u32 = 500;
 
 /// Sanayici kervan maliyet tablosu (§10).
 pub const CARAVAN_COSTS_SANAYICI_LIRA: [i64; 3] = [0, 5_000, 10_000];
@@ -83,9 +86,11 @@ pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 4] = [0, 6_000, 10_000, 15_000];
 /// Eski değerler 40+10/oyuncu → 12 oyuncu için 140 birim. Pratikte tek bucket'ta
 /// 140 birim eşleşme nadir → eşik tetiklenmiyordu (ölü kod). Şu an 25+5/oyuncu →
 /// 12 oyuncu için 75 — tetiklenebilir, anti-snowball mekanizması canlı.
-pub const SATURATION_BASE: u32 = 25;
+/// 25 → 250: hacim 10× ölçek revizyonu — büyük emirler ceza yememeli.
+pub const SATURATION_BASE: u32 = 250;
 /// Her ek oyuncu başına doygunluk eşiği artışı.
-pub const SATURATION_PER_PLAYER: u32 = 5;
+/// 5 → 50: hacim 10× ölçek revizyonu.
+pub const SATURATION_PER_PLAYER: u32 = 50;
 /// Doygunluk formülünün alt sınırı (bu sayının altında formül devreye girmez).
 pub const SATURATION_MIN_PLAYERS: u8 = 2;
 

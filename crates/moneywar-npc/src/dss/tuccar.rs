@@ -172,7 +172,7 @@ pub fn decide_tuccar_dss(
             .or_else(|| state.effective_baseline(*city, *product))
             .unwrap_or(Money::from_cents(800));
         let ask_cents = (market.as_cents() * 105) / 100;
-        let sell_qty = (*qty).min(15);
+        let sell_qty = (*qty).min(150);
         let expected_revenue = (ask_cents as f64 / 100.0) * f64::from(sell_qty);
         let action = ActionCandidate {
             profit_lira: expected_revenue * 0.05, // küçük marj

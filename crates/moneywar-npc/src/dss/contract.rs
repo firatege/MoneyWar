@@ -53,7 +53,7 @@ pub fn propose_contract_candidates(
     let mut entries: Vec<(CityId, ProductKind, u32)> = player
         .inventory
         .entries()
-        .filter(|(_, _, q)| *q >= 30) // en az 30 birim stok lazım
+        .filter(|(_, _, q)| *q >= 300) // en az 300 birim stok lazım (10× ölçek)
         .collect();
     entries.sort_by_key(|(_, _, q)| std::cmp::Reverse(*q));
 
@@ -70,7 +70,7 @@ pub fn propose_contract_candidates(
         let unit_price_cents = (market.as_cents() * 105) / 100;
         let unit_price = Money::from_cents(unit_price_cents);
 
-        let contract_qty: u32 = qty.min(50); // max 50 birim
+        let contract_qty: u32 = qty.min(500); // max 500 birim (10× ölçek)
         let total_value_cents = unit_price_cents.saturating_mul(i64::from(contract_qty));
         let deposit_cents = total_value_cents / 10; // %10 kapora
 

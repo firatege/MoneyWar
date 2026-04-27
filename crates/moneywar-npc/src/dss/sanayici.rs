@@ -125,7 +125,7 @@ pub fn decide_sanayici_dss(
             .or_else(|| state.effective_baseline(factory.city, raw))
             .unwrap_or(Money::from_cents(600));
         let bid_cents = (market.as_cents() * 105) / 100;
-        let qty: u32 = 20;
+        let qty: u32 = 200;
         let total = bid_cents.saturating_mul(i64::from(qty));
         if player.cash.as_cents() < total {
             continue;
@@ -176,7 +176,7 @@ pub fn decide_sanayici_dss(
             .or_else(|| state.effective_baseline(city, product))
             .unwrap_or(Money::from_cents(1500));
         let ask_cents = (market.as_cents() * 95) / 100;
-        let sell_qty = qty.min(15);
+        let sell_qty = qty.min(150);
         // Sat utility: stoğu çıkarmak doğal aksiyon, baseline yüksek olmalı.
         // Eski 0.3 → 1.0 ile satış aksiyonu top-3'te BuildFactory ile yarışır.
         let expected_revenue = (ask_cents as f64 / 100.0) * f64::from(sell_qty);

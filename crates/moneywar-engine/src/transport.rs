@@ -228,25 +228,25 @@ mod tests {
     }
 
     #[test]
-    fn buy_caravan_tuccar_starter_zero_cost_capacity_50() {
+    fn buy_caravan_tuccar_starter_zero_cost_capacity_500() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Tuccar, 0);
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         assert_eq!(s.caravans.len(), 1);
         let c = s.caravans.values().next().unwrap();
-        assert_eq!(c.capacity, 50);
+        assert_eq!(c.capacity, 500);
         assert_eq!(c.state.current_city(), Some(CityId::Istanbul));
     }
 
     #[test]
-    fn buy_caravan_sanayici_starter_zero_cost_capacity_20() {
+    fn buy_caravan_sanayici_starter_zero_cost_capacity_200() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         let c = s.caravans.values().next().unwrap();
-        assert_eq!(c.capacity, 20);
+        assert_eq!(c.capacity, 200);
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod tests {
             .get_mut(&pid)
             .unwrap()
             .inventory
-            .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+            .add(CityId::Istanbul, ProductKind::Pamuk, 1000)
             .unwrap();
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         let cid = *s.caravans.keys().next().unwrap();
@@ -339,7 +339,7 @@ mod tests {
             cid,
             CityId::Istanbul,
             CityId::Ankara,
-            &cargo(ProductKind::Pamuk, 51), // capacity 50
+            &cargo(ProductKind::Pamuk, 501), // capacity 500
         )
         .unwrap_err();
         assert!(err.to_string().contains("capacity"));
@@ -348,7 +348,7 @@ mod tests {
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            100
+            1000
         );
     }
 

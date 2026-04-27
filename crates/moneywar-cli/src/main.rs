@@ -1309,7 +1309,7 @@ fn seed_world(
         let city_idx = rng.random_range(0usize..CityId::ALL.len());
         let starter_city = CityId::ALL[city_idx];
         let starter_raw = s.cheap_raw_for(starter_city);
-        let starter_qty: u32 = rng.random_range(70..=130);
+        let starter_qty: u32 = rng.random_range(700..=1_300);
         human
             .inventory
             .add(starter_city, starter_raw, starter_qty)
@@ -1336,7 +1336,7 @@ fn seed_world(
         .unwrap()
         .with_kind(NpcKind::Tuccar)
         .with_personality(personality);
-        distribute_inventory(&mut npc, &mut rng, 500);
+        distribute_inventory(&mut npc, &mut rng, 5_000);
         let npc_id = npc.id;
         s.players.insert(npc_id, npc);
         if matches!(personality, Personality::EventTrader) {
@@ -1366,13 +1366,13 @@ fn seed_world(
         let et_sanayici = matches!(personality, Personality::EventTrader);
         let city_idx = rng.random_range(0usize..CityId::ALL.len());
         let starter_city = CityId::ALL[city_idx];
-        // Raw starter: 30-50 birim, ürün şehrin **bu sezonki** ucuz hamı.
+        // Raw starter: 300-500 birim (10× revizyon), ürün şehrin **bu sezonki** ucuz hamı.
         let starter_raw = s.cheap_raw_for(starter_city);
-        let raw_qty: u32 = rng.random_range(30..=50);
+        let raw_qty: u32 = rng.random_range(300..=500);
         let _ = npc.inventory.add(starter_city, starter_raw, raw_qty);
         // Finished starter: küçük — piyasaya erken birkaç emir versin.
         let finished_idx = rng.random_range(0usize..ProductKind::FINISHED_GOODS.len());
-        let fin_qty: u32 = rng.random_range(10..=20);
+        let fin_qty: u32 = rng.random_range(100..=200);
         let _ = npc.inventory.add(
             starter_city,
             ProductKind::FINISHED_GOODS[finished_idx],
@@ -1418,14 +1418,14 @@ fn seed_world(
         )
         .unwrap()
         .with_kind(NpcKind::Esnaf);
-        distribute_inventory(&mut npc, &mut rng, 5_000);
+        distribute_inventory(&mut npc, &mut rng, 50_000);
         s.players.insert(npc.id, npc);
         next_id += 1;
     }
 
     // NPC-Spekülatör(ler) — market maker. Hem alış hem satış emri verir,
     // spread'i daraltır → mallar bekleyici kalmasın diye. Orta sermaye +
-    // dengeli başlangıç stoğu (~800 birim weighted) — iki yöne de likidite.
+    // dengeli başlangıç stoğu (~8000 birim weighted) — iki yöne de likidite.
     for _ in 0..composition.spekulator {
         let name = pick_npc_name(&mut rng, NpcKind::Spekulator, &mut used_names);
         let mut npc = Player::new(
@@ -1437,7 +1437,7 @@ fn seed_world(
         )
         .unwrap()
         .with_kind(NpcKind::Spekulator);
-        distribute_inventory(&mut npc, &mut rng, 800);
+        distribute_inventory(&mut npc, &mut rng, 8_000);
         s.players.insert(npc.id, npc);
         next_id += 1;
     }

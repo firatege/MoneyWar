@@ -340,7 +340,7 @@ mod tests {
             .get_mut(&pid)
             .unwrap()
             .inventory
-            .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+            .add(CityId::Istanbul, ProductKind::Pamuk, 1000)
             .unwrap();
         let mut r = TickReport::new(Tick::new(1));
         process_build_factory(
@@ -353,13 +353,13 @@ mod tests {
         )
         .unwrap();
 
-        // Tick 1: üretim başlar (batch eklenir, raw consume).
+        // Tick 1: üretim başlar (batch eklenir, raw consume — batch=100, 10× ölçek).
         advance_production(&mut s, &mut r, Tick::new(1));
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            90
+            900
         );
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
 
@@ -386,14 +386,14 @@ mod tests {
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Kumas),
-            10
+            100
         );
-        // Pamuk 60 kaldı (4 batch × 10).
+        // Pamuk 600 kaldı (4 batch × 100, 10× ölçek).
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            60
+            600
         );
     }
 

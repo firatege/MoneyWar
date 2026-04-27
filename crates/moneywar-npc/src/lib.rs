@@ -108,7 +108,8 @@ impl NpcBehavior for MarketMaker {
         let order_id = OrderId::new(npc_order_id(self_id, tick, 0));
 
         if have > 0 {
-            let qty = rng.random_range(1u32..=have.min(20));
+            // 10× hacim, ama have çok küçükse 10..=have boş olabilir → min 1.
+            let qty = rng.random_range(1u32..=have.min(200));
             let sell_price = Money::from_cents(
                 reference.as_cents() * moneywar_domain::balance::NPC_SELL_MARKUP_PCT / 100,
             );
@@ -132,7 +133,7 @@ impl NpcBehavior for MarketMaker {
         if player.cash.as_cents() < min_cash_cents {
             return Vec::new();
         }
-        let qty: u32 = rng.random_range(1u32..=10);
+        let qty: u32 = rng.random_range(10u32..=100);
         let buy_price = Money::from_cents(
             reference.as_cents() * moneywar_domain::balance::NPC_BUY_MARKDOWN_PCT / 100,
         );
@@ -214,11 +215,11 @@ fn decide_sanayici(
     for factory in &my_factories {
         let raw = factory.raw_input();
         let have_raw = player.inventory.get(factory.city, raw);
-        if have_raw < 30 {
+        if have_raw < 300 {
             // Az ham var → al. Piyasa fiyatından %5 yüksek (eşleşme şansı için).
             let target = market_or_base(state, factory.city, raw);
             let buy_price = Money::from_cents((target.as_cents() * 105) / 100);
-            let qty = 30u32.saturating_sub(have_raw).min(20);
+            let qty = 300u32.saturating_sub(have_raw).min(200);
             let total = buy_price.as_cents().saturating_mul(i64::from(qty));
             if player.cash.as_cents() >= total {
                 let id = OrderId::new(npc_order_id(pid, tick, seq));
@@ -250,7 +251,7 @@ fn decide_sanayici(
     for (city, product, qty) in finished_entries.into_iter().take(2) {
         let target = market_or_base(state, city, product);
         let sell_price = Money::from_cents((target.as_cents() * 95) / 100);
-        let sell_qty = qty.min(15);
+        let sell_qty = qty.min(150);
         let id = OrderId::new(npc_order_id(pid, tick, seq));
         seq += 1;
         if let Ok(o) = MarketOrder::new_with_ttl(
@@ -349,7 +350,7 @@ fn decide_tuccar(
             // Stok yok — bu şehirde bu ürünü almak için Buy emri.
             let here_price = market_or_base(state, here, product);
             let buy_price = Money::from_cents((here_price.as_cents() * 105) / 100);
-            let qty_target = cap.min(20);
+            let qty_target = cap.min(200);
             let total = buy_price.as_cents().saturating_mul(i64::from(qty_target));
             if player.cash.as_cents() >= total {
                 let id = OrderId::new(npc_order_id(pid, tick, seq));
@@ -420,7 +421,7 @@ fn decide_tuccar(
     for (city, product, qty) in to_sell {
         let target = market_or_base(state, city, product);
         let sell_price = Money::from_cents((target.as_cents() * 105) / 100);
-        let sell_qty = qty.min(15);
+        let sell_qty = qty.min(150);
         let id = OrderId::new(npc_order_id(pid, tick, seq));
         seq += 1;
         if let Ok(o) = MarketOrder::new_with_ttl(
@@ -484,7 +485,7 @@ impl NpcBehavior for AliciNpc {
             // %5-%10 arasında oynayarak fiyat dinamiği verir.
             let premium = rng.random_range(105u32..=110);
             let bid_price = Money::from_cents((market.as_cents() * i64::from(premium)) / 100);
-            let qty: u32 = rng.random_range(10u32..=25);
+            let qty: u32 = rng.random_range(100u32..=250);
             let total = bid_price.as_cents().saturating_mul(i64::from(qty));
             if player.cash.as_cents() < total {
                 continue;
@@ -563,7 +564,7 @@ impl NpcBehavior for EsnafNpc {
             }
             let market = market_or_base(state, city, product);
             let ask_price = Money::from_cents((market.as_cents() * 102) / 100);
-            let sell_qty = rng.random_range(10u32..=25).min(have);
+            let sell_qty = rng.random_range(100u32..=250).min(have);
             let id = OrderId::new(npc_order_id(self_id, tick, seq));
             if let Ok(o) = MarketOrder::new_with_ttl(
                 id,
@@ -626,7 +627,7 @@ impl NpcBehavior for SpekulatorNpc {
                 let ask_cents = (market_cents * 103) / 100;
                 // Eski 5-15 birim arzı çok azdı; 10-25 birim ile spread
                 // dolulu daha güçlü, sezon-sonu arz çöküşüne dirençli.
-                let qty = have.min(rng.random_range(10u32..=25));
+                let qty = have.min(rng.random_range(100u32..=250));
                 let id = OrderId::new(npc_order_id(self_id, tick, seq));
                 seq += 1;
                 if let Ok(o) = MarketOrder::new_with_ttl(
@@ -646,7 +647,7 @@ impl NpcBehavior for SpekulatorNpc {
 
             // Bid (al) — nakit yetiyorsa
             let bid_cents = (market_cents * 97) / 100;
-            let qty = rng.random_range(10u32..=25);
+            let qty = rng.random_range(100u32..=250);
             let total = bid_cents.saturating_mul(i64::from(qty));
             if player.cash.as_cents() >= total {
                 let id = OrderId::new(npc_order_id(self_id, tick, seq));
