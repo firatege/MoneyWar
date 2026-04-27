@@ -120,9 +120,22 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| render(f, app))?;
 
-        // Auto-sim yalnız Normal mode'da ve overlay yokken.
+        // Auto-sim — Normal mode + "izleme" overlay'leri (DebugLog, MarketIntel,
+        // RecentTrades, NewsInbox, OpenBook, CaravanPanel, Holdings) sırasında
+        // çalışır. Wizard / Command / Help / Info / Startup / GameOver'da durur.
+        let auto_ok = matches!(
+            app.mode,
+            Mode::Normal
+                | Mode::DebugLog { .. }
+                | Mode::MarketIntel
+                | Mode::RecentTrades
+                | Mode::NewsInbox
+                | Mode::OpenBook
+                | Mode::CaravanPanel
+                | Mode::Holdings
+        );
         if app.auto_sim
-            && matches!(app.mode, Mode::Normal)
+            && auto_ok
             && last_auto_tick.elapsed() >= Duration::from_millis(300)
         {
             app.step_one_tick();
@@ -3768,15 +3781,15 @@ fn render_debug_log_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, s
                 })
                 .unwrap_or_else(|| "system".into());
             let event_color = debug_event_color(&entry.event);
-            let event_debug = format!("{:?}", entry.event);
-            // Event debug çok uzun olabilir — inner.width'e göre kısalt.
+            let event_pretty = format_log_event(&entry.event, &app.state);
+            // Çok uzunsa inner.width'e göre kısalt.
             let max_width = (inner.width as usize).saturating_sub(32).max(40);
-            let event_str = if event_debug.chars().count() > max_width {
-                let mut out: String = event_debug.chars().take(max_width - 1).collect();
+            let event_str = if event_pretty.chars().count() > max_width {
+                let mut out: String = event_pretty.chars().take(max_width - 1).collect();
                 out.push('…');
                 out
             } else {
-                event_debug
+                event_pretty
             };
 
             lines.push(Line::from(vec![
@@ -3795,6 +3808,206 @@ fn render_debug_log_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, s
 
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });
     f.render_widget(para, inner);
+}
+
+/// `LogEvent` variant'ını insan-okunur Türkçe satıra çevirir. Debug log
+/// overlay'i artık `format!("{:?}", event)` ham çıktı yerine bunu kullanıyor.
+/// Player ID'leri name'e çevrilir, Money/Tick natively format edilir.
+#[allow(clippy::too_many_lines)]
+fn format_log_event(event: &moneywar_engine::LogEvent, state: &GameState) -> String {
+    use moneywar_engine::LogEvent;
+    let name = |pid: PlayerId| -> String {
+        state
+            .players
+            .get(&pid)
+            .map(|p| truncate_str(&p.name, 18))
+            .unwrap_or_else(|| format!("#{}", pid.value()))
+    };
+    match event {
+        LogEvent::CommandAccepted { command } => {
+            format!("✓ KOMUT: {}", describe_command_short(command))
+        }
+        LogEvent::CommandRejected { command, reason } => {
+            format!("✗ RED: {} — {reason}", describe_command_short(command))
+        }
+        LogEvent::OrderMatched {
+            city,
+            product,
+            quantity,
+            price,
+            buyer,
+            seller,
+            ..
+        } => format!(
+            "🔄 MATCH {city}/{product} {quantity}×{price}  {} ← {}",
+            name(*buyer),
+            name(*seller)
+        ),
+        LogEvent::MarketCleared {
+            city,
+            product,
+            clearing_price,
+            matched_qty,
+            saturation_qty,
+            ..
+        } => {
+            let price = clearing_price
+                .map(|p| format!("{p}"))
+                .unwrap_or_else(|| "—".into());
+            let sat = if *saturation_qty > 0 {
+                format!(" [doygun {saturation_qty}]")
+            } else {
+                String::new()
+            };
+            format!("📊 CLEAR {city}/{product} qty={matched_qty} @ {price}{sat}")
+        }
+        LogEvent::FillRejected {
+            city,
+            product,
+            quantity,
+            reason,
+            ..
+        } => format!("✗ FILL-REJ {city}/{product} ×{quantity} — {reason}"),
+        LogEvent::OrderExpired {
+            player,
+            city,
+            product,
+            side,
+            leftover_qty,
+            ..
+        } => format!(
+            "⏰ EXPIRE {} {side:?} {city}/{product} kalan={leftover_qty}",
+            name(*player)
+        ),
+        LogEvent::OrderCancelled {
+            player,
+            city,
+            product,
+            side,
+            leftover_qty,
+            penalty,
+            ..
+        } => format!(
+            "↩ CANCEL {} {side:?} {city}/{product} kalan={leftover_qty} ceza={penalty}",
+            name(*player)
+        ),
+        LogEvent::FactoryBuilt {
+            owner,
+            city,
+            product,
+            cost,
+            ..
+        } => format!(
+            "🏭 KUR {} → {city}/{product} (maliyet {cost})",
+            name(*owner)
+        ),
+        LogEvent::ProductionStarted {
+            city,
+            product,
+            units,
+            completion_tick,
+            ..
+        } => format!(
+            "⚙ ÜRT-BAŞ {city}/{product} ×{units} → t{}",
+            completion_tick.value()
+        ),
+        LogEvent::ProductionCompleted {
+            city,
+            product,
+            units,
+            ..
+        } => format!("✨ ÜRT-BİT {city}/{product} +{units}"),
+        LogEvent::FactoryIdle {
+            city, reason, ..
+        } => format!("💤 ATIL fabrika @ {city} — {reason}"),
+        LogEvent::CaravanBought {
+            owner,
+            starting_city,
+            capacity,
+            cost,
+            ..
+        } => format!(
+            "🐪 KERVAN AL {} @ {starting_city} kap={capacity} ({cost})",
+            name(*owner)
+        ),
+        LogEvent::CaravanDispatched {
+            from,
+            to,
+            arrival_tick,
+            cargo_total,
+            ..
+        } => format!(
+            "🚂 DISPATCH {from} → {to} ×{cargo_total} → t{}",
+            arrival_tick.value()
+        ),
+        LogEvent::CaravanArrived {
+            city, cargo_total, ..
+        } => format!("📦 VARDI @ {city} ×{cargo_total}"),
+        LogEvent::ContractProposed {
+            seller,
+            product,
+            quantity,
+            unit_price,
+            delivery_city,
+            delivery_tick,
+            ..
+        } => format!(
+            "📜 KONTRAT teklif {} {quantity}×{product} @ {unit_price} → {delivery_city} t{}",
+            name(*seller),
+            delivery_tick.value()
+        ),
+        LogEvent::ContractAccepted { acceptor, .. } => {
+            format!("✅ KONTRAT kabul {}", name(*acceptor))
+        }
+        LogEvent::ContractCancelled { seller, .. } => {
+            format!("↩ KONTRAT iptal {}", name(*seller))
+        }
+        LogEvent::ContractSettled { final_state, .. } => match final_state {
+            moneywar_domain::ContractState::Fulfilled => "✅ KONTRAT teslim edildi".into(),
+            moneywar_domain::ContractState::Breached { .. } => "⚠ KONTRAT BREACH".into(),
+            other => format!("📜 KONTRAT {other:?}"),
+        },
+        LogEvent::LoanTaken {
+            borrower,
+            principal,
+            due_tick,
+            total_due,
+            ..
+        } => format!(
+            "💰 KREDİ {} aldı {principal} → t{} (geri ödeme {total_due})",
+            name(*borrower),
+            due_tick.value()
+        ),
+        LogEvent::LoanRepaid {
+            borrower,
+            amount_paid,
+            on_time,
+            ..
+        } => format!(
+            "💳 KREDİ ödendi {} {amount_paid}{}",
+            name(*borrower),
+            if *on_time { "" } else { " [vade aşıldı]" }
+        ),
+        LogEvent::LoanDefaulted {
+            borrower,
+            seized,
+            unpaid_balance,
+            ..
+        } => format!(
+            "🔥 DEFAULT {} çekildi={seized} silinen={unpaid_balance}",
+            name(*borrower)
+        ),
+        LogEvent::NewsSubscribed { player, tier, cost } => {
+            format!("📰 ABONELİK {} → {tier} ({cost})", name(*player))
+        }
+        LogEvent::EventScheduled {
+            game_event,
+            event_tick,
+            ..
+        } => format!("🎲 OLAY t{}: {}", event_tick.value(), format_event(game_event)),
+        // _ => match'ini #[non_exhaustive] enum için tutuyoruz.
+        _ => format!("{event:?}"),
+    }
 }
 
 fn debug_event_color(event: &moneywar_engine::LogEvent) -> Color {
