@@ -6,8 +6,8 @@
 //! clearing) beklenen sıra ile işliyor.
 
 use moneywar_domain::{
-    CityId, Command, GameState, MarketOrder, Money, NpcKind, OrderId, OrderSide, Player, PlayerId,
-    ProductKind, Role, RoomConfig, RoomId, Tick,
+    CityId, Command, GameState, MarketOrder, Money, NpcKind, OrderId, OrderSide, Personality,
+    Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{advance_tick, rng_for};
 use moneywar_npc::{Difficulty, decide_all_npcs};
@@ -255,6 +255,55 @@ fn liquidity_smoke_twenty_ticks_produces_matches() {
 // Cooldown correctness — aynı (player, city, product) için TTL=1 emir
 // bittikten sonra ardışık tick'te yeni emir reddedilmeli.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// FuzzyExpert smoke — DSS NPC'leri 30 tick crash etmiyor ve emir üretiyor.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fuzzy_expert_runs_without_crash_and_produces_commands() {
+    let mut state = seed_with_composition();
+    // 4 NPC'ye DSS personality'si ata
+    let archetypes = [
+        Personality::Aggressive,
+        Personality::Arbitrageur,
+        Personality::Hoarder,
+        Personality::EventTrader,
+    ];
+    let pids: Vec<PlayerId> = state
+        .players
+        .iter()
+        .filter(|(_, p)| {
+            matches!(
+                p.npc_kind,
+                Some(NpcKind::Sanayici) | Some(NpcKind::Tuccar)
+            )
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for (i, pid) in pids.iter().enumerate() {
+        let p = archetypes[i % archetypes.len()];
+        if let Some(player) = state.players.get_mut(pid) {
+            player.personality = Some(p);
+        }
+    }
+
+    let mut total_dss_commands = 0;
+    for t in 1..=30u32 {
+        let mut npc_rng = rng_for(state.room_id, Tick::new(t));
+        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Expert);
+        total_dss_commands += cmds.len();
+        let (new_state, _report) = advance_tick(&state, &cmds).expect("advance");
+        state = new_state;
+    }
+    // 30 tick'te DSS NPC'leri en az birkaç komut üretmeli.
+    assert!(
+        total_dss_commands > 10,
+        "FuzzyExpert NPC'leri sessiz: {total_dss_commands} komut"
+    );
+    // State sağlam.
+    assert_eq!(state.current_tick, Tick::new(30));
+}
 
 #[test]
 fn relist_cooldown_rejects_immediate_resubmit() {

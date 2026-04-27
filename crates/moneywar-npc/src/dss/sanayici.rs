@@ -23,7 +23,8 @@ use moneywar_domain::{
 use rand_chacha::ChaCha8Rng;
 
 use crate::dss::inputs::{
-    arbitrage_signal, competition_signal, event_signal, money_lira, price_momentum, price_ratio,
+    arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
+    money_lira, pending_event_signal, price_momentum, price_ratio,
 };
 use crate::dss::weights_for;
 use moneywar_domain::Personality;
@@ -87,7 +88,9 @@ pub fn decide_sanayici_dss(
                     urgency: 0.0, // Kuruluş aciliyet hissetmez
                     momentum: price_momentum(state, city, product),
                     arbitrage: arbitrage_signal(state, product),
-                    event: event_signal(state, city, product),
+                    event: (event_signal(state, city, product)
+    + pending_event_signal(state, pid, city, product))
+    .min(1.0),
                     hold_pressure: 0.7, // fabrika uzun-vadeli stoklar
                 };
                 let score = score_action(action, weights);
@@ -136,7 +139,9 @@ pub fn decide_sanayici_dss(
             urgency: if have < 10 { 0.9 } else { 0.5 },
             momentum: price_momentum(state, factory.city, raw),
             arbitrage: arbitrage_signal(state, raw),
-            event: event_signal(state, factory.city, raw),
+            event: (event_signal(state, factory.city, raw)
+    + pending_event_signal(state, pid, factory.city, raw))
+    .min(1.0),
             hold_pressure: 0.4,
         };
         let score = score_action(action, weights);
@@ -184,7 +189,9 @@ pub fn decide_sanayici_dss(
             urgency: 0.5,
             momentum: price_momentum(state, city, product),
             arbitrage: arbitrage_signal(state, product),
-            event: event_signal(state, city, product),
+            event: (event_signal(state, city, product)
+    + pending_event_signal(state, pid, city, product))
+    .min(1.0),
             hold_pressure: 0.0, // satınca rahatlama
         };
         let score = score_action(action, weights);
@@ -205,6 +212,24 @@ pub fn decide_sanayici_dss(
         }
     }
 
+    // Adaptive difficulty: insan lider ise (>1.5×) NPC'ler agresifleşir.
+    let human_id = find_human(state);
+    let lead_boost = human_id
+        .map(|hid| (human_lead_ratio(state, hid) - 1.0).clamp(0.0, 2.0))
+        .unwrap_or(0.0);
+
+    // Bandwagon (cluster): post-process scored — aynı arketipli NPC'lerin
+    // aktif emirlerine bias ekle.
+    for (cmd, score) in scored.iter_mut() {
+        // Adaptive boost
+        *score *= 1.0 + lead_boost * 0.3;
+        // Cluster signal — aksiyonun (city, product)'unu çıkar
+        if let Some((city, product)) = cmd_target_bucket(cmd) {
+            let cs = cluster_signal(state, pid, personality, city, product);
+            *score *= 1.0 + cs * 0.15;
+        }
+    }
+
     // Top-K sırala (skor desc, deterministik tie-break Cmd debug-strı ile)
     scored.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
@@ -212,6 +237,25 @@ pub fn decide_sanayici_dss(
             .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
     });
     scored.into_iter().take(TOP_K).map(|(c, _)| c).collect()
+}
+
+/// State'te insan oyuncuyu bulur — `is_npc=false`. `decide_all_npcs`
+/// adaptive difficulty hesabı için ihtiyaç duyar.
+fn find_human(state: &GameState) -> Option<PlayerId> {
+    state
+        .players
+        .iter()
+        .find(|(_, p)| !p.is_npc)
+        .map(|(id, _)| *id)
+}
+
+/// Komutun hedef (city, product)'u — cluster signal için.
+fn cmd_target_bucket(cmd: &Command) -> Option<(CityId, ProductKind)> {
+    match cmd {
+        Command::SubmitOrder(order) => Some((order.city, order.product)),
+        Command::BuildFactory { city, product, .. } => Some((*city, *product)),
+        _ => None,
+    }
 }
 
 /// NPC DSS order ID — `NPC_ORDER_ID_OFFSET + (tick × 100k) + (pid × 100) + seq`.

@@ -1291,6 +1291,7 @@ fn seed_world(
 
     // NPC-Tüccar(lar) — arbitraj + likidite. Sezon başında seed RNG'den
     // bir personality atanır (Difficulty::Expert için DSS davranışı kullanılır).
+    // EventTrader otomatik Gold tier abone — pre-positioning için.
     for _ in 0..composition.tuccar {
         let name = pick_npc_name(&mut rng, NpcKind::Tuccar, &mut used_names);
         let personality = Personality::ALL[rng.random_range(0..Personality::ALL.len())];
@@ -1305,7 +1306,11 @@ fn seed_world(
         .with_kind(NpcKind::Tuccar)
         .with_personality(personality);
         distribute_inventory(&mut npc, &mut rng, 500);
-        s.players.insert(npc.id, npc);
+        let npc_id = npc.id;
+        s.players.insert(npc_id, npc);
+        if matches!(personality, Personality::EventTrader) {
+            s.news_subscriptions.insert(npc_id, NewsTier::Gold);
+        }
         next_id += 1;
     }
 
@@ -1325,6 +1330,9 @@ fn seed_world(
         .unwrap()
         .with_kind(NpcKind::Sanayici)
         .with_personality(personality);
+        // EventTrader sanayici de Gold tier — pre-positioning'le ham stoklar.
+        // (Insertion sonrası — npc.id kullanmak için.)
+        let _et_sanayici = matches!(personality, Personality::EventTrader);
         let city_idx = rng.random_range(0usize..CityId::ALL.len());
         let starter_city = CityId::ALL[city_idx];
         // Raw starter: 30-50 birim, ürün şehrin **bu sezonki** ucuz hamı.
@@ -1339,7 +1347,11 @@ fn seed_world(
             ProductKind::FINISHED_GOODS[finished_idx],
             fin_qty,
         );
-        s.players.insert(npc.id, npc);
+        let npc_id = npc.id;
+        s.players.insert(npc_id, npc);
+        if _et_sanayici {
+            s.news_subscriptions.insert(npc_id, NewsTier::Gold);
+        }
         next_id += 1;
     }
 
@@ -5290,6 +5302,10 @@ fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
     let raw_name = player
         .map(|p| p.name.clone())
         .unwrap_or_else(|| format!("{}", sc.player_id));
+    // Personality emoji — NPC'lerde görünür ipucu (DSS modunda farklılık).
+    let personality_emoji = player
+        .and_then(|p| p.personality)
+        .map_or("", Personality::emoji);
     let medal = match idx {
         0 => "🥇",
         1 => "🥈",
@@ -5327,8 +5343,13 @@ fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
         let rounded = Money::from_lira(rounded_lira).unwrap_or(Money::ZERO);
         format!("~{}", compact_money(rounded))
     };
+    let name_with_emoji = if personality_emoji.is_empty() {
+        raw_name
+    } else {
+        format!("{personality_emoji}{raw_name}")
+    };
     Span::styled(
-        format!("{medal} {raw_name} [{role_label}] {score_label}"),
+        format!("{medal} {name_with_emoji} [{role_label}] {score_label}"),
         style,
     )
 }

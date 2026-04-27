@@ -76,6 +76,57 @@ pub fn event_signal(state: &GameState, city: CityId, product: ProductKind) -> f6
         .clamp(0.0, 1.0)
 }
 
+/// **Pending event** sinyali — oyuncunun news_inbox'ında gelecek olay var mı?
+/// Gold tier abone NPC'ler 2 tick önceden bilir. Bu sinyali pre-positioning
+/// için kullanırlar (event_tick gelmeden ham/finished pozisyon al).
+///
+/// `[0.0, 1.0]` — event ne kadar yakın × ne kadar büyük şiddetli (severity).
+/// Hiç pending yok → 0.0.
+#[must_use]
+pub fn pending_event_signal(
+    state: &GameState,
+    pid: moneywar_domain::PlayerId,
+    city: CityId,
+    product: ProductKind,
+) -> f64 {
+    let Some(inbox) = state.news_inbox.get(&pid) else {
+        return 0.0;
+    };
+    let current = state.current_tick.value();
+    let mut max_signal: f64 = 0.0;
+    for item in inbox {
+        // disclosed_tick geçmemişse henüz görünmüyor
+        if current < item.disclosed_tick.value() {
+            continue;
+        }
+        // event_tick gelmediyse "pending"
+        if current >= item.event_tick.value() {
+            continue;
+        }
+        // Bu (city, product) için mi?
+        let cities = item.event.affected_cities();
+        let event_product = item.event.affected_product();
+        let matches_city = cities.contains(&city);
+        let matches_product = event_product == Some(product) || event_product.is_none();
+        if !matches_city || !matches_product {
+            continue;
+        }
+        // Yakınlık: 1 tick kalmış → 1.0, 2 tick → 0.5
+        let ticks_until = item.event_tick.value().saturating_sub(current);
+        let proximity = 1.0 / f64::from(ticks_until.max(1));
+        // Severity etkisi
+        let severity = item
+            .event
+            .severity()
+            .map_or(0.5, |s| f64::from(s.nominal_shock_percent()) / 100.0);
+        let combined = (proximity * (1.0 + severity)).clamp(0.0, 1.0);
+        if combined > max_signal {
+            max_signal = combined;
+        }
+    }
+    max_signal
+}
+
 /// `current_price / fair_value` oranı — `[0.0, 2.0+]` aralığında.
 /// Centered around 1.0 (adil fiyat). `> 1` pahalı, `< 1` ucuz.
 #[must_use]
@@ -109,4 +160,88 @@ pub fn competition_signal(state: &GameState, city: CityId, product: ProductKind)
 #[must_use]
 pub fn money_lira(m: Money) -> f64 {
     (m.as_cents() as f64) / 100.0
+}
+
+/// Adaptive difficulty / catch-up: insan oyuncunun NPC ortalamasına göre
+/// ne kadar lider. > 1.0 = lider (NPC'ler agresifleşmeli), 0..1 = geride.
+///
+/// İnsan score / NPC ortalama. Insan yoksa 1.0 (nötr).
+#[must_use]
+pub fn human_lead_ratio(
+    state: &GameState,
+    human_id: moneywar_domain::PlayerId,
+) -> f64 {
+    use crate::dss::inputs::money_lira;
+    let human_score = state
+        .players
+        .get(&human_id)
+        .map(|p| money_lira(p.cash) + p.inventory.total_units() as f64 * 5.0)
+        .unwrap_or(0.0);
+    let mut npc_scores: Vec<f64> = state
+        .players
+        .iter()
+        .filter_map(|(id, p)| {
+            if *id == human_id || !p.is_npc {
+                return None;
+            }
+            // Sadece rakip NPC'leri (Sanayici/Tüccar)
+            match p.npc_kind {
+                Some(moneywar_domain::NpcKind::Tuccar)
+                | Some(moneywar_domain::NpcKind::Sanayici) => Some(
+                    money_lira(p.cash) + p.inventory.total_units() as f64 * 5.0,
+                ),
+                _ => None,
+            }
+        })
+        .collect();
+    if npc_scores.is_empty() {
+        return 1.0;
+    }
+    npc_scores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let avg = npc_scores.iter().sum::<f64>() / npc_scores.len() as f64;
+    if avg <= 0.0 {
+        return 1.0;
+    }
+    (human_score / avg).clamp(0.0, 5.0)
+}
+
+/// Aynı arketipli diğer NPC'lerin son tick'te aktif emir sayısı (cluster
+/// signal). Bandwagon davranışı için: aynı arketip aynı (city, product)'a
+/// yığılırsa cluster büyür.
+#[must_use]
+pub fn cluster_signal(
+    state: &GameState,
+    self_id: moneywar_domain::PlayerId,
+    personality: moneywar_domain::Personality,
+    city: CityId,
+    product: ProductKind,
+) -> f64 {
+    let same_archetype_ids: Vec<_> = state
+        .players
+        .iter()
+        .filter_map(|(id, p)| {
+            if *id == self_id {
+                return None;
+            }
+            if p.personality == Some(personality) {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if same_archetype_ids.is_empty() {
+        return 0.0;
+    }
+    let total: u32 = state
+        .order_book
+        .get(&(city, product))
+        .map_or(0, |orders| {
+            orders
+                .iter()
+                .filter(|o| same_archetype_ids.contains(&o.player))
+                .map(|o| o.quantity)
+                .sum()
+        });
+    (f64::from(total) / 100.0).clamp(0.0, 1.0)
 }

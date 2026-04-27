@@ -21,7 +21,8 @@ use moneywar_domain::{
 use rand_chacha::ChaCha8Rng;
 
 use crate::dss::inputs::{
-    arbitrage_signal, competition_signal, event_signal, money_lira, price_momentum,
+    arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
+    money_lira, pending_event_signal, price_momentum,
 };
 use crate::dss::weights_for;
 use moneywar_domain::Personality;
@@ -125,7 +126,9 @@ pub fn decide_tuccar_dss(
                     urgency: 0.6,
                     momentum: price_momentum(state, to, product),
                     arbitrage: arbitrage_signal(state, product),
-                    event: event_signal(state, to, product),
+                    event: (event_signal(state, to, product)
+    + pending_event_signal(state, pid, to, product))
+    .min(1.0),
                     hold_pressure: f64::from(distance) / 5.0, // uzun rota = uzun bekleme
                 };
                 let score = score_action(action, weights);
@@ -166,7 +169,9 @@ pub fn decide_tuccar_dss(
             urgency: 0.5,
             momentum: price_momentum(state, *city, *product),
             arbitrage: arbitrage_signal(state, *product),
-            event: event_signal(state, *city, *product),
+            event: (event_signal(state, *city, *product)
+    + pending_event_signal(state, pid, *city, *product))
+    .min(1.0),
             hold_pressure: 0.0,
         };
         let score = score_action(action, weights);
@@ -187,6 +192,20 @@ pub fn decide_tuccar_dss(
         }
     }
 
+    // Adaptive difficulty + cluster post-process
+    let human_id = find_human(state);
+    let lead_boost = human_id
+        .map(|hid| (human_lead_ratio(state, hid) - 1.0).clamp(0.0, 2.0))
+        .unwrap_or(0.0);
+
+    for (cmd, score) in scored.iter_mut() {
+        *score *= 1.0 + lead_boost * 0.3;
+        if let Some((city, product)) = cmd_target_bucket(cmd) {
+            let cs = cluster_signal(state, pid, personality, city, product);
+            *score *= 1.0 + cs * 0.15;
+        }
+    }
+
     // Top-K sırala — deterministic tie-break Debug str ile
     scored.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
@@ -194,6 +213,24 @@ pub fn decide_tuccar_dss(
             .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
     });
     scored.into_iter().take(TOP_K).map(|(c, _)| c).collect()
+}
+
+fn find_human(state: &GameState) -> Option<PlayerId> {
+    state
+        .players
+        .iter()
+        .find(|(_, p)| !p.is_npc)
+        .map(|(id, _)| *id)
+}
+
+fn cmd_target_bucket(cmd: &Command) -> Option<(CityId, ProductKind)> {
+    match cmd {
+        Command::SubmitOrder(order) => Some((order.city, order.product)),
+        Command::DispatchCaravan { to, cargo, .. } => {
+            cargo.entries().next().map(|(p, _)| (*to, p))
+        }
+        _ => None,
+    }
 }
 
 fn npc_dss_order_id(player_id: PlayerId, tick: Tick, seq: u32) -> u64 {
