@@ -291,15 +291,11 @@ fn decide_tuccar(
     // edilebilir. 3+ kervan zarar ekonomisi (eski 4 cap → -10K Tüccar).
     let caravan_count = u32::try_from(state.caravans.values().filter(|c| c.owner == pid).count())
         .unwrap_or(u32::MAX);
-    if caravan_count == 0 {
-        cmds.push(Command::BuyCaravan {
-            owner: pid,
-            starting_city: pick_city(rng),
-        });
-    } else if caravan_count < 2
-        && player.cash >= moneywar_domain::Caravan::buy_cost(Role::Tuccar, caravan_count)
-        && rng.random_ratio(1, 4)
-    {
+    let buy_caravan = caravan_count == 0
+        || (caravan_count < 2
+            && player.cash >= moneywar_domain::Caravan::buy_cost(Role::Tuccar, caravan_count)
+            && rng.random_ratio(1, 4));
+    if buy_caravan {
         cmds.push(Command::BuyCaravan {
             owner: pid,
             starting_city: pick_city(rng),

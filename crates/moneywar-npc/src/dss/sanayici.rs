@@ -22,6 +22,7 @@ use moneywar_domain::{
 };
 use rand_chacha::ChaCha8Rng;
 
+use crate::dss::contract::{accept_contract_candidates, propose_contract_candidates};
 use crate::dss::inputs::{
     arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
     money_lira, pending_event_signal, price_momentum, price_ratio,
@@ -217,6 +218,16 @@ pub fn decide_sanayici_dss(
         ) {
             scored.push((Command::SubmitOrder(o), score));
         }
+    }
+
+    // 4. Kontrat adayları — öner + kabul
+    for (cmd, action) in propose_contract_candidates(state, pid, personality, tick) {
+        let score = score_action(action, weights);
+        scored.push((cmd, score));
+    }
+    for (cmd, action) in accept_contract_candidates(state, pid, personality, tick) {
+        let score = score_action(action, weights);
+        scored.push((cmd, score));
     }
 
     // BuildFactory adaylarından sadece **en yüksek utility'li 1 tane** tut.

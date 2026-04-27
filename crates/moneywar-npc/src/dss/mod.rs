@@ -27,6 +27,7 @@
 //! │   parametreleri fuzzy engine ile ayarla.            │
 //! └─────────────────────────────────────────────────────┘
 
+pub mod contract;
 pub mod inputs;
 pub mod personality;
 pub mod sanayici;

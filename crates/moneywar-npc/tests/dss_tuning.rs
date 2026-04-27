@@ -162,6 +162,10 @@ fn run_full_season_with_human_cash(
     let mut total_caravans_bought: u32 = 0;
     let mut total_factories_built: u32 = 0;
     let mut total_events: u32 = 0;
+    let mut total_contracts_proposed: u32 = 0;
+    let mut total_contracts_accepted: u32 = 0;
+    let mut total_contracts_fulfilled: u32 = 0;
+    let mut total_contracts_breached: u32 = 0;
 
     for t in 1..=90u32 {
         let mut npc_rng = rng_for(s.room_id, Tick::new(t));
@@ -176,6 +180,13 @@ fn run_full_season_with_human_cash(
                 LogEvent::CaravanBought { .. } => total_caravans_bought += 1,
                 LogEvent::FactoryBuilt { .. } => total_factories_built += 1,
                 LogEvent::EventScheduled { .. } => total_events += 1,
+                LogEvent::ContractProposed { .. } => total_contracts_proposed += 1,
+                LogEvent::ContractAccepted { .. } => total_contracts_accepted += 1,
+                LogEvent::ContractSettled { final_state, .. } => match final_state {
+                    moneywar_domain::ContractState::Fulfilled => total_contracts_fulfilled += 1,
+                    moneywar_domain::ContractState::Breached { .. } => total_contracts_breached += 1,
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -210,6 +221,10 @@ fn run_full_season_with_human_cash(
         total_caravans_bought,
         total_factories_built,
         total_events,
+        total_contracts_proposed,
+        total_contracts_accepted,
+        total_contracts_fulfilled,
+        total_contracts_breached,
         npc_pnl_by_kind,
         npc_pnl_by_personality,
         leaderboard_top: board
@@ -236,6 +251,10 @@ struct SeasonReport {
     total_caravans_bought: u32,
     total_factories_built: u32,
     total_events: u32,
+    total_contracts_proposed: u32,
+    total_contracts_accepted: u32,
+    total_contracts_fulfilled: u32,
+    total_contracts_breached: u32,
     npc_pnl_by_kind: std::collections::BTreeMap<NpcKind, Vec<f64>>,
     npc_pnl_by_personality: std::collections::BTreeMap<Personality, Vec<f64>>,
     leaderboard_top: Vec<(String, Option<Personality>, Money)>,
@@ -250,6 +269,13 @@ fn print_report(r: &SeasonReport) {
     println!("║  Kervan satın alındı: {}", r.total_caravans_bought);
     println!("║  Fabrika kuruldu:     {}", r.total_factories_built);
     println!("║  Olay sayısı:         {}", r.total_events);
+    println!(
+        "║  Kontrat: {} öneri / {} kabul / {} fulfill / {} breach",
+        r.total_contracts_proposed,
+        r.total_contracts_accepted,
+        r.total_contracts_fulfilled,
+        r.total_contracts_breached
+    );
     println!("╠══════════════════════════════════════════════════╣");
     println!("║  NPC tipine göre ortalama PnL:");
     for (kind, pnls) in &r.npc_pnl_by_kind {
