@@ -100,10 +100,16 @@ pub enum ServerMessage {
 
     /// Lobi durumu — her değişiklikte yayınlanır (oyuncu giriş/çıkış,
     /// rol değiştirme, ready toggle).
-    LobbyState { entries: Vec<LobbyEntry>, host: PlayerId },
+    LobbyState {
+        entries: Vec<LobbyEntry>,
+        host: PlayerId,
+    },
 
     /// Oyun başladı — initial state ve config tüm peer'lara aynı seed ile.
-    GameStart { initial_state: Box<GameState>, tick_ms: u64 },
+    GameStart {
+        initial_state: Box<GameState>,
+        tick_ms: u64,
+    },
 
     /// Tick ilerledi. v0.1.x: full state broadcast (basit, ~5-25 KB).
     /// Sprint 4'te delta + hash check eklenecek.

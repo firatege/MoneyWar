@@ -39,6 +39,7 @@ use std::io::{self, BufWriter, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod chatter;
+mod net_client;
 use chatter::{ChatterEntry, generate_chatter};
 
 use anyhow::Result;
@@ -99,6 +100,12 @@ fn load_balance_config() -> (GameBalance, bool) {
 }
 
 fn main() -> Result<()> {
+    // Sprint 1: --connect <addr> verilirse TUI başlatma, network demo'ya gir.
+    // Bu sprint'te sadece bağlantı/heartbeat doğrulama; gerçek MP TUI Sprint 3'te.
+    if let Some(addr) = parse_connect_arg() {
+        return net_client::run_connect_demo(&addr);
+    }
+
     let (balance, loaded) = load_balance_config();
     let mut app = App::new(balance, loaded);
 
@@ -116,6 +123,20 @@ fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     res
+}
+
+/// `--connect <addr>` veya `--connect=<addr>` argümanını parse et.
+fn parse_connect_arg() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--connect" {
+            return args.next();
+        }
+        if let Some(rest) = arg.strip_prefix("--connect=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
 }
 
 fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {

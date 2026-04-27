@@ -22,10 +22,18 @@ workspace = true
 moneywar-domain.workspace = true
 moneywar-engine.workspace = true
 moneywar-npc.workspace = true
+moneywar-net.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+
+# Network client (Sprint 1+: --connect flag)
+tokio.workspace = true
+tokio-util.workspace = true
+bytes.workspace = true
+futures-util.workspace = true

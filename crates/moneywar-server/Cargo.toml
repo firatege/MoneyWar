@@ -17,3 +17,16 @@ workspace = true
 moneywar-domain.workspace = true
 moneywar-engine.workspace = true
 moneywar-npc.workspace = true
+moneywar-net.workspace = true
+
+# Network runtime
+tokio.workspace = true
+tokio-util.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Misc
+anyhow = "1"
+serde_json.workspace = true
