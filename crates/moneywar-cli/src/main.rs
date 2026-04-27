@@ -2623,8 +2623,6 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
             }
             FieldKind::Product => {
                 // Akıllı liste: rol + wizard kind'a göre filtre + sıralama.
-                // Sanayici Sat → sadece finished, Al → sadece ham; sıralama
-                // stok/fabrika/arbitraj önceliğine göre — ilk satır default.
                 let role = app
                     .state
                     .players
@@ -2639,6 +2637,17 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         format!("{p}")
                     };
                     lines.push(option_line(i + 1, &label, product_color(*p)));
+                }
+                // Ship wizard'da ek seçenek: boş dispatch (sadece kervan yer
+                // değiştirsin). 0 tuşu ya da E (empty) → cargo boş, qty atlanır.
+                if matches!(wizard.kind, ActionKind::Ship) {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "  [0] Boş kervan yolla (mal yüklemeden, sadece yer değiştir)",
+                        Style::default()
+                            .fg(Color::Gray)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
                 }
             }
             FieldKind::FinishedProduct => {
@@ -5573,6 +5582,18 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
         return WizardOutcome::Continue;
     }
     // Seçim alanı — sayı tuşu (1-9) ile seç, **Enter ile ilk seçenek**.
+    // Ship wizard + Product alanı için **0 = boş dispatch** kısayolu:
+    // ürün seçmeden direkt komutu kur (cargo boş, kervan yer değiştirir).
+    if matches!(wizard.kind, ActionKind::Ship)
+        && matches!(field, FieldKind::Product)
+        && matches!(code, KeyCode::Char('0'))
+    {
+        // Ürün ve qty alanlarını bypass et — boş cargo ile build et.
+        return match build_command_from_wizard(app, wizard) {
+            Ok(cmd) => WizardOutcome::Submitted(cmd),
+            Err(e) => WizardOutcome::Error(e),
+        };
+    }
     let idx = match code {
         KeyCode::Char(c) => {
             let Some(d) = c.to_digit(10) else {
@@ -5737,9 +5758,10 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
                 let qty32 = u32::try_from(*qty).map_err(|_| "miktar çok büyük")?;
                 cargo.add(*product, qty32).map_err(|e| format!("{e}"))?;
             }
-            if cargo.is_empty() {
-                return Err("en az 1 ürün yüklemen lazım".into());
-            }
+            // cargo boş olabilir — kervan boş yer değiştirir (sadece taşıma).
+            // Engine'de validation yok, sadece envanter kontrolü cargo varsa
+            // çalışıyor. Yararlı: oyuncu boş kervanı malların olduğu şehre
+            // götürmek için.
             Ok(Command::DispatchCaravan {
                 caravan_id: cid,
                 from,
