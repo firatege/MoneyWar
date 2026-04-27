@@ -33,5 +33,6 @@ pub mod sanayici;
 pub mod tuccar;
 pub mod utility;
 
-pub use personality::Personality;
+pub use moneywar_domain::Personality;
+pub use personality::{Weights, weights_for};
 pub use utility::{ActionCandidate, score_action};

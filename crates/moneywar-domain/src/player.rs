@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CityId, DomainError, Money, PlayerId, ProductKind};
+use crate::{CityId, DomainError, Money, Personality, PlayerId, ProductKind};
 
 /// Oyuncunun mesleği. Sezon içinde değişmez.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -174,6 +174,11 @@ pub struct Player {
     /// `serde(default)` ile geriye uyumlu (eski save dosyaları None alır).
     #[serde(default)]
     pub npc_kind: Option<NpcKind>,
+    /// NPC strateji arketipi (Aggressive/Hoarder/Arbitrageur vb).
+    /// `None` → klasik MarketMaker/SmartTrader davranışı, `Some` → DSS.
+    /// Sezon başında seed RNG ile atanır, sezon boyu sabit.
+    #[serde(default)]
+    pub personality: Option<Personality>,
 }
 
 impl Player {
@@ -202,7 +207,15 @@ impl Player {
             inventory: Inventory::new(),
             is_npc,
             npc_kind: None,
+            personality: None,
         })
+    }
+
+    /// Builder-style: NPC strateji arketipini set eder.
+    #[must_use]
+    pub fn with_personality(mut self, personality: Personality) -> Self {
+        self.personality = Some(personality);
+        self
     }
 
     /// Builder-style: NPC alt-türünü set eder. İnsan oyuncuda çağrılmaz.

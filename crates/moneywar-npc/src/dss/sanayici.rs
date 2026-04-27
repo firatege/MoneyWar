@@ -25,7 +25,8 @@ use rand_chacha::ChaCha8Rng;
 use crate::dss::inputs::{
     arbitrage_signal, competition_signal, event_signal, money_lira, price_momentum, price_ratio,
 };
-use crate::dss::personality::Personality;
+use crate::dss::weights_for;
+use moneywar_domain::Personality;
 use crate::dss::utility::{ActionCandidate, score_action};
 
 const TOP_K: usize = 3;
@@ -42,7 +43,7 @@ pub fn decide_sanayici_dss(
     let Some(player) = state.players.get(&pid) else {
         return Vec::new();
     };
-    let weights = personality.weights();
+    let weights = weights_for(personality);
     let ttl = state.config.balance.default_order_ttl;
 
     let factory_count = state

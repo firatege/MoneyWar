@@ -45,6 +45,10 @@ pub enum Difficulty {
     Easy,
     /// Akıllı NPC — role göre fabrika/kervan kullanır, multi-emir verir.
     Hard,
+    /// DSS NPC — kişilik arketipi + utility AI ile gerçek strateji.
+    /// 7 farklı archetype (Aggressive/TrendFollower/MeanReverter/Arbitrageur/
+    /// EventTrader/Hoarder/Cartel) seed RNG ile NPC'lere atanır.
+    Expert,
 }
 
 impl Difficulty {
@@ -53,13 +57,15 @@ impl Difficulty {
         match self {
             Self::Easy => "Easy (basit likidite)",
             Self::Hard => "Hard (akıllı NPC, rekabetçi)",
+            Self::Expert => "Expert (DSS kişilikli AI)",
         }
     }
     #[must_use]
     pub fn next(self) -> Self {
         match self {
             Self::Easy => Self::Hard,
-            Self::Hard => Self::Easy,
+            Self::Hard => Self::Expert,
+            Self::Expert => Self::Easy,
         }
     }
 }
@@ -701,16 +707,27 @@ pub fn decide_all_npcs(
     let mut cmds = Vec::new();
     for pid in npc_ids {
         // Dispatch — player.npc_kind structural ayrımına göre. Set edilmemiş
-        // (None) NPC'ler `Difficulty`'ye göre genel `MarketMaker`/`SmartTrader`'a düşer.
-        let kind = state.players.get(&pid).and_then(|p| p.npc_kind);
+        // (None) NPC'ler `Difficulty`'ye göre genel davranışa düşer.
+        let player = state.players.get(&pid);
+        let kind = player.and_then(|p| p.npc_kind);
+        let personality = player.and_then(|p| p.personality);
         let next: Vec<Command> = match kind {
             Some(NpcKind::Alici) => AliciNpc.decide(state, pid, rng, tick),
             Some(NpcKind::Esnaf) => EsnafNpc.decide(state, pid, rng, tick),
             Some(NpcKind::Spekulator) => SpekulatorNpc.decide(state, pid, rng, tick),
-            // Sanayici / Tüccar / None → zorluğa göre.
-            _ => match difficulty {
-                Difficulty::Easy => MarketMaker.decide(state, pid, rng, tick),
-                Difficulty::Hard => SmartTrader.decide(state, pid, rng, tick),
+            // Sanayici / Tüccar → role-aware. Expert'te DSS, Hard'da SmartTrader,
+            // Easy'de MarketMaker. Expert için personality lazım (yoksa SmartTrader fallback).
+            _ => match (difficulty, personality, player.map(|p| p.role)) {
+                (Difficulty::Expert, Some(p), Some(Role::Sanayici)) => {
+                    crate::dss::sanayici::decide_sanayici_dss(state, pid, p, rng, tick)
+                }
+                (Difficulty::Expert, Some(p), Some(Role::Tuccar)) => {
+                    crate::dss::tuccar::decide_tuccar_dss(state, pid, p, rng, tick)
+                }
+                (Difficulty::Hard, _, _) | (Difficulty::Expert, None, _) => {
+                    SmartTrader.decide(state, pid, rng, tick)
+                }
+                _ => MarketMaker.decide(state, pid, rng, tick),
             },
         };
         cmds.extend(next);

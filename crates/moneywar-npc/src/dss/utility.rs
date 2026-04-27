@@ -19,7 +19,7 @@
 //! Tüm sinyaller `[-1, 1]` veya `[0, 1]` aralığında normalize. Profit ve
 //! capital lira cinsinden — büyük yatırımlar daha çok ağırlık alır.
 
-use crate::dss::personality::Weights;
+use crate::dss::Weights;
 
 /// Bir aksiyon adayı — utility hesabı için gereken tüm sinyaller.
 ///
@@ -89,11 +89,12 @@ pub fn score_action(action: ActionCandidate, weights: Weights) -> f64 {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
-    use crate::dss::personality::Personality;
+    use crate::dss::weights_for;
+    use moneywar_domain::Personality;
 
     #[test]
     fn zero_action_zero_score() {
-        let s = score_action(ActionCandidate::zero(), Personality::Aggressive.weights());
+        let s = score_action(ActionCandidate::zero(), weights_for(Personality::Aggressive));
         assert_eq!(s, 0.0);
     }
 
@@ -105,8 +106,8 @@ mod tests {
             risk: 0.8,
             ..ActionCandidate::zero()
         };
-        let aggro = score_action(high_risk_high_profit, Personality::Aggressive.weights());
-        let hoarder = score_action(high_risk_high_profit, Personality::Hoarder.weights());
+        let aggro = score_action(high_risk_high_profit, weights_for(Personality::Aggressive));
+        let hoarder = score_action(high_risk_high_profit, weights_for(Personality::Hoarder));
         assert!(
             aggro > hoarder,
             "Aggressive yüksek-risk-yüksek-kar aksiyonu Hoarder'dan daha çok sevmeli (aggro={aggro}, hoarder={hoarder})"
@@ -122,8 +123,8 @@ mod tests {
             arbitrage: 0.9,
             ..ActionCandidate::zero()
         };
-        let arb = score_action(arb_action, Personality::Arbitrageur.weights());
-        let cartel = score_action(arb_action, Personality::Cartel.weights());
+        let arb = score_action(arb_action, weights_for(Personality::Arbitrageur));
+        let cartel = score_action(arb_action, weights_for(Personality::Cartel));
         assert!(arb > cartel, "Arbitrageur arbitraj sinyaline daha duyarlı");
     }
 
@@ -133,8 +134,8 @@ mod tests {
             momentum: 0.8,
             ..ActionCandidate::zero()
         };
-        let mr = score_action(trend_up, Personality::MeanReverter.weights());
-        let tf = score_action(trend_up, Personality::TrendFollower.weights());
+        let mr = score_action(trend_up, weights_for(Personality::MeanReverter));
+        let tf = score_action(trend_up, weights_for(Personality::TrendFollower));
         assert!(tf > mr);
         assert!(mr < 0.0, "Mean Reverter pozitif momentum'a negatif tepki");
     }
@@ -145,8 +146,8 @@ mod tests {
             event: 1.0,
             ..ActionCandidate::zero()
         };
-        let et = score_action(event_action, Personality::EventTrader.weights());
-        let hoarder = score_action(event_action, Personality::Hoarder.weights());
+        let et = score_action(event_action, weights_for(Personality::EventTrader));
+        let hoarder = score_action(event_action, weights_for(Personality::Hoarder));
         assert!(et > hoarder);
     }
 
@@ -157,8 +158,8 @@ mod tests {
             hold_pressure: 0.9,
             ..ActionCandidate::zero()
         };
-        let h = score_action(hold_action, Personality::Hoarder.weights());
-        let agg = score_action(hold_action, Personality::Aggressive.weights());
+        let h = score_action(hold_action, weights_for(Personality::Hoarder));
+        let agg = score_action(hold_action, weights_for(Personality::Aggressive));
         // Hoarder'in patience yüksek olduğu için negatif çarpan büyük; ama
         // patience aslında hold_pressure'ı **cezalandırıyor** — yeniden
         // düşün. Hoarder hold_pressure'a tolerans göstermeli — patience
@@ -178,8 +179,8 @@ mod tests {
             event: 0.0,
             hold_pressure: 0.2,
         };
-        let s1 = score_action(action, Personality::Aggressive.weights());
-        let s2 = score_action(action, Personality::Aggressive.weights());
+        let s1 = score_action(action, weights_for(Personality::Aggressive));
+        let s2 = score_action(action, weights_for(Personality::Aggressive));
         assert_eq!(s1, s2);
     }
 }

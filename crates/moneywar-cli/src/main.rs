@@ -45,7 +45,7 @@ use crossterm::terminal::{
 };
 use moneywar_domain::{
     CityId, Command, GameBalance, GameState, MarketOrder, Money, NewsItem, NewsTier, NpcKind,
-    OrderId, OrderSide, Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
+    OrderId, OrderSide, Personality, Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{LogEvent, PlayerScore, advance_tick, leaderboard, rng_for, score_player};
 use moneywar_npc::{Difficulty, decide_all_npcs};
@@ -1289,11 +1289,11 @@ fn seed_world(
     // NPC ID ofseti: 100, 101, 102, ... Her tip için ardışık.
     let mut next_id: u64 = 100;
 
-    // NPC-Tüccar(lar) — arbitraj + likidite. Toplam 500 birim stok
-    // weighted random olarak 21 bucket'a dağıtılır (bazı NPC belirli bir
-    // ürün/şehirde "specialist" olur). Dumping olmasın diye sabit budget.
+    // NPC-Tüccar(lar) — arbitraj + likidite. Sezon başında seed RNG'den
+    // bir personality atanır (Difficulty::Expert için DSS davranışı kullanılır).
     for _ in 0..composition.tuccar {
         let name = pick_npc_name(&mut rng, NpcKind::Tuccar, &mut used_names);
+        let personality = Personality::ALL[rng.random_range(0..Personality::ALL.len())];
         let mut npc = Player::new(
             PlayerId::new(next_id),
             name,
@@ -1302,7 +1302,8 @@ fn seed_world(
             true,
         )
         .unwrap()
-        .with_kind(NpcKind::Tuccar);
+        .with_kind(NpcKind::Tuccar)
+        .with_personality(personality);
         distribute_inventory(&mut npc, &mut rng, 500);
         s.players.insert(npc.id, npc);
         next_id += 1;
@@ -1313,6 +1314,7 @@ fn seed_world(
     // t1'de fabrika kurdugunda raw stoğu var, hemen üretime başlayabilir.
     for _ in 0..composition.sanayici {
         let name = pick_npc_name(&mut rng, NpcKind::Sanayici, &mut used_names);
+        let personality = Personality::ALL[rng.random_range(0..Personality::ALL.len())];
         let mut npc = Player::new(
             PlayerId::new(next_id),
             name,
@@ -1321,7 +1323,8 @@ fn seed_world(
             true,
         )
         .unwrap()
-        .with_kind(NpcKind::Sanayici);
+        .with_kind(NpcKind::Sanayici)
+        .with_personality(personality);
         let city_idx = rng.random_range(0usize..CityId::ALL.len());
         let starter_city = CityId::ALL[city_idx];
         // Raw starter: 30-50 birim, ürün şehrin **bu sezonki** ucuz hamı.
