@@ -17,8 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Versiyonu Cargo.toml MSRV (1.85) ile sabit tut — `@stable` kullanırsak
+      # CI runner'ı her gün yeni stable çekip rustfmt/clippy kurallarında
+      # sürpriz farklar üretiyor (bkz. fmt diff'leri).
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: rustfmt, clippy
 
