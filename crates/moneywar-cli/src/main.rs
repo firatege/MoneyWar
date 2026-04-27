@@ -569,6 +569,49 @@ struct TradeRecord {
 
 const RECENT_TRADES_WINDOW: usize = 30;
 const DEBUG_LOG_WINDOW: usize = 300;
+/// Achievement toast'ı bu kadar tick boyunca görünür (engine tick'i —
+/// auto-sim ~300ms, manual SPACE'le değişken).
+const TOAST_TTL_TICKS: u32 = 3;
+
+/// Oyuncunun bir kez kazandığı milestone. CLI-tarafı, deterministik değil
+/// (UI feedback). `App.unlocked` set'inde tutulur, tick advance sonrası
+/// `check_achievements` ile güncellenir.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Achievement {
+    FirstFactory,
+    FirstCaravan,
+    FirstTrade,
+    TenK,
+    FiftyK,
+    HundredK,
+    ThreeFactories,
+    ThreeCaravans,
+    LeadingNow,
+}
+
+impl Achievement {
+    fn label(self) -> &'static str {
+        match self {
+            Self::FirstFactory => "✨  İLK FABRİKAN! ✨",
+            Self::FirstCaravan => "🐪  İLK KERVAN! 🐪",
+            Self::FirstTrade => "🤝  İLK İŞLEM! 🤝",
+            Self::TenK => "💰  10.000₺ EŞİĞİ! 💰",
+            Self::FiftyK => "💎  50.000₺ — Tüccarsın artık 💎",
+            Self::HundredK => "👑  100.000₺ — Anadolu'nun kralı 👑",
+            Self::ThreeFactories => "🏭  3 ŞEHRE FABRİKA — sanayi imparatoru 🏭",
+            Self::ThreeCaravans => "🚂  3 KERVAN — kervansız geçilmez 🚂",
+            Self::LeadingNow => "🥇  LEADERBOARD'DA 1.LİK!",
+        }
+    }
+}
+
+/// Şu an ekranda gösterilen toast bildirimi. `expires_at_tick` geldiğinde
+/// kaldırılır. Sıraya alma yok — yeni unlock eskisinin üzerine yazar.
+#[derive(Debug, Clone)]
+struct Toast {
+    achievement: Achievement,
+    expires_at_tick: Tick,
+}
 
 struct App {
     state: GameState,
@@ -606,6 +649,11 @@ struct App {
     /// güncelle, render'da olduğu gibi kullan. Auto-sim'de 21 hücre × 4
     /// alloc/render sayısı sıfıra iner.
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
+    /// Oyuncunun kazandığı milestone'lar — her achievement bir kez tetiklenir.
+    unlocked_achievements: std::collections::BTreeSet<Achievement>,
+    /// Şu an ekranda görünen toast. `current_tick >= expires_at_tick` ise
+    /// kaldırılır.
+    active_toast: Option<Toast>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -720,6 +768,86 @@ impl App {
             balance_loaded,
             cached_leaderboard: Vec::new(),
             cached_sparklines: std::collections::BTreeMap::new(),
+            unlocked_achievements: std::collections::BTreeSet::new(),
+            active_toast: None,
+        }
+    }
+
+    /// Tick advance sonrasında milestone'ları tarar. İlk kez ulaşılan
+    /// achievement varsa unlock + toast gösterir. Sıraya alma yok; aynı
+    /// tick'te birden çok unlock olursa son hesaplanan görünür.
+    fn check_achievements(&mut self) {
+        let Some(player) = self.state.players.get(&HUMAN_ID) else {
+            return;
+        };
+        let cash_lira = player.cash.as_cents() / 100;
+        let factory_count = self
+            .state
+            .factories
+            .values()
+            .filter(|f| f.owner == HUMAN_ID)
+            .count();
+        let factory_cities: std::collections::BTreeSet<_> = self
+            .state
+            .factories
+            .values()
+            .filter(|f| f.owner == HUMAN_ID)
+            .map(|f| f.city)
+            .collect();
+        let caravan_count = self
+            .state
+            .caravans
+            .values()
+            .filter(|c| c.owner == HUMAN_ID)
+            .count();
+        let leading = self
+            .cached_leaderboard
+            .first()
+            .is_some_and(|sc| sc.player_id == HUMAN_ID);
+
+        let candidates: &[(Achievement, bool)] = &[
+            (Achievement::FirstFactory, factory_count >= 1),
+            (Achievement::ThreeFactories, factory_cities.len() >= 3),
+            (Achievement::FirstCaravan, caravan_count >= 1),
+            (Achievement::ThreeCaravans, caravan_count >= 3),
+            (Achievement::TenK, cash_lira >= 10_000),
+            (Achievement::FiftyK, cash_lira >= 50_000),
+            (Achievement::HundredK, cash_lira >= 100_000),
+            (Achievement::LeadingNow, leading),
+        ];
+
+        for (ach, condition) in candidates {
+            if *condition && self.unlocked_achievements.insert(*ach) {
+                self.active_toast = Some(Toast {
+                    achievement: *ach,
+                    expires_at_tick: Tick::new(
+                        self.state.current_tick.value().saturating_add(TOAST_TTL_TICKS),
+                    ),
+                });
+            }
+        }
+    }
+
+    /// İnsan oyuncu bu tick'te en az bir match yaşadıysa `FirstTrade` unlock.
+    /// Match olayları report'tan harvest edilir.
+    fn check_first_trade_in_report(&mut self, report: &moneywar_engine::TickReport) {
+        if self.unlocked_achievements.contains(&Achievement::FirstTrade) {
+            return;
+        }
+        let traded = report.entries.iter().any(|e| {
+            matches!(
+                &e.event,
+                LogEvent::OrderMatched { buyer, seller, .. } if *buyer == HUMAN_ID || *seller == HUMAN_ID
+            )
+        });
+        if traded {
+            self.unlocked_achievements.insert(Achievement::FirstTrade);
+            self.active_toast = Some(Toast {
+                achievement: Achievement::FirstTrade,
+                expires_at_tick: Tick::new(
+                    self.state.current_tick.value().saturating_add(TOAST_TTL_TICKS),
+                ),
+            });
         }
     }
 
@@ -838,6 +966,15 @@ impl App {
         self.harvest_news();
         // Render hot-path'inde yeniden hesaplanan değerleri burada cache'le.
         self.refresh_caches();
+        // Toast TTL: süresi dolduysa kaldır.
+        if let Some(t) = &self.active_toast {
+            if !self.state.current_tick.is_before(t.expires_at_tick) {
+                self.active_toast = None;
+            }
+        }
+        // Achievement kontrolleri — state-bazlı (cash/fabrika) ve report-bazlı.
+        self.check_first_trade_in_report(&report);
+        self.check_achievements();
         // Eski status mesajı varsa temizle (yeni tick'in kendi mesajı olsun).
         self.status = None;
         // İnsanın bu tick'teki emirleri için "ne oldu" özeti — kritik UX
@@ -1398,6 +1535,40 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
         _ => {}
     }
+
+    // Toast en üstte — diğer overlay'lerin de üzerinde flash gösterilir.
+    if let Some(toast) = &app.active_toast {
+        render_toast(f, area, toast);
+    }
+}
+
+/// Achievement toast — ekranın üst-orta noktasında 1 satırlık parlak şerit.
+/// Diğer overlay'lerin önünde, oyuncu görmezden gelemeyecek.
+fn render_toast(f: &mut ratatui::Frame<'_>, area: Rect, toast: &Toast) {
+    let label = toast.achievement.label();
+    // Yatay merkezde ~50 char, üstten 4 satır aşağıda.
+    let width = (label.chars().count() as u16 + 6).min(area.width.saturating_sub(4));
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + 4;
+    let rect = Rect::new(x, y, width, 3);
+    f.render_widget(Clear, rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK),
+        );
+    let line = Line::from(Span::styled(
+        format!("  {label}  "),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let para = Paragraph::new(line).block(block);
+    f.render_widget(para, rect);
 }
 
 fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
