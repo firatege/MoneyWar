@@ -179,7 +179,9 @@ pub const PERISH_ZEYTINYAGI_LOSS_PCT: u32 = 10;
 /// `MarketMaker` baz fiyat — ham madde (§10: 5-8₺ tipik).
 pub const NPC_BASE_PRICE_RAW_LIRA: i64 = 6;
 /// `MarketMaker` baz fiyat — bitmiş ürün (§10: 12-18₺ tipik).
-pub const NPC_BASE_PRICE_FINISHED_LIRA: i64 = 15;
+/// Eski 15 → 18: production_tick=3 ile Sanayici marjı yetmez, sezon sonu
+/// negatif PnL. Marj 9 → 12 (%200) ile Sanayici dengeye gelir.
+pub const NPC_BASE_PRICE_FINISHED_LIRA: i64 = 18;
 
 /// `MarketMaker` markup — stok varsa bu yüzdeyle satar (base × 1.1).
 pub const NPC_SELL_MARKUP_PCT: i64 = 110;

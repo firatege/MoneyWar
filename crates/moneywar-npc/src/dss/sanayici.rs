@@ -56,8 +56,14 @@ pub fn decide_sanayici_dss(
     let mut scored: Vec<(Command, f64)> = Vec::new();
     let mut seq: u32 = 0;
 
-    // 1. BuildFactory adayları — fabrika sayısı < 3 ise
-    if factory_count < 3 {
+    // 1. BuildFactory adayları — fabrika sayısı < 2 ise
+    // Sanayici starter cash 30K. 2 fabrika maliyeti 15K (1. bedava + 2. 15K)
+    // → 15K cash kalır ham ve operasyon için. 3+ fabrika sermayeyi çökertir.
+    if factory_count < 2 {
+        let factory_urgency_dampen: f64 = match factory_count {
+            0 => 1.0,
+            _ => 0.5,
+        };
         for city in CityId::ALL {
             for product in ProductKind::FINISHED_GOODS {
                 let cost = Factory::build_cost(u32::try_from(factory_count).unwrap_or(0));
@@ -79,21 +85,24 @@ pub fn decide_sanayici_dss(
                     .config
                     .season_ticks
                     .saturating_sub(tick.value());
-                let est_batches = (remaining_ticks / 4) as f64; // ~4 tick/batch
-                let expected_profit = margin * est_batches * 10.0;
+                let est_batches = (remaining_ticks / 4) as f64;
+                // Build profit forecast'i × 0.5 — DSS BuildFactory'yi sermaye
+                // sıkıştırmaya kadar agresif kuruyordu. Yarıya bölüp Sat
+                // aksiyonlarına yer aç.
+                let expected_profit = margin * est_batches * 10.0 * 0.5;
                 let action = ActionCandidate {
-                    profit_lira: expected_profit,
+                    profit_lira: expected_profit * factory_urgency_dampen,
                     capital_lira: money_lira(cost),
                     risk: 0.4 + competition_signal(state, city, product) * 0.4,
-                    urgency: 0.0, // Kuruluş aciliyet hissetmez
+                    urgency: 0.0,
                     momentum: price_momentum(state, city, product),
                     arbitrage: arbitrage_signal(state, product),
                     event: (event_signal(state, city, product)
-    + pending_event_signal(state, pid, city, product))
-    .min(1.0),
-                    hold_pressure: 0.7, // fabrika uzun-vadeli stoklar
+                        + pending_event_signal(state, pid, city, product))
+                        .min(1.0),
+                    hold_pressure: 0.7,
                 };
-                let score = score_action(action, weights);
+                let score = score_action(action, weights) * factory_urgency_dampen;
                 scored.push((
                     Command::BuildFactory {
                         owner: pid,
@@ -178,12 +187,12 @@ pub fn decide_sanayici_dss(
             .unwrap_or(Money::from_cents(1500));
         let ask_cents = (market.as_cents() * 95) / 100;
         let sell_qty = qty.min(15);
-        // Ratio ile profit tahmini: sat fiyatı × qty
+        // Sat utility: stoğu çıkarmak doğal aksiyon, baseline yüksek olmalı.
+        // Eski 0.3 → 1.0 ile satış aksiyonu top-3'te BuildFactory ile yarışır.
         let expected_revenue = (ask_cents as f64 / 100.0) * f64::from(sell_qty);
-        // Fair price'tan farkla utility
         let ratio = price_ratio(state, city, product);
         let action = ActionCandidate {
-            profit_lira: expected_revenue * (ratio - 1.0).max(0.0),
+            profit_lira: expected_revenue + expected_revenue * (ratio - 1.0).max(0.0),
             capital_lira: 0.0, // satışta sermaye taahhüdü yok (stok zaten sahip)
             risk: 0.3 + competition_signal(state, city, product) * 0.4,
             urgency: 0.5,

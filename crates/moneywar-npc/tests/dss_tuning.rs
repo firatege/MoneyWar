@@ -10,36 +10,48 @@ use moneywar_domain::{
 use moneywar_engine::{advance_tick, leaderboard, rng_for};
 use moneywar_npc::{Difficulty, decide_all_npcs};
 
-/// Aynı senaryo 12 NPC ile (2 sanayici + 2 tüccar + 3 alıcı + 3 esnaf + 2 spek)
-/// + 1 insan (pasif izleyici). Personality dağılımı parametre.
 fn run_full_season(
     difficulty: Difficulty,
     personality_dist: &[Personality],
 ) -> SeasonReport {
+    run_full_season_with_human_cash(difficulty, personality_dist, 40_000)
+}
+
+/// Aynı senaryo 12 NPC ile (2 sanayici + 2 tüccar + 3 alıcı + 3 esnaf + 2 spek)
+/// + 1 insan (pasif izleyici, parametrik cash). Personality dağılımı parametre.
+fn run_full_season_with_human_cash(
+    difficulty: Difficulty,
+    personality_dist: &[Personality],
+    human_cash_lira: i64,
+) -> SeasonReport {
     let mut s = GameState::new(RoomId::new(7777), RoomConfig::hizli());
 
     // Price baseline — şehirler arası %20 spread, arbitraj fırsatı.
-    // (CLI seed_world'de seed RNG'den geliyor, test için manual.)
+    // Domain constants kullan ki balance.rs değişikliği test'e yansısın.
     for city in CityId::ALL {
         for product in ProductKind::ALL {
-            let base_lira: i64 = if product.is_raw() { 600 } else { 1500 }; // cents
+            let base_lira: i64 = if product.is_raw() {
+                moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+            } else {
+                moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+            };
             let mult = match city {
                 CityId::Istanbul => 100,
                 CityId::Ankara => 80,
                 CityId::Izmir => 115,
             };
-            let cents = base_lira * mult / 100;
+            let cents = base_lira * 100 * mult / 100;
             s.price_baseline
                 .insert((city, product), Money::from_cents(cents));
         }
     }
 
-    // Pasif insan oyuncu — komut göndermez
+    // Pasif insan oyuncu — komut göndermez. Cash parametrik (lider/normal/geride).
     let human = Player::new(
         PlayerId::new(1),
         "Spectator",
         Role::Tuccar,
-        Money::from_lira(40_000).unwrap(),
+        Money::from_lira(human_cash_lira).unwrap(),
         false,
     )
     .unwrap();
@@ -326,4 +338,87 @@ fn tuning_expert_only_arbitrageur() {
         &[Personality::Arbitrageur, Personality::Arbitrageur],
     );
     print_report(&report);
+}
+
+/// Kişilik karşılaştırma — her kişiliği tek tek test et, NPC ortalama PnL.
+#[test]
+fn tuning_personality_comparison() {
+    println!("\n╔══════════════════════════════════════════════════╗");
+    println!("║  KİŞİLİK KARŞILAŞTIRMA — 90 tick, tek-arketip     ║");
+    println!("╠══════════════════════════════════════════════════╣");
+    println!("║  Arketip      Tüccar    Sanayici  Dispatch       ║");
+    println!("║  ──────────   ───────   ────────  ────────       ║");
+    let mut results: Vec<(Personality, f64, f64, u32)> = Vec::new();
+    for p in Personality::ALL {
+        let report = run_full_season(Difficulty::Expert, &[p]);
+        let tuccar_avg = report
+            .npc_pnl_by_kind
+            .get(&NpcKind::Tuccar)
+            .map(|v| v.iter().sum::<f64>() / v.len() as f64)
+            .unwrap_or(0.0);
+        let sanayici_avg = report
+            .npc_pnl_by_kind
+            .get(&NpcKind::Sanayici)
+            .map(|v| v.iter().sum::<f64>() / v.len() as f64)
+            .unwrap_or(0.0);
+        results.push((p, tuccar_avg, sanayici_avg, report.total_dispatched));
+    }
+    results.sort_by(|a, b| {
+        let ta = a.1 + a.2;
+        let tb = b.1 + b.2;
+        tb.partial_cmp(&ta)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for (p, t, s, d) in &results {
+        println!(
+            "║  {} {:<10}  {:+7.0}₺  {:+7.0}₺  {:>3}            ║",
+            p.emoji(),
+            p.label(),
+            t,
+            s,
+            d
+        );
+    }
+    println!("╚══════════════════════════════════════════════════╝");
+}
+
+/// Adaptive difficulty test — insan lider olunca NPC'lerin reaksiyonu.
+#[test]
+fn tuning_adaptive_difficulty() {
+    println!("\n╔══════════════════════════════════════════════════╗");
+    println!("║  ADAPTIVE DIFFICULTY — insan cash etkisi          ║");
+    println!("╠══════════════════════════════════════════════════╣");
+    let cases = [
+        ("Geride (5K)", 5_000),
+        ("Normal (40K)", 40_000),
+        ("Lider (200K)", 200_000),
+        ("Aşırı lider (500K)", 500_000),
+    ];
+    for (label, cash) in cases {
+        let report = run_full_season_with_human_cash(
+            Difficulty::Expert,
+            &Personality::ALL,
+            cash,
+        );
+        let tuccar_avg = report
+            .npc_pnl_by_kind
+            .get(&NpcKind::Tuccar)
+            .map(|v| v.iter().sum::<f64>() / v.len() as f64)
+            .unwrap_or(0.0);
+        let sanayici_avg = report
+            .npc_pnl_by_kind
+            .get(&NpcKind::Sanayici)
+            .map(|v| v.iter().sum::<f64>() / v.len() as f64)
+            .unwrap_or(0.0);
+        let total_npc = tuccar_avg + sanayici_avg;
+        println!(
+            "║  {:<18}  Tüccar={:+7.0}  Sanayici={:+7.0}  Toplam={:+8.0} ║",
+            label, tuccar_avg, sanayici_avg, total_npc
+        );
+    }
+    println!("║                                                  ║");
+    println!("║  Beklenen: insan ne kadar lider, NPC PnL o kadar  ║");
+    println!("║  yüksek (catch-up boost). Mevcut tuning            ║");
+    println!("║  utility × (1 + lead_boost × 0.3) — agresifleşme.  ║");
+    println!("╚══════════════════════════════════════════════════╝");
 }
