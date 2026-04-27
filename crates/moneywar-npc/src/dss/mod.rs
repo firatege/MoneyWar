@@ -1,4 +1,12 @@
 //! Karar Destek Sistemi (DSS) — NPC AI üst ve orta katmanı.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines,
+    clippy::single_match_else
+)]
+
 //!
 //! Mimari (3 katman):
 //!
@@ -19,7 +27,10 @@
 //! │   parametreleri fuzzy engine ile ayarla.            │
 //! └─────────────────────────────────────────────────────┘
 
+pub mod inputs;
 pub mod personality;
+pub mod sanayici;
+pub mod tuccar;
 pub mod utility;
 
 pub use personality::Personality;
