@@ -58,7 +58,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     );
     assert_eq!(s1.factories.values().next().unwrap().batches.len(), 1);
 
-    // Tick 2: yeni batch başlar (üretim 3 tick, hiçbiri tamamlanmadı).
+    // Tick 2: yeni batch başlar (üretim 2 tick, hiçbiri tamamlanmadı).
     let (s2, _r2) = advance_tick(&s1, &[]).unwrap();
     assert_eq!(s2.factories.values().next().unwrap().batches.len(), 2);
     assert_eq!(
@@ -68,25 +68,26 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
         800
     );
 
-    // Tick 3: yeni batch başlar, hâlâ tamamlanma yok.
+    // Tick 3: ilk batch tamamlanır (completion_tick = 1+2=3). Kumas envantere,
+    // yeni batch başlar.
     let (s3, _r3) = advance_tick(&s2, &[]).unwrap();
-    assert_eq!(s3.factories.values().next().unwrap().batches.len(), 3);
+    let kumas3 = s3.players[&PlayerId::new(1)]
+        .inventory
+        .get(CityId::Istanbul, ProductKind::Kumas);
+    assert_eq!(kumas3, 100, "100 kumas after 2 tick delay (10× ölçek)");
     assert_eq!(
         s3.players[&PlayerId::new(1)]
             .inventory
-            .get(CityId::Istanbul, ProductKind::Kumas),
-        0
+            .get(CityId::Istanbul, ProductKind::Pamuk),
+        700
     );
 
-    // Tick 4: ilk batch tamamlanır (completion_tick = 1+3=4). Kumas envantere.
+    // Tick 4: ikinci batch tamamlanır → kumaş 200.
     let (s4, _r4) = advance_tick(&s3, &[]).unwrap();
     let kumas = s4.players[&PlayerId::new(1)]
         .inventory
         .get(CityId::Istanbul, ProductKind::Kumas);
-    assert_eq!(
-        kumas, 100,
-        "100 kumas produced after 3 tick delay (10× ölçek)"
-    );
+    assert_eq!(kumas, 200, "200 kumas after second batch completed");
 
     // Tick 5: Sanayici 50 kumas satar; Tüccar 50 kumas alır (10× ölçek).
     let sell = Command::SubmitOrder(
@@ -133,12 +134,13 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             .get(CityId::Istanbul, ProductKind::Kumas),
         50
     );
-    // Tick 5'te ikinci batch tamamlanır (started=2, completion=5). 100 - 50 + 100 = 150.
+    // Tick 5'te 3. batch tamamlanır (started=3, completion=5).
+    // 200 - 50 (sat) + 100 (yeni batch) = 250.
     assert_eq!(
         s5.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Kumas),
-        150
+        250
     );
     // Para korunumu: 200_000₺ × 100 cent.
     let s = s5.players[&PlayerId::new(1)].cash.as_cents();

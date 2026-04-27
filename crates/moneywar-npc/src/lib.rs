@@ -216,9 +216,11 @@ fn decide_sanayici(
         let raw = factory.raw_input();
         let have_raw = player.inventory.get(factory.city, raw);
         if have_raw < 300 {
-            // Az ham var → al. Piyasa fiyatından %5 yüksek (eşleşme şansı için).
+            // Az ham var → al. Piyasa fiyatından %15 yüksek (eşleşme şansı için).
+            // %105 → %115: FactoryIdle 321/sezon → düşmesi için Esnaf ask'ları
+            // ile match şansı arttırılıyor.
             let target = market_or_base(state, factory.city, raw);
-            let buy_price = Money::from_cents((target.as_cents() * 105) / 100);
+            let buy_price = Money::from_cents((target.as_cents() * 115) / 100);
             let qty = 300u32.saturating_sub(have_raw).min(200);
             let total = buy_price.as_cents().saturating_mul(i64::from(qty));
             if player.cash.as_cents() >= total {

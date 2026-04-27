@@ -124,7 +124,10 @@ pub fn decide_sanayici_dss(
             .map(|(_, p)| *p)
             .or_else(|| state.effective_baseline(factory.city, raw))
             .unwrap_or(Money::from_cents(600));
-        let bid_cents = (market.as_cents() * 105) / 100;
+        // Bid agresif: market %15 üstü. %105 ile çoğu emir Esnaf ask'ı ile
+        // match olmuyor, FactoryIdle birikiyor; %115 ile hammadde döngüsü
+        // güvenli, marj 12 → ~10 düşer ama batch hacmi katlanır.
+        let bid_cents = (market.as_cents() * 115) / 100;
         let qty: u32 = 200;
         let total = bid_cents.saturating_mul(i64::from(qty));
         if player.cash.as_cents() < total {

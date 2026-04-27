@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn production_starts_when_raw_available_and_completes_after_three_ticks() {
+    fn production_starts_when_raw_available_and_completes_after_two_ticks() {
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
         s.players
@@ -353,7 +353,7 @@ mod tests {
         )
         .unwrap();
 
-        // Tick 1: üretim başlar (batch eklenir, raw consume — batch=100, 10× ölçek).
+        // Tick 1: üretim başlar (batch=100, completion_tick=3).
         advance_production(&mut s, &mut r, Tick::new(1));
         assert_eq!(
             s.players[&pid]
@@ -363,15 +363,10 @@ mod tests {
         );
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
 
-        // Tick 2: hiçbir batch tamamlanmaz (completion_tick=4), yeni batch başlar.
+        // Tick 2: hiçbir batch tamamlanmaz (completion=3 ve 4), yeni batch başlar.
         let mut r2 = TickReport::new(Tick::new(2));
         advance_production(&mut s, &mut r2, Tick::new(2));
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 2);
-
-        // Tick 3: yine tamamlanma yok, yeni batch başlar.
-        let mut r3 = TickReport::new(Tick::new(3));
-        advance_production(&mut s, &mut r3, Tick::new(3));
-        assert_eq!(s.factories.values().next().unwrap().batches.len(), 3);
         assert_eq!(
             s.players[&pid]
                 .inventory
@@ -379,21 +374,21 @@ mod tests {
             0
         );
 
-        // Tick 4: ilk batch tamamlanır (tick 1 + 3 = 4), yeni batch başlar.
-        let mut r4 = TickReport::new(Tick::new(4));
-        advance_production(&mut s, &mut r4, Tick::new(4));
+        // Tick 3: ilk batch tamamlanır (tick 1 + 2 = 3), yeni batch başlar.
+        let mut r3 = TickReport::new(Tick::new(3));
+        advance_production(&mut s, &mut r3, Tick::new(3));
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Kumas),
             100
         );
-        // Pamuk 600 kaldı (4 batch × 100, 10× ölçek).
+        // Pamuk 700 kaldı (3 batch × 100).
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            600
+            700
         );
     }
 

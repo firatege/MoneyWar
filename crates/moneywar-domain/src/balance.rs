@@ -44,9 +44,11 @@
 pub const FACTORY_BATCH_SIZE: u32 = 100;
 
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
-/// Eski 2 → 3: Sanayici %150 marj × hızlı batch ile aşırı kârlıydı, üretim
-/// süresini uzatıp Tüccar arbitrajına denge getirildi.
-pub const FACTORY_PRODUCTION_TICKS: u32 = 3;
+/// Eski yolculuk: 2 → 3 (Sanayici aşırı kârlı diye yavaşlatıldı), şimdi
+/// 3 → 2 (NPC Sanayici sezon boyu hammadde bulamayıp 321/sezon `FactoryIdle`
+/// veriyordu, %50 batch artışı dengeye getirir; Tüccar arbitrajı zaten
+/// hacim 10× ölçekten kazandığı için fark Tüccar lehine değil).
+pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 
 // =============================================================================
 // Fabrika
