@@ -169,8 +169,22 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         Mode::Startup => match code {
             // Yalnız `q` kapatır — Esc yanlışlıkla çıkış yapmasın.
             KeyCode::Char('q') => return Ok(true),
-            KeyCode::Char('1') => app.start_game(Role::Sanayici),
-            KeyCode::Char('2') => app.start_game(Role::Tuccar),
+            KeyCode::Char('1') => {
+                app.selected_role = Role::Sanayici;
+                app.start_game(Role::Sanayici);
+            }
+            KeyCode::Char('2') => {
+                app.selected_role = Role::Tuccar;
+                app.start_game(Role::Tuccar);
+            }
+            // Tab → seçili rolü değiştir (önizleme); Enter → mevcut seçimle başlat.
+            KeyCode::Tab => {
+                app.selected_role = match app.selected_role {
+                    Role::Sanayici => Role::Tuccar,
+                    Role::Tuccar => Role::Sanayici,
+                };
+            }
+            KeyCode::Enter => app.start_game(app.selected_role),
             KeyCode::Char('p') => {
                 app.selected_preset = app.selected_preset.next();
             }
@@ -178,8 +192,6 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 app.difficulty = app.difficulty.next();
             }
             // İsim input — alfabetik + boşluk + Türkçe karakter, max 20 char.
-            // Rakamlar role seçimine ayrılmış, isimde olmaz; özel karakter
-            // temiz ekran için filtrelenir.
             KeyCode::Char(c) if (c.is_alphabetic() || c == ' ') => {
                 if app.player_name_input.chars().count() < 20 {
                     app.player_name_input.push(c);
@@ -638,6 +650,9 @@ struct App {
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
     player_name_input: String,
+    /// Startup'ta Tab ile değiştirilebilen seçili rol. Enter ile başlatma için.
+    /// `1`/`2` direkt seçim akışı korunur — bu sadece alternatif.
+    selected_role: Role,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -753,6 +768,7 @@ impl App {
             cached_leaderboard: Vec::new(),
             cached_sparklines: std::collections::BTreeMap::new(),
             player_name_input: String::new(),
+            selected_role: Role::Sanayici,
         }
     }
 
@@ -1462,9 +1478,24 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     let popup = centered_rect(90, 75, area);
     f.render_widget(Clear, popup);
 
+    // Başlıkta gerçek window — rolling avg max 5 tick ama oyun başında daha az
+    // tick var. Yanıltıcı "son 5 tick" yerine actual count.
+    let window_actual = app
+        .state
+        .price_history
+        .values()
+        .map(|v| v.len().min(5))
+        .max()
+        .unwrap_or(0);
+    let window_label = if window_actual == 0 {
+        "henüz veri yok".to_string()
+    } else {
+        format!("son {window_actual} tick")
+    };
+    let title = format!(" 📊  Pazar Verileri  —  ort. fiyat ({window_label}) + stok (fog) ");
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 📊  Pazar Verileri  —  ort. fiyat + tahmini stok (fog) ")
+        .title(title)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -1748,7 +1779,20 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" Sanayici    "),
+            Span::styled(
+                if matches!(app.selected_role, Role::Sanayici) {
+                    " Sanayici ◄    "
+                } else {
+                    " Sanayici      "
+                },
+                if matches!(app.selected_role, Role::Sanayici) {
+                    Style::default()
+                        .fg(Color::Rgb(210, 140, 80))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                },
+            ),
             Span::styled(
                 " 2 ",
                 Style::default()
@@ -1756,7 +1800,20 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" Tüccar    "),
+            Span::styled(
+                if matches!(app.selected_role, Role::Tuccar) {
+                    " Tüccar ◄    "
+                } else {
+                    " Tüccar      "
+                },
+                if matches!(app.selected_role, Role::Tuccar) {
+                    Style::default()
+                        .fg(Color::Rgb(120, 180, 240))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                },
+            ),
             Span::styled(
                 " p ",
                 Style::default()
@@ -1768,6 +1825,12 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::styled(" q ", Style::default().bg(Color::DarkGray).fg(Color::White)),
             Span::raw(" çık"),
         ]),
+        Line::from(Span::styled(
+            "  Tab → rol değiştir   ·   Enter → seçili rol ile başla   ·   1/2 → direkt başla",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
     ];
 
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });

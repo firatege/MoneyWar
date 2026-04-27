@@ -1009,8 +1009,8 @@ mod tests {
 
     #[test]
     fn saturation_reports_qty_over_threshold_at_half_price() {
-        // 10 oyuncu ekleyip threshold'ı 120'ye çıkar: 40 + (10-2)*10.
-        // Tek eşleşme 150 birim → 120 full, 30 half.
+        // 10 oyuncu → threshold = 25 + (10-2)*5 = 65.
+        // Tek eşleşme 100 birim → 65 full, 35 half.
         let mut s = state();
         for i in 1..=10 {
             seed_player(&mut s, i, Role::Tuccar);
@@ -1018,8 +1018,8 @@ mod tests {
         populate(
             &mut s,
             vec![
-                order(1, 1, OrderSide::Buy, 150, 10),
-                order(2, 2, OrderSide::Sell, 150, 8),
+                order(1, 1, OrderSide::Buy, 100, 10),
+                order(2, 2, OrderSide::Sell, 100, 8),
             ],
         );
         let mut r = TickReport::new(Tick::new(1));
@@ -1032,9 +1032,9 @@ mod tests {
                 matched_qty,
                 ..
             }) => {
-                assert_eq!(*saturation_threshold, 120);
-                assert_eq!(*saturation_qty, 30);
-                assert_eq!(*matched_qty, 150);
+                assert_eq!(*saturation_threshold, 65);
+                assert_eq!(*saturation_qty, 35);
+                assert_eq!(*matched_qty, 100);
             }
             other => panic!("expected MarketCleared, got {other:?}"),
         }

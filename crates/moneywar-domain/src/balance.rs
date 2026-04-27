@@ -76,9 +76,13 @@ pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 4] = [0, 6_000, 10_000, 15_000];
 
 /// Doygunluk eşiği formülü (§10):
 /// `threshold = SATURATION_BASE + (player_count - SATURATION_MIN_PLAYERS) × SATURATION_PER_PLAYER`.
-pub const SATURATION_BASE: u32 = 40;
+///
+/// Eski değerler 40+10/oyuncu → 12 oyuncu için 140 birim. Pratikte tek bucket'ta
+/// 140 birim eşleşme nadir → eşik tetiklenmiyordu (ölü kod). Şu an 25+5/oyuncu →
+/// 12 oyuncu için 75 — tetiklenebilir, anti-snowball mekanizması canlı.
+pub const SATURATION_BASE: u32 = 25;
 /// Her ek oyuncu başına doygunluk eşiği artışı.
-pub const SATURATION_PER_PLAYER: u32 = 10;
+pub const SATURATION_PER_PLAYER: u32 = 5;
 /// Doygunluk formülünün alt sınırı (bu sayının altında formül devreye girmez).
 pub const SATURATION_MIN_PLAYERS: u8 = 2;
 
