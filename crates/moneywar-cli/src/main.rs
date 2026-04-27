@@ -1511,8 +1511,11 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     } else {
         format!("son {window_actual} tick")
     };
-    let title =
-        format!(" 📊  Pazar Verileri  —  ort. fiyat ({window_label}) + aktif arz/talep ");
+    let tier = human_news_tier(&app.state);
+    let title = format!(
+        " 📊  Pazar Verileri  —  {window_label} + arz/talep  ({} çözünürlük) ",
+        tier.display_name()
+    );
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -1570,7 +1573,7 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 None => "—".to_string(),
             };
 
-            // İki satır: 1) fiyat, 2) arz/talep (yeşil/mavi).
+            // İki satır: 1) fiyat, 2) arz/talep (tier'a göre çözünürlüklü).
             let price_line = Line::from(Span::styled(
                 price_label,
                 Style::default()
@@ -1589,12 +1592,12 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
             };
             let activity_line = Line::from(vec![
                 Span::styled(
-                    format!("arz {sell_qty}"),
+                    format!("arz {}", qty_label_with_fog(sell_qty, tier)),
                     Style::default().fg(supply_color),
                 ),
                 Span::raw("  "),
                 Span::styled(
-                    format!("tlp {buy_qty}"),
+                    format!("tlp {}", qty_label_with_fog(buy_qty, tier)),
                     Style::default().fg(demand_color),
                 ),
             ]);
@@ -1619,15 +1622,20 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
         .split(inner);
     f.render_widget(table, chunks[0]);
 
+    let tier_hint = match tier {
+        NewsTier::Bronze => "Bronz: kategorik (yok/az/orta/bol). Net görmek için `:news silver` aboneliği.",
+        NewsTier::Silver => "Gümüş: 5'e yuvarlanmış. Tam rakam için `:news gold`.",
+        NewsTier::Gold => "Altın: tam çözünürlük.",
+    };
     let info = Paragraph::new(vec![
         Line::from(Span::styled(
-            "arz = şu an satıştaki birim · tlp = bid'de bekleyen birim",
+            tier_hint,
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
         )),
         Line::from(Span::styled(
-            "Esc / Enter / Space ile kapat",
+            "arz = aktif satış emri · tlp = aktif bid · Esc/Enter/Space kapat",
             Style::default().fg(Color::DarkGray),
         )),
     ]);
@@ -2614,8 +2622,23 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                 }
             }
             FieldKind::Product => {
-                for (i, p) in ProductKind::ALL.iter().enumerate() {
-                    lines.push(option_line(i + 1, &format!("{p}"), product_color(*p)));
+                // Akıllı liste: rol + wizard kind'a göre filtre + sıralama.
+                // Sanayici Sat → sadece finished, Al → sadece ham; sıralama
+                // stok/fabrika/arbitraj önceliğine göre — ilk satır default.
+                let role = app
+                    .state
+                    .players
+                    .get(&HUMAN_ID)
+                    .map(|p| p.role)
+                    .unwrap_or(Role::Tuccar);
+                let products = filtered_products_for_wizard(&app.state, role, wizard.kind);
+                for (i, p) in products.iter().enumerate() {
+                    let label = if i == 0 {
+                        format!("{p}  (Enter ile)")
+                    } else {
+                        format!("{p}")
+                    };
+                    lines.push(option_line(i + 1, &label, product_color(*p)));
                 }
             }
             FieldKind::FinishedProduct => {
@@ -2837,6 +2860,96 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
 
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });
     f.render_widget(para, inner);
+}
+
+/// İnsan oyuncunun efektif haber tier'ı. Subscription map ve Tüccar
+/// role'ünün bedava Silver bonusunu birleştirir. Bu tier pazar raporu
+/// çözünürlüğünü belirler. Engine `effective_news_tier` `pub(crate)` —
+/// burada CLI muadili.
+fn human_news_tier(state: &GameState) -> NewsTier {
+    let player = state.players.get(&HUMAN_ID);
+    let subscribed = state.news_subscriptions.get(&HUMAN_ID).copied();
+    let role_free = player.is_some_and(|p| p.role.free_silver_news());
+    let base = subscribed.unwrap_or(NewsTier::Bronze);
+    if role_free && base < NewsTier::Silver {
+        NewsTier::Silver
+    } else {
+        base
+    }
+}
+
+/// Miktar etiketi — tier'a göre çözünürlük: Bronze kategorik
+/// (yok/az/orta/bol), Silver 5'e yuvarlanmış, Gold exact.
+fn qty_label_with_fog(qty: u32, tier: NewsTier) -> String {
+    match tier {
+        NewsTier::Bronze => match qty {
+            0 => "yok".into(),
+            1..=30 => "az".into(),
+            31..=100 => "orta".into(),
+            _ => "bol".into(),
+        },
+        NewsTier::Silver => {
+            if qty == 0 {
+                "0".into()
+            } else {
+                let rounded = (qty / 5) * 5;
+                format!("~{rounded}")
+            }
+        }
+        NewsTier::Gold => format!("{qty}"),
+    }
+}
+
+/// Wizard ürün seçim listesi: role + action kind'a göre filtreli + sıralı.
+/// İlk eleman = "akıllı default" (Enter ile seçilir). Sanayici Sat → finished
+/// only, Al → ham only, Tüccar → tümü. Sıralama: Sat = stok desc; Al+Sanayici
+/// = fabrika raw_input ilk; Al+Tüccar = arbitraj farkı desc.
+fn filtered_products_for_wizard(
+    state: &GameState,
+    role: Role,
+    kind: ActionKind,
+) -> Vec<ProductKind> {
+    let mut candidates: Vec<ProductKind> = match (role, kind) {
+        (Role::Sanayici, ActionKind::Sell) => ProductKind::FINISHED_GOODS.to_vec(),
+        (Role::Sanayici, ActionKind::Buy) => ProductKind::RAW_MATERIALS.to_vec(),
+        _ => ProductKind::ALL.to_vec(),
+    };
+
+    let player = state.players.get(&HUMAN_ID);
+    match kind {
+        ActionKind::Sell => {
+            if let Some(p) = player {
+                candidates.sort_by_key(|prod| {
+                    let total: u32 = CityId::ALL.iter().map(|c| p.inventory.get(*c, *prod)).sum();
+                    std::cmp::Reverse(total)
+                });
+            }
+        }
+        ActionKind::Buy => match role {
+            Role::Sanayici => {
+                let raw_inputs: std::collections::BTreeSet<ProductKind> = state
+                    .factories
+                    .values()
+                    .filter(|f| f.owner == HUMAN_ID)
+                    .filter_map(|f| f.product.raw_input())
+                    .collect();
+                candidates.sort_by_key(|prod| u8::from(!raw_inputs.contains(prod)));
+            }
+            Role::Tuccar => {
+                candidates.sort_by_key(|prod| {
+                    let prices: Vec<i64> = CityId::ALL
+                        .iter()
+                        .filter_map(|c| state.effective_baseline(*c, *prod).map(Money::as_cents))
+                        .collect();
+                    let max = prices.iter().copied().max().unwrap_or(0);
+                    let min = prices.iter().copied().min().unwrap_or(0);
+                    std::cmp::Reverse(max - min)
+                });
+            }
+        },
+        _ => {}
+    }
+    candidates
 }
 
 fn option_line(num: usize, label: &str, color: Color) -> Line<'static> {
@@ -5459,20 +5572,32 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
         }
         return WizardOutcome::Continue;
     }
-    // Seçim alanı — sayı tuşu (1-9) ile seç.
-    let KeyCode::Char(c) = code else {
-        return WizardOutcome::Continue;
+    // Seçim alanı — sayı tuşu (1-9) ile seç, **Enter ile ilk seçenek**.
+    let idx = match code {
+        KeyCode::Char(c) => {
+            let Some(d) = c.to_digit(10) else {
+                return WizardOutcome::Continue;
+            };
+            if d == 0 {
+                return WizardOutcome::Continue;
+            }
+            (d - 1) as usize
+        }
+        KeyCode::Enter => 0, // Default = ilk seçenek
+        _ => return WizardOutcome::Continue,
     };
-    let Some(idx) = c.to_digit(10) else {
-        return WizardOutcome::Continue;
-    };
-    if idx == 0 {
-        return WizardOutcome::Continue;
-    }
-    let idx = (idx - 1) as usize;
     let val = match field {
         FieldKind::City | FieldKind::CityTo => CityId::ALL.get(idx).map(|c| FieldValue::City(*c)),
-        FieldKind::Product => ProductKind::ALL.get(idx).map(|p| FieldValue::Product(*p)),
+        FieldKind::Product => {
+            let role = app
+                .state
+                .players
+                .get(&HUMAN_ID)
+                .map(|p| p.role)
+                .unwrap_or(Role::Tuccar);
+            let products = filtered_products_for_wizard(&app.state, role, wizard.kind);
+            products.get(idx).map(|p| FieldValue::Product(*p))
+        }
         FieldKind::FinishedProduct => ProductKind::FINISHED_GOODS
             .get(idx)
             .map(|p| FieldValue::Product(*p)),
