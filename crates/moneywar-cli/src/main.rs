@@ -164,6 +164,17 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('d') => {
                 app.difficulty = app.difficulty.next();
             }
+            // İsim input — alfabetik + boşluk + Türkçe karakter, max 20 char.
+            // Rakamlar role seçimine ayrılmış, isimde olmaz; özel karakter
+            // temiz ekran için filtrelenir.
+            KeyCode::Char(c) if (c.is_alphabetic() || c == ' ') => {
+                if app.player_name_input.chars().count() < 20 {
+                    app.player_name_input.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                app.player_name_input.pop();
+            }
             _ => {}
         },
         Mode::Normal => match code {
@@ -658,6 +669,9 @@ struct App {
     /// üstünden ölçülür — başlangıç sermayesi rolden role değişiyor (50K
     /// Sanayici / 80K Tüccar), mutlak eşik anında unlock olurdu.
     starting_cash_cents: i64,
+    /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
+    /// Sanayici/Tüccar seçildiğinde role suffix eklenir: "Selim (Sanayici)".
+    player_name_input: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -775,6 +789,7 @@ impl App {
             unlocked_achievements: std::collections::BTreeSet::new(),
             active_toast: None,
             starting_cash_cents: 0,
+            player_name_input: String::new(),
         }
     }
 
@@ -889,7 +904,13 @@ impl App {
     fn start_game(&mut self, role: Role) {
         let cfg = self.selected_preset.config().with_balance(self.balance);
         let room_id = random_room_id();
-        self.state = seed_world(role, cfg, room_id);
+        let custom_name = self.player_name_input.trim();
+        let custom_name = if custom_name.is_empty() {
+            None
+        } else {
+            Some(custom_name.to_string())
+        };
+        self.state = seed_world(role, cfg, room_id, custom_name);
         self.mode = Mode::Normal;
         self.starting_cash_cents = self
             .state
@@ -1280,7 +1301,12 @@ fn pick_npc_name(
     }
 }
 
-fn seed_world(human_role: Role, config: RoomConfig, room_id: RoomId) -> GameState {
+fn seed_world(
+    human_role: Role,
+    config: RoomConfig,
+    room_id: RoomId,
+    custom_player_name: Option<String>,
+) -> GameState {
     let composition = config.balance.npcs;
     let mut s = GameState::new(room_id, config);
 
@@ -1326,9 +1352,14 @@ fn seed_world(human_role: Role, config: RoomConfig, room_id: RoomId) -> GameStat
     // Sıkı bütçe: 1. fabrika/kervan zaten bedava + Sanayici 100 birim ham
     // starter alıyor. Bol nakit "para baskısı yok, riske girmem" hissi
     // veriyordu; düşürüldü.
-    let (starting_cash, human_name) = match human_role {
-        Role::Sanayici => (25_000_i64, "Sen (Sanayici)"),
-        Role::Tuccar => (40_000_i64, "Sen (Tüccar)"),
+    let starting_cash = match human_role {
+        Role::Sanayici => 25_000_i64,
+        Role::Tuccar => 40_000_i64,
+    };
+    let role_label = human_role.display_name();
+    let human_name = match custom_player_name {
+        Some(name) => format!("{name} ({role_label})"),
+        None => format!("Sen ({role_label})"),
     };
     let mut human = Player::new(
         HUMAN_ID,
@@ -1716,6 +1747,36 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  📝  Adın: ", Style::default().fg(Color::White)),
+            Span::styled(
+                if app.player_name_input.is_empty() {
+                    "(harf yaz, Backspace ile sil)".to_string()
+                } else {
+                    app.player_name_input.clone()
+                },
+                Style::default()
+                    .fg(if app.player_name_input.is_empty() {
+                        Color::DarkGray
+                    } else {
+                        Color::Cyan
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "_",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::RAPID_BLINK),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "      (boş bırakırsan \"Sen\" olarak başlar)",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
         Line::from(""),
         Line::from(Span::styled(
             "  Skor = Nakit + Stok × ort.fiyat + Fabrika × 0.5 + Aktif escrow",
@@ -3702,7 +3763,19 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let board = leaderboard(&app.state);
+    // Sezon sonu reveal — leaderboard ile aynı filter (sadece gerçek rakipler:
+    // insan + Sanayici + Tüccar). Likidite NPC'leri Alıcı/Esnaf/Spekülatör
+    // skor tablosuna katılmaz.
+    let board: Vec<PlayerScore> = leaderboard(&app.state)
+        .into_iter()
+        .filter(|sc| {
+            app.state.players.get(&sc.player_id).is_none_or(|p| {
+                !p.has_npc_kind(NpcKind::Alici)
+                    && !p.has_npc_kind(NpcKind::Esnaf)
+                    && !p.has_npc_kind(NpcKind::Spekulator)
+            })
+        })
+        .collect();
     let mut lines: Vec<Line> = Vec::new();
 
     lines.push(Line::from(""));
