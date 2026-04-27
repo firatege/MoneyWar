@@ -77,8 +77,6 @@ pub(crate) fn advance_events(
 /// Aynı (city, product) için yeni şok eskisinin üstüne yazılır.
 fn apply_shock(state: &mut GameState, event: GameEvent, event_tick: Tick) {
     const SHOCK_DURATION: u32 = 4;
-    /// `NewMarket`'in talep şokunun severity'si yok; makul orta değer.
-    const SHOCK_NEW_MARKET_PCT: i32 = 12;
 
     // SHOCK_*_PCT sabitleri u32 (8/18/35) — i32 sınırının çok altında,
     // bu cast hiçbir zaman wrap etmez.
@@ -87,7 +85,14 @@ fn apply_shock(state: &mut GameState, event: GameEvent, event_tick: Tick) {
         Some(EventSeverity::Minor) => moneywar_domain::balance::SHOCK_MINOR_PCT as i32,
         Some(EventSeverity::Major) => moneywar_domain::balance::SHOCK_MAJOR_PCT as i32,
         Some(EventSeverity::Macro) => moneywar_domain::balance::SHOCK_MACRO_PCT as i32,
-        None => SHOCK_NEW_MARKET_PCT,
+        // NewMarket severity'siz; extra_demand'a göre kademeli pozitif şok.
+        // 30→%15, 80→%25, 150→%40 — "fırsat" anı, oyuncu hızlı reaksiyon
+        // gösterirse büyük kâr.
+        None => match event {
+            GameEvent::NewMarket { extra_demand, .. } if extra_demand >= 100 => 40,
+            GameEvent::NewMarket { extra_demand, .. } if extra_demand >= 50 => 25,
+            _ => 15,
+        },
     };
 
     let expires_at = event_tick.checked_add(SHOCK_DURATION).unwrap_or(event_tick);
@@ -175,7 +180,10 @@ fn roll_event(state: &GameState, rng: &mut ChaCha8Rng, tick: Tick) -> Option<Gam
         EventSeverity::Minor
     };
 
-    let kind = rng.random_range(0u32..4);
+    // 5 olay tipi arasından dağıtılmış rastgele seçim. NewMarket talep
+    // patlaması — finished good'a yönelir ("İstanbul'da düğün, kumaş 2x"),
+    // oyuncuya pozitif fırsat verir, sezon-içi rotasyonu canlı tutar.
+    let kind = rng.random_range(0u32..5);
     let city = pick_city(rng);
     match kind {
         0 => Some(GameEvent::Drought {
@@ -193,6 +201,22 @@ fn roll_event(state: &GameState, rng: &mut ChaCha8Rng, tick: Tick) -> Option<Gam
             product: state.cheap_raw_for(city),
             severity,
         }),
+        3 => {
+            // NewMarket — finished good'da talep patlaması.
+            let idx = rng.random_range(0..ProductKind::FINISHED_GOODS.len());
+            let product = ProductKind::FINISHED_GOODS[idx];
+            // extra_demand makul: minor 30, major 80, macro 150
+            let extra_demand = match severity {
+                EventSeverity::Minor => 30,
+                EventSeverity::Major => 80,
+                EventSeverity::Macro => 150,
+            };
+            Some(GameEvent::NewMarket {
+                city,
+                product,
+                extra_demand,
+            })
+        }
         _ => {
             // RoadClosure: farklı iki şehir.
             let to = pick_different_city(rng, city);

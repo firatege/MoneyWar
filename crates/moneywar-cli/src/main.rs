@@ -5661,12 +5661,23 @@ fn format_event(event: &moneywar_domain::GameEvent) -> String {
             city,
             product,
             extra_demand,
-        } => format!(
-            "yeni pazar {} / {} (+{} talep)",
-            city_short(*city),
-            product,
-            extra_demand
-        ),
+        } => {
+            // Talep şoku — "düğün/festival/karşı kıyıdan tüccar" tarzı tematik
+            // mesaj, miktar büyüklüğüne göre.
+            let theme = if *extra_demand >= 100 {
+                "büyük şenlik"
+            } else if *extra_demand >= 50 {
+                "düğün"
+            } else {
+                "yeni alıcılar"
+            };
+            format!(
+                "{theme} {} / {} talebi patladı (+{})",
+                city_short(*city),
+                product,
+                extra_demand
+            )
+        }
     }
 }
 
