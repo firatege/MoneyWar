@@ -1323,9 +1323,12 @@ fn seed_world(human_role: Role, config: RoomConfig, room_id: RoomId) -> GameStat
     }
 
     // İnsan oyuncu — rol'e göre özelleştirilmiş başlangıç paketi.
+    // Sıkı bütçe: 1. fabrika/kervan zaten bedava + Sanayici 100 birim ham
+    // starter alıyor. Bol nakit "para baskısı yok, riske girmem" hissi
+    // veriyordu; düşürüldü.
     let (starting_cash, human_name) = match human_role {
-        Role::Sanayici => (50_000_i64, "Sen (Sanayici)"),
-        Role::Tuccar => (80_000_i64, "Sen (Tüccar)"),
+        Role::Sanayici => (25_000_i64, "Sen (Sanayici)"),
+        Role::Tuccar => (40_000_i64, "Sen (Tüccar)"),
     };
     let mut human = Player::new(
         HUMAN_ID,
