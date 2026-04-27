@@ -593,13 +593,13 @@ impl Achievement {
     fn label(self) -> &'static str {
         match self {
             Self::FirstFactory => "✨  İLK FABRİKAN! ✨",
-            Self::FirstCaravan => "🐪  İLK KERVAN! 🐪",
-            Self::FirstTrade => "🤝  İLK İŞLEM! 🤝",
-            Self::TenK => "💰  10.000₺ EŞİĞİ! 💰",
-            Self::FiftyK => "💎  50.000₺ — Tüccarsın artık 💎",
-            Self::HundredK => "👑  100.000₺ — Anadolu'nun kralı 👑",
-            Self::ThreeFactories => "🏭  3 ŞEHRE FABRİKA — sanayi imparatoru 🏭",
-            Self::ThreeCaravans => "🚂  3 KERVAN — kervansız geçilmez 🚂",
+            Self::FirstCaravan => "🐪  İLK KERVANIN! 🐪",
+            Self::FirstTrade => "🤝  İLK İŞLEMİN! 🤝",
+            Self::TenK => "💰  10.000₺ — kasan doldu",
+            Self::FiftyK => "💎  50.000₺ — büyük kasa",
+            Self::HundredK => "👑  100.000₺ — büyük servet",
+            Self::ThreeFactories => "🏭  3 ŞEHRE FABRİKA",
+            Self::ThreeCaravans => "🚂  3 KERVANLIK FİLO",
             Self::LeadingNow => "🥇  LEADERBOARD'DA 1.LİK!",
         }
     }
