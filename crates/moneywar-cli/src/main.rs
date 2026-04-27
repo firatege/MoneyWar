@@ -1459,59 +1459,57 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
 /// büyüklüğü görünür. Oyuncu makro-strateji kurabilir ama rakip mikrosunu
 /// göremez.
 fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let popup = centered_rect(80, 80, area);
+    let popup = centered_rect(90, 75, area);
     f.render_widget(Clear, popup);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 📊  Pazar Verileri  —  son 5 tick (fog) ")
+        .title(" 📊  Pazar Verileri  —  ort. fiyat + tahmini stok (fog) ")
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled(
-        "  Şehirde toplam ne kadar mal var? Ortalama fiyat nedir?",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  Bireysel stok gizli — rakamlar tahmini aralık.",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        format!(
-            "  {:<10} {:<11} {:>10}      {}",
-            "Şehir", "Ürün", "Ort. fiyat", "Tahmini stok"
-        ),
+    // Matrix layout: ürün satır, şehir sütun. Her hücre = "fiyat ~stok-aralık".
+    // 18 satırlık liste yerine 6 satır × 3 sütun → ekrana kompakt sığar.
+    let mut header_cells: Vec<ratatui::text::Text> = vec![ratatui::text::Text::from(Span::styled(
+        "Ürün",
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-    )));
-
+    ))];
     for city in CityId::ALL {
-        for product in ProductKind::ALL {
-            // Toplam stok — tüm oyuncuların inventory'sinin (city, product) hücresi.
+        header_cells.push(ratatui::text::Text::from(Span::styled(
+            city_short(city),
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )));
+    }
+    let header_row = Row::new(header_cells);
+
+    let mut rows: Vec<Row> = Vec::new();
+    for product in ProductKind::ALL {
+        let mut cells: Vec<ratatui::text::Text> = vec![ratatui::text::Text::from(Span::styled(
+            format!("{product}"),
+            Style::default()
+                .fg(product_color(product))
+                .add_modifier(Modifier::BOLD),
+        ))];
+        for city in CityId::ALL {
             let total: u64 = app
                 .state
                 .players
                 .values()
                 .map(|p| u64::from(p.inventory.get(city, product)))
                 .sum();
-            // Fog: bant = max(50, total/8). 0 ise "yok".
             let stock_label = if total == 0 {
                 "—".to_string()
             } else {
                 let band = (total / 8).max(50);
                 let low = total.saturating_sub(band);
                 let high = total.saturating_add(band);
-                format!("~{low}–{high}")
+                format!("~{low}-{high}")
             };
-            // Ortalama fiyat — son 5 tick rolling avg, yoksa baseline (effective).
             let avg = app
                 .state
                 .rolling_avg_price(city, product, 5)
@@ -1520,43 +1518,56 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 Some(m) => format!("{m}"),
                 None => "—".to_string(),
             };
-            let highlight = total > 0;
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("{:<10} ", city_short(city)),
-                    Style::default().fg(Color::Blue),
-                ),
-                Span::styled(
-                    format!("{:<11} ", product),
-                    Style::default().fg(product_color(product)),
-                ),
-                Span::styled(
-                    format!("{:>10}      ", price_label),
-                    Style::default().fg(Color::Yellow),
-                ),
-                Span::styled(
-                    stock_label,
-                    Style::default().fg(if highlight {
-                        Color::Green
-                    } else {
-                        Color::DarkGray
-                    }),
-                ),
-            ]));
+            // İki satırlı hücre: 1) fiyat, 2) stok aralığı.
+            let price_line = Line::from(Span::styled(
+                price_label,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            let stock_line = Line::from(Span::styled(
+                stock_label,
+                Style::default().fg(if total > 0 {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                }),
+            ));
+            let mut text = ratatui::text::Text::from(price_line);
+            text.lines.push(stock_line);
+            cells.push(text);
         }
-        lines.push(Line::from(""));
+        rows.push(Row::new(cells).height(2));
     }
 
-    lines.push(Line::from(Span::styled(
-        "  Esc / Enter / Space ile kapat",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
+    let widths = [
+        Constraint::Length(12),
+        Constraint::Min(14),
+        Constraint::Min(14),
+        Constraint::Min(14),
+    ];
+    let table = Table::new(rows, widths).header(header_row);
 
-    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
-    f.render_widget(para, inner);
+    // İki bölge: tablo + altta info satırı.
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(14), Constraint::Length(2)])
+        .split(inner);
+    f.render_widget(table, chunks[0]);
+
+    let info = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "Bireysel stok gizli — rakamlar tahmini aralık (~total ±bant).",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+        Line::from(Span::styled(
+            "Esc / Enter / Space ile kapat",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]);
+    f.render_widget(info, chunks[1]);
 }
 
 fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -3288,27 +3299,25 @@ fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 📖  Açık Pazar  —  orderbook depth ")
+        .title(" 📖  Açık Pazar  —  orderbook depth (fog: owner gizli) ")
         .border_style(Style::default().fg(Color::Blue));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        "  Her (şehir × ürün) için en iyi 3 bid (alıcı) + 3 ask (satıcı). Kendi emirlerin sarı.",
+        "  Fiyat × miktar derinliği. Kim koymuş gizli — kendi emirin ⭐ sarı.",
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
 
-    // Sadece emir bulunan (şehir, ürün)'ü göster — determinism için BTreeMap sırası.
     let mut any = false;
     for ((city, product), orders) in &app.state.order_book {
         let (mut buys, mut sells): (Vec<_>, Vec<_>) = orders
             .iter()
             .partition(|o| matches!(o.side, OrderSide::Buy));
-        // Best bid: yüksek fiyat önce. Best ask: düşük fiyat önce.
         buys.sort_by(|a, b| b.unit_price.cmp(&a.unit_price));
         sells.sort_by(|a, b| a.unit_price.cmp(&b.unit_price));
 
@@ -3317,83 +3326,53 @@ fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         }
         any = true;
 
+        let total_bid: u32 = buys.iter().map(|o| o.quantity).sum();
+        let total_ask: u32 = sells.iter().map(|o| o.quantity).sum();
         lines.push(Line::from(vec![
-            Span::styled("  ", Style::default()),
+            Span::raw("  "),
             Span::styled(
                 format!("{} {}", city_short(*city), product),
                 Style::default()
                     .fg(product_color(*product))
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(
+                format!("   bid Σ{total_bid}  ·  ask Σ{total_ask}"),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]));
 
-        // Başlık.
-        lines.push(Line::from(Span::styled(
-            "     BID (alıcı)                          │     ASK (satıcı)",
-            Style::default().fg(Color::DarkGray),
-        )));
-
-        // İlk 3'er satır yan yana.
-        for i in 0..3 {
-            let bid = buys.get(i);
-            let ask = sells.get(i);
-            let bid_text = bid.map(|o| {
-                let is_mine = o.player == HUMAN_ID;
-                let owner = app
-                    .state
-                    .players
-                    .get(&o.player)
-                    .map(|p| truncate_str(&p.name, 14))
-                    .unwrap_or_default();
-                (
-                    format!(
-                        "{:<14}  {:>6} adet @ {:>8}  (TTL {})",
-                        owner, o.quantity, o.unit_price, o.remaining_ticks
-                    ),
-                    is_mine,
-                )
-            });
-            let ask_text = ask.map(|o| {
-                let is_mine = o.player == HUMAN_ID;
-                let owner = app
-                    .state
-                    .players
-                    .get(&o.player)
-                    .map(|p| truncate_str(&p.name, 14))
-                    .unwrap_or_default();
-                (
-                    format!(
-                        "{:<14}  {:>6} adet @ {:>8}  (TTL {})",
-                        owner, o.quantity, o.unit_price, o.remaining_ticks
-                    ),
-                    is_mine,
-                )
-            });
-
-            let mut spans = vec![Span::raw("     ")];
-            match bid_text {
-                Some((txt, mine)) => spans.push(Span::styled(
-                    txt,
-                    Style::default().fg(if mine { Color::Yellow } else { Color::Green }),
-                )),
-                None => spans.push(Span::styled(
-                    format!("{:<44}", "—"),
-                    Style::default().fg(Color::DarkGray),
-                )),
-            }
-            spans.push(Span::raw("  │  "));
-            match ask_text {
-                Some((txt, mine)) => spans.push(Span::styled(
-                    txt,
-                    Style::default().fg(if mine { Color::Yellow } else { Color::Red }),
-                )),
-                None => spans.push(Span::styled(
-                    "—".to_string(),
-                    Style::default().fg(Color::DarkGray),
-                )),
-            }
-            lines.push(Line::from(spans));
+        // BID chip satırı — owner yok, sadece miktar @ fiyat.
+        let mut bid_spans: Vec<Span> = vec![Span::styled(
+            "    BID  ",
+            Style::default().fg(Color::Green),
+        )];
+        for o in buys.iter().take(4) {
+            let mine = o.player == HUMAN_ID;
+            let star = if mine { "⭐" } else { "" };
+            let style = Style::default().fg(if mine { Color::Yellow } else { Color::Green });
+            bid_spans.push(Span::styled(
+                format!("{star}{}@{}", o.quantity, o.unit_price),
+                if mine { style.add_modifier(Modifier::BOLD) } else { style },
+            ));
+            bid_spans.push(Span::raw("  "));
         }
+        lines.push(Line::from(bid_spans));
+
+        // ASK chip satırı.
+        let mut ask_spans: Vec<Span> =
+            vec![Span::styled("    ASK  ", Style::default().fg(Color::Red))];
+        for o in sells.iter().take(4) {
+            let mine = o.player == HUMAN_ID;
+            let star = if mine { "⭐" } else { "" };
+            let style = Style::default().fg(if mine { Color::Yellow } else { Color::Red });
+            ask_spans.push(Span::styled(
+                format!("{star}{}@{}", o.quantity, o.unit_price),
+                if mine { style.add_modifier(Modifier::BOLD) } else { style },
+            ));
+            ask_spans.push(Span::raw("  "));
+        }
+        lines.push(Line::from(ask_spans));
         lines.push(Line::from(""));
     }
 
@@ -3404,7 +3383,6 @@ fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         )));
     }
 
-    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Esc / Enter / Space → kapat",
         Style::default()
