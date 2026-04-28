@@ -4077,6 +4077,86 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
+    // --- Envanter (şehir × ürün stok matrisi) ---
+    lines.push(Line::from(Span::styled(
+        "📦  Envanter (şehir × ürün)",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    if let Some(player) = app.state.players.get(&HUMAN_ID) {
+        // Header satırı: ürün adlarının yanına şehir sütun başlıkları.
+        let mut header_spans: Vec<Span> = vec![Span::styled(
+            "  Ürün         ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )];
+        for city in CityId::ALL {
+            header_spans.push(Span::styled(
+                format!("{:<12}", city_short(city)),
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        header_spans.push(Span::styled(
+            "Toplam",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::from(header_spans));
+
+        let mut grand_total: u64 = 0;
+        for product in ProductKind::ALL {
+            let qtys: Vec<u32> = CityId::ALL
+                .iter()
+                .map(|c| player.inventory.get(*c, product))
+                .collect();
+            let row_total: u32 = qtys.iter().sum();
+            grand_total = grand_total.saturating_add(u64::from(row_total));
+            // Sıfır toplamlı ürünleri sönük göster (yer tutar ama göze batmaz).
+            let row_dim = row_total == 0;
+            let mut spans: Vec<Span> = vec![Span::styled(
+                format!("  {:<12} ", product),
+                if row_dim {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default()
+                        .fg(product_color(product))
+                        .add_modifier(Modifier::BOLD)
+                },
+            )];
+            for q in &qtys {
+                let style = if *q == 0 {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                spans.push(Span::styled(format!("{:<12}", q), style));
+            }
+            spans.push(Span::styled(
+                format!("{}", row_total),
+                if row_dim {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                },
+            ));
+            lines.push(Line::from(spans));
+        }
+        if grand_total == 0 {
+            lines.push(Line::from(Span::styled(
+                "  (hiç stoğun yok — alış emri ver veya fabrika kur)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+
     // --- Açık emirler ---
     lines.push(Line::from(Span::styled(
         "📋  Açık Emirler (book'ta, tick sonunda eşleşecek)",
