@@ -19,9 +19,11 @@ usage() {
 ${C_BOLD}mw${C_RST} — MoneyWar kısayolu
 
 ${C_CYAN}Oyun:${C_RST}
-  ./mw solo                          Tek-oyunculu TUI (mevcut single-player)
-  ./mw server [--port N]             LAN sunucu (default port 7878)
-  ./mw connect <ip:port> [name]      Sunucuya bağlan (Sprint 3 stdout-mode)
+  ./mw solo                          Tek-oyunculu TUI
+  ./mw server [--port 7878] [--tick-ms 1500]
+                                     LAN sunucu. tick-ms: tick aralığı
+                                     (100..10000, default 1500ms)
+  ./mw connect <ip:port> [name]      Sunucuya bağlan (zengin TUI)
 
 ${C_CYAN}Geliştirme:${C_RST}
   ./mw build                         Release build (4 crate)

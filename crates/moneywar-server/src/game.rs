@@ -29,20 +29,36 @@ use crate::ServerState;
 /// Server difficulty — Sprint 3 default Hard. Sprint 4'te lobi config'inden gelecek.
 const SERVER_DIFFICULTY: Difficulty = Difficulty::Hard;
 
+/// Tick advance modu.
+#[derive(Debug, Clone, Copy)]
+pub enum TickMode {
+    /// Server her `ms` ms'de tick advance eder (timer-driven).
+    Auto { ms: u64 },
+    /// Tüm bağlı oyuncular `AdvanceReady` yollayınca tick advance.
+    /// Solo'daki SPACE deneyimi gibi — kimse acele etmiyor.
+    Manual,
+}
+
 /// Game loop'u arka plan task olarak spawn eder. State `Arc<Mutex<ServerState>>`
 /// üzerinden paylaşılır; connection task'ları aynı state'e SubmitCommand ekler.
-pub fn spawn_game_loop(state: Arc<Mutex<ServerState>>, tick_ms: u64) {
+pub fn spawn_game_loop(state: Arc<Mutex<ServerState>>, mode: TickMode) {
     tokio::spawn(async move {
-        run_game_loop(state, tick_ms).await;
+        run_game_loop(state, mode).await;
     });
 }
 
-async fn run_game_loop(state: Arc<Mutex<ServerState>>, tick_ms: u64) {
+async fn run_game_loop(state: Arc<Mutex<ServerState>>, mode: TickMode) {
+    info!("⏰ game loop başladı (mode={mode:?})");
+    match mode {
+        TickMode::Auto { ms } => run_auto_loop(state, ms).await,
+        TickMode::Manual => run_manual_loop(state).await,
+    }
+}
+
+async fn run_auto_loop(state: Arc<Mutex<ServerState>>, tick_ms: u64) {
     let mut ticker = interval(Duration::from_millis(tick_ms));
     // İlk tick'i hemen tetikleme — lobby'den çıkışı serbest bırak.
     ticker.tick().await;
-
-    info!("⏰ game loop başladı (tick_ms={tick_ms})");
 
     loop {
         ticker.tick().await;
@@ -73,6 +89,62 @@ enum TickOutcome {
     SeasonEnded,
     EngineError(String),
     Stopped,
+}
+
+async fn run_manual_loop(state: Arc<Mutex<ServerState>>) {
+    // Manual mode: state.advance_notify'a uyandığında tick advance et.
+    // İlk tick'i de bekle — başlamak için en az bir AdvanceReady gerekiyor.
+    loop {
+        let notify = {
+            let s = state.lock().await;
+            s.advance_notify.clone()
+        };
+        notify.notified().await;
+
+        let result = advance_one_tick(&state).await;
+        match result {
+            TickOutcome::Continued => {
+                // Bir sonraki tur için tüm oyuncuların ready'sini sıfırla.
+                let mut s = state.lock().await;
+                s.advance_pending.clear();
+            }
+            TickOutcome::SeasonEnded => {
+                info!("🏁 sezon bitti, manual loop sonlanıyor");
+                let mut s = state.lock().await;
+                s.lobby.game_started = false;
+                break;
+            }
+            TickOutcome::EngineError(msg) => {
+                error!("advance_tick hatası: {msg}");
+                break;
+            }
+            TickOutcome::Stopped => {
+                info!("manual loop durduruldu");
+                break;
+            }
+        }
+    }
+}
+
+/// Bir oyuncudan `AdvanceReady` geldi. Tüm bağlı oyuncular hazır olduğunda
+/// game loop'u uyandır. Manual mode'da çağrılır; auto mode'da no-op.
+pub async fn handle_advance_ready(
+    state: &Arc<Mutex<ServerState>>,
+    player_id: moneywar_domain::PlayerId,
+) {
+    let mut s = state.lock().await;
+    if !s.lobby.game_started {
+        return;
+    }
+    s.advance_pending.insert(player_id);
+    let all_ready = s
+        .lobby
+        .slots
+        .keys()
+        .all(|id| s.advance_pending.contains(id));
+    if all_ready && !s.lobby.slots.is_empty() {
+        s.advance_notify.notify_one();
+    }
 }
 
 async fn advance_one_tick(state: &Arc<Mutex<ServerState>>) -> TickOutcome {

@@ -72,6 +72,8 @@ pub enum MpCommand {
     SelectRole(Role),
     SetReady(bool),
     Submit(Command),
+    /// Manual tick mode'da bir sonraki tick için "hazırım" sinyali.
+    AdvanceReady,
     Bye,
 }
 
@@ -229,6 +231,9 @@ async fn network_task(
                 }
                 Some(MpCommand::Submit(command)) => {
                     let _ = send(&mut framed, &ClientMessage::SubmitCommand { command }).await;
+                }
+                Some(MpCommand::AdvanceReady) => {
+                    let _ = send(&mut framed, &ClientMessage::AdvanceReady).await;
                 }
                 Some(MpCommand::Bye) => {
                     let _ = send(&mut framed, &ClientMessage::Bye).await;

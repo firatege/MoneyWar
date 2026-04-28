@@ -46,8 +46,7 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use moneywar_domain::{Command, GameState, PlayerId, RoomId};
 use moneywar_net::{
-    ClientMessage, DEFAULT_TICK_MS, PROTOCOL_VERSION, RejectReason, ServerMessage, decode_client,
-    encode_server,
+    ClientMessage, PROTOCOL_VERSION, RejectReason, ServerMessage, decode_client, encode_server,
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, mpsc};
@@ -62,6 +61,10 @@ const IDLE_TIMEOUT_SECS: u64 = 30; // lobide insan biraz gecikebilir
 const DEFAULT_PORT: u16 = 7878;
 const OUTBOUND_CHANNEL_CAP: usize = 32;
 
+/// Server tick periyodu — `--tick-ms <N>` ile set edilir; `None` → manual mode.
+/// Auto mode'da 1500ms önerilir (90-tick sezon ~2 dk 15 sn).
+static TICK_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -74,6 +77,11 @@ async fn main() -> Result<()> {
         .init();
 
     let port = parse_port_arg().unwrap_or(DEFAULT_PORT);
+    // --tick-ms <N> verilirse auto mode (timer); yoksa manual mode (SPACE).
+    if let Some(ms) = parse_tick_ms_arg() {
+        TICK_MS.set(ms).ok();
+    }
+
     let addr: SocketAddr = format!("0.0.0.0:{port}")
         .parse()
         .with_context(|| format!("invalid bind address (port {port})"))?;
@@ -82,7 +90,13 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("port {port} bind edilemedi"))?;
     info!("MoneyWar server v{SERVER_VERSION} dinliyor: {addr}");
-    info!("protocol_version = {PROTOCOL_VERSION}, idle_timeout = {IDLE_TIMEOUT_SECS}s");
+    let mode_str = match TICK_MS.get() {
+        Some(ms) => format!("auto ({ms}ms)"),
+        None => "manual (SPACE ile ilerle)".into(),
+    };
+    info!(
+        "protocol_version = {PROTOCOL_VERSION}, tick_mode = {mode_str}, idle_timeout = {IDLE_TIMEOUT_SECS}s"
+    );
 
     let state = Arc::new(Mutex::new(ServerState::new()));
 
@@ -113,6 +127,11 @@ pub struct ServerState {
     pub game: Option<GameState>,
     /// Tick batch'ine girmeyi bekleyen insan komutları. Game loop drain eder.
     pub pending_commands: Vec<Command>,
+    /// Manual tick mode'da bu tur AdvanceReady yollamış oyuncular.
+    /// Tüm slot'lar burada → notify tetiklenir → tick advance.
+    pub advance_pending: std::collections::BTreeSet<PlayerId>,
+    /// Manual loop bunu bekler; tüm oyuncular ready basınca uyandırılır.
+    pub advance_notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl ServerState {
@@ -128,6 +147,8 @@ impl ServerState {
             )),
             game: None,
             pending_commands: Vec::new(),
+            advance_pending: std::collections::BTreeSet::new(),
+            advance_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -396,6 +417,9 @@ async fn handle_client_message(
         ClientMessage::Ping { nonce } => {
             send_to(state, player_id, ServerMessage::Pong { nonce }).await;
         }
+        ClientMessage::AdvanceReady => {
+            game::handle_advance_ready(state, player_id).await;
+        }
         ClientMessage::Bye => {
             info!("player_id={}: Bye", player_id.value());
             return Ok(false);
@@ -438,15 +462,24 @@ async fn start_game(state: &Arc<Mutex<ServerState>>) {
         initial_state.players.values().filter(|p| p.is_npc).count(),
     );
     game::install_initial_state(state, initial_state.clone()).await;
+    let tick_mode = match TICK_MS.get().copied() {
+        Some(ms) => game::TickMode::Auto { ms },
+        None => game::TickMode::Manual,
+    };
+    let tick_ms = match tick_mode {
+        game::TickMode::Auto { ms } => ms,
+        game::TickMode::Manual => 0, // 0 = manual (client UI bunu okuyabilir)
+    };
+    info!("tick mode: {tick_mode:?}");
     broadcast(
         state,
         &ServerMessage::GameStart {
             initial_state: Box::new(initial_state),
-            tick_ms: DEFAULT_TICK_MS,
+            tick_ms,
         },
     )
     .await;
-    game::spawn_game_loop(state.clone(), DEFAULT_TICK_MS);
+    game::spawn_game_loop(state.clone(), tick_mode);
 }
 
 /// Tek bir mesajı framed stream'e yaz — encode hatasını yutmaz.
@@ -471,6 +504,27 @@ fn parse_port_arg() -> Option<u16> {
         }
         if let Some(rest) = arg.strip_prefix("--port=") {
             return rest.parse().ok();
+        }
+    }
+    None
+}
+
+/// `--tick-ms <N>` argümanını parse et. Yoksa `None`.
+/// Server tick periyodu (ms cinsinden, 100..=10_000 makul). Host yavaşlatabilsin.
+fn parse_tick_ms_arg() -> Option<u64> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--tick-ms" {
+            return args
+                .next()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|n| (100..=10_000).contains(n));
+        }
+        if let Some(rest) = arg.strip_prefix("--tick-ms=") {
+            return rest
+                .parse::<u64>()
+                .ok()
+                .filter(|n| (100..=10_000).contains(n));
         }
     }
     None

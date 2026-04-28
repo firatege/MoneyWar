@@ -240,7 +240,11 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Char(' ') => {
                 if app.is_mp() {
-                    app.set_status_info("MP modunda tick'ler sunucuda otomatik ilerler");
+                    // Manual mode: server tüm oyuncuların AdvanceReady'sini
+                    // bekler. Auto mode: server'ın timer'ı zaten advance ediyor,
+                    // bu mesaj orada no-op.
+                    app.mp_send(MpCommand::AdvanceReady);
+                    app.set_status_info("⏭ AdvanceReady (diğer oyuncular bekleniyor)");
                 } else {
                     app.step_one_tick();
                 }

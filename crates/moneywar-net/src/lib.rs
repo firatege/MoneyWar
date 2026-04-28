@@ -73,6 +73,11 @@ pub enum ClientMessage {
     /// Bağlantıyı koru. 1 Hz, server karşılığında `Pong` döner.
     Ping { nonce: u64 },
 
+    /// **Manual tick mode**: bu oyuncu sıradaki tick için "hazırım" diyor.
+    /// Server tüm bağlı oyuncuları beklediğinde advance eder. Auto mode'da
+    /// (timer-driven) ignore edilir.
+    AdvanceReady,
+
     /// Temiz çıkış — server diğer client'lara `PlayerLeft` yayınlar.
     Bye,
 }
