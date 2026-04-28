@@ -39,8 +39,9 @@ use std::io::{self, BufWriter, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod chatter;
-mod net_client;
+mod mp_session;
 use chatter::{ChatterEntry, generate_chatter};
+use mp_session::{MpCommand, MpEvent, MpSession};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -100,14 +101,20 @@ fn load_balance_config() -> (GameBalance, bool) {
 }
 
 fn main() -> Result<()> {
-    // Sprint 1: --connect <addr> verilirse TUI başlatma, network demo'ya gir.
-    // Bu sprint'te sadece bağlantı/heartbeat doğrulama; gerçek MP TUI Sprint 3'te.
-    if let Some(addr) = parse_connect_arg() {
-        return net_client::run_connect_demo(&addr);
-    }
-
     let (balance, loaded) = load_balance_config();
     let mut app = App::new(balance, loaded);
+
+    // --connect <addr> verilirse TUI MP modunda açılır (Sprint 4):
+    // - background tokio thread server'la konuşur
+    // - main thread aynı ratatui ekranını render eder, state network'ten gelir
+    if let Some(addr) = parse_connect_arg() {
+        let player_name = std::env::var("MONEYWAR_NAME").unwrap_or_else(|_| "Sen".to_string());
+        let session = MpSession::start(addr, player_name);
+        app.mp = Some(session);
+        // MP modunda startup ekranı atlanır → direkt Lobi (server'dan gelen
+        // ilk LobbyState ile dolacak). Game ekranı GameStart'tan sonra.
+        app.mode = Mode::MpLobby;
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -143,24 +150,27 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
     let mut last_auto_tick = Instant::now();
 
     loop {
+        // MP modunda her loop iterasyonunda network olaylarını drain et.
+        // Bu state güncellemelerini render'dan önce uygular.
+        app.drain_mp_events();
+
         terminal.draw(|f| render(f, app))?;
 
-        // Auto-sim — Normal mode + "izleme" overlay'leri (DebugLog, MarketIntel,
-        // RecentTrades, NewsInbox, OpenBook, CaravanPanel, Holdings) sırasında
-        // çalışır. Wizard / Command / Help / Info / Startup / GameOver'da durur.
-        let auto_ok = matches!(
-            app.mode,
-            Mode::Normal
-                | Mode::DebugLog { .. }
-                | Mode::MarketIntel
-                | Mode::Contracts
-                | Mode::RecentTrades
-                | Mode::NewsInbox
-                | Mode::OpenBook
-                | Mode::CaravanPanel
-                | Mode::Holdings
-                | Mode::Chatter
-        );
+        // Auto-sim sadece SOLO modda — MP'de tick advance server'da olur.
+        let auto_ok = !app.is_mp()
+            && matches!(
+                app.mode,
+                Mode::Normal
+                    | Mode::DebugLog { .. }
+                    | Mode::MarketIntel
+                    | Mode::Contracts
+                    | Mode::RecentTrades
+                    | Mode::NewsInbox
+                    | Mode::OpenBook
+                    | Mode::CaravanPanel
+                    | Mode::Holdings
+                    | Mode::Chatter
+            );
         if app.auto_sim && auto_ok && last_auto_tick.elapsed() >= Duration::from_millis(300) {
             app.step_one_tick();
             last_auto_tick = Instant::now();
@@ -228,7 +238,13 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         },
         Mode::Normal => match code {
             KeyCode::Char('q') => return Ok(true),
-            KeyCode::Char(' ') => app.step_one_tick(),
+            KeyCode::Char(' ') => {
+                if app.is_mp() {
+                    app.set_status_info("MP modunda tick'ler sunucuda otomatik ilerler");
+                } else {
+                    app.step_one_tick();
+                }
+            }
             KeyCode::Char(':') => {
                 app.mode = Mode::Command {
                     buffer: String::new(),
@@ -334,8 +350,13 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 match parse_command(app, &line) {
                     Ok(cmd) => {
                         let label = describe_command(&cmd);
-                        app.pending_human_cmds.push(cmd);
-                        app.set_status_ok(format!("→ {label}  (SPACE ile tick ilerlet)"));
+                        if app.is_mp() {
+                            app.mp_send(MpCommand::Submit(cmd));
+                            app.set_status_ok(format!("→ {label}  (sunucuya yollandı)"));
+                        } else {
+                            app.pending_human_cmds.push(cmd);
+                            app.set_status_ok(format!("→ {label}  (SPACE ile tick ilerlet)"));
+                        }
                     }
                     Err(msg) => app.set_status_err(format!("Hata: {msg}")),
                 }
@@ -408,9 +429,15 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 }
                 WizardOutcome::Submitted(cmd) => {
                     let label = describe_command(&cmd);
-                    app.pending_human_cmds.push(cmd);
-                    app.mode = Mode::Normal;
-                    app.set_status_ok(format!("→ {label}  (SPACE ile tick ilerlet)"));
+                    if app.is_mp() {
+                        app.mp_send(MpCommand::Submit(cmd));
+                        app.mode = Mode::Normal;
+                        app.set_status_ok(format!("→ {label}  (sunucuya yollandı)"));
+                    } else {
+                        app.pending_human_cmds.push(cmd);
+                        app.mode = Mode::Normal;
+                        app.set_status_ok(format!("→ {label}  (SPACE ile tick ilerlet)"));
+                    }
                 }
                 WizardOutcome::Error(msg) => {
                     // Wizard açık kalsın, hata gösterilsin.
@@ -421,6 +448,35 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         }
         Mode::GameOver => match code {
             KeyCode::Char('q') => return Ok(true),
+            _ => {}
+        },
+        Mode::MpLobby => match code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                app.mp_send(MpCommand::Bye);
+                return Ok(true);
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.mp_my_role = Some(Role::Tuccar);
+                app.mp_my_ready = false;
+                app.mp_send(MpCommand::SelectRole(Role::Tuccar));
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.mp_my_role = Some(Role::Sanayici);
+                app.mp_my_ready = false;
+                app.mp_send(MpCommand::SelectRole(Role::Sanayici));
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Enter => {
+                if app.mp_my_role.is_some() {
+                    app.mp_my_ready = !app.mp_my_ready;
+                    app.mp_send(MpCommand::SetReady(app.mp_my_ready));
+                } else {
+                    app.set_status_err("önce rol seç (t/s)".to_string());
+                }
+            }
+            _ => {}
+        },
+        Mode::MpDisconnected { .. } => match code {
+            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter => return Ok(true),
             _ => {}
         },
     }
@@ -468,6 +524,13 @@ enum Mode {
     Contracts,
     /// NPC söylenti akışı — `j` ile açılır. Kişiliğe-uygun chatter satırları.
     Chatter,
+    /// LAN MP lobi ekranı — `--connect` ile açılır, ratatui'de rol picker +
+    /// ready toggle + bağlı oyuncu listesi.
+    MpLobby,
+    /// LAN MP "rejected" / disconnect ekranı — sebep mesajı + çıkış.
+    MpDisconnected {
+        reason: String,
+    },
     /// Tek-tuş aksiyon wizard — b/s/f/c/d/l/r/n/o/a/w/x ile açılır,
     /// adım adım komut kurar, ezbere parametre gerektirmez.
     Wizard {
@@ -689,6 +752,20 @@ struct App {
     selected_role: Role,
     /// NPC söylenti akışı — son CHATTER_WINDOW satır. Engine'e dokunmaz, UI-only.
     chatter_log: VecDeque<ChatterEntry>,
+    /// LAN MP oturumu — `--connect` ile set edilir. None ise solo mod.
+    mp: Option<MpSession>,
+    /// MP modunda server'ın bize verdiği `PlayerId` (insan oyuncu).
+    /// Solo modda HUMAN_ID kullanılır.
+    mp_player_id: Option<PlayerId>,
+    /// Lobi durumu — MP modunda LobbyState mesajından doldurulur.
+    mp_lobby: Vec<moneywar_net::LobbyEntry>,
+    /// Lobi'nin host'u.
+    mp_host: Option<PlayerId>,
+    /// Lobide rol seçildi/ready basıldı durumu (kullanıcı arayüzü için).
+    mp_my_role: Option<Role>,
+    mp_my_ready: bool,
+    /// Server'ın CommandRejected mesajları — kullanıcı feedback için son birkaçı.
+    mp_rejections: VecDeque<String>,
 }
 
 const CHATTER_WINDOW: usize = 60;
@@ -808,6 +885,98 @@ impl App {
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
             chatter_log: VecDeque::with_capacity(CHATTER_WINDOW),
+            mp: None,
+            mp_player_id: None,
+            mp_lobby: Vec::new(),
+            mp_host: None,
+            mp_my_role: None,
+            mp_my_ready: false,
+            mp_rejections: VecDeque::with_capacity(8),
+        }
+    }
+
+    /// MP modunda mıyız?
+    fn is_mp(&self) -> bool {
+        self.mp.is_some()
+    }
+
+    /// İnsan oyuncunun PlayerId'si — MP'de server'dan gelir, solo'da HUMAN_ID.
+    /// Sprint 4.3'te SubmitOrder/BuildFactory wizard'larında kullanılacak.
+    #[allow(dead_code)]
+    fn human_id(&self) -> PlayerId {
+        self.mp_player_id.unwrap_or(HUMAN_ID)
+    }
+
+    /// MP'den gelen olayları drain et, App state'ine uygula.
+    fn drain_mp_events(&mut self) {
+        let Some(session) = self.mp.as_ref() else {
+            return;
+        };
+        let events = session.drain_events();
+        for ev in events {
+            self.apply_mp_event(ev);
+        }
+    }
+
+    fn apply_mp_event(&mut self, ev: MpEvent) {
+        match ev {
+            MpEvent::Connected {
+                player_id,
+                room_id: _,
+                server_version: _,
+            } => {
+                self.mp_player_id = Some(player_id);
+            }
+            MpEvent::Rejected(reason) => {
+                self.mode = Mode::MpDisconnected {
+                    reason: format!("server reddetti: {reason:?}"),
+                };
+            }
+            MpEvent::Lobby { entries, host } => {
+                self.mp_lobby = entries;
+                self.mp_host = Some(host);
+            }
+            MpEvent::GameStart {
+                initial_state,
+                tick_ms: _,
+            } => {
+                self.state = *initial_state;
+                self.refresh_caches();
+                self.mode = Mode::Normal;
+            }
+            MpEvent::TickAdvanced { state } => {
+                self.prev_prices = state
+                    .price_history
+                    .iter()
+                    .filter_map(|(k, v)| v.last().map(|(_, p)| (*k, *p)))
+                    .collect();
+                self.state = *state;
+                self.refresh_caches();
+                self.status = None;
+            }
+            MpEvent::CommandRejected { reason } => {
+                if self.mp_rejections.len() >= 8 {
+                    self.mp_rejections.pop_front();
+                }
+                self.mp_rejections.push_back(reason.clone());
+                self.set_status_err(format!("emir reddedildi: {reason}"));
+            }
+            MpEvent::PlayerLeft {
+                player_id,
+                clean: _,
+            } => {
+                self.set_status_info(format!("oyuncu #{} ayrıldı", player_id.value()));
+            }
+            MpEvent::Disconnected { reason } => {
+                self.mode = Mode::MpDisconnected { reason };
+            }
+        }
+    }
+
+    /// MP modunda komut yolla. Solo modda no-op.
+    fn mp_send(&self, cmd: MpCommand) {
+        if let Some(session) = self.mp.as_ref() {
+            session.send(cmd);
         }
     }
 
@@ -1508,6 +1677,16 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         return;
     }
 
+    // MP lobi/disconnect — tüm alanı kaplar, oyun paneli yok.
+    if matches!(app.mode, Mode::MpLobby) {
+        render_mp_lobby(f, area, app);
+        return;
+    }
+    if let Mode::MpDisconnected { ref reason } = app.mode {
+        render_mp_disconnected(f, area, reason);
+        return;
+    }
+
     // Aktif şok varsa header altında bir satır ayır; yoksa görünmez (0 satır).
     let shock_height: u16 = u16::from(!app.state.active_shocks.is_empty());
 
@@ -1924,6 +2103,163 @@ fn render_contracts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .add_modifier(Modifier::ITALIC),
     )));
 
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_mp_lobby(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(70, 80, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🎮  LAN Lobi ")
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if app.mp_player_id.is_none() {
+        lines.push(Line::from(Span::styled(
+            "  Sunucuya bağlanılıyor…",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::ITALIC),
+        )));
+        let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+        f.render_widget(para, inner);
+        return;
+    }
+
+    let host_marker =
+        |id: PlayerId| -> &'static str { if Some(id) == app.mp_host { " 👑" } else { "" } };
+
+    let me = app.mp_player_id.unwrap_or(HUMAN_ID);
+
+    lines.push(Line::from(Span::styled(
+        format!("  Oyuncular ({})", app.mp_lobby.len()),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    lines.push(Line::from(""));
+    if app.mp_lobby.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (lobby state bekleniyor…)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for entry in &app.mp_lobby {
+            let me_marker = if entry.player_id == me { "  👈" } else { "" };
+            let role_label = entry
+                .role
+                .map(|r| match r {
+                    Role::Tuccar => "Tüccar",
+                    Role::Sanayici => "Sanayici",
+                })
+                .unwrap_or("?");
+            let ready_label = if entry.ready {
+                "✓ ready"
+            } else {
+                "  bekliyor"
+            };
+            let role_color = match entry.role {
+                Some(Role::Tuccar) => Color::Blue,
+                Some(Role::Sanayici) => Color::Magenta,
+                None => Color::DarkGray,
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("#{:<3}", entry.player_id.value()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("{:<14}", entry.player_name),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{role_label:<10}"), Style::default().fg(role_color)),
+                Span::styled(
+                    format!("  {ready_label}"),
+                    Style::default().fg(if entry.ready {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
+                Span::raw(host_marker(entry.player_id).to_string()),
+                Span::raw(me_marker.to_string()),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Tuşlar:",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!(
+            "    [t] Tüccar    [s] Sanayici    [r] Ready ({})    [q] Çık",
+            if app.mp_my_ready { "ON" } else { "OFF" }
+        ),
+        Style::default().fg(Color::Cyan),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  En az 2 oyuncu rol seçip ready basınca oyun başlar.",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    if let Some(status) = app.status.as_ref() {
+        lines.push(Line::from(""));
+        let color = match status.kind {
+            StatusKind::Ok => Color::Green,
+            StatusKind::Err => Color::Red,
+            StatusKind::Info => Color::Cyan,
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  ⚠ {}", status.text),
+            Style::default().fg(color),
+        )));
+    }
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+fn render_mp_disconnected(f: &mut ratatui::Frame<'_>, area: Rect, reason: &str) {
+    let popup = centered_rect(60, 30, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ✗  Bağlantı Sonlandı ")
+        .border_style(Style::default().fg(Color::Red));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {reason}"),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Çıkmak için herhangi bir tuş…",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+    ];
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });
     f.render_widget(para, inner);
 }
