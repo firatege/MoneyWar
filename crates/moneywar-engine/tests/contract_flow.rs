@@ -1,8 +1,8 @@
 //! Integration: Anlaşma Masası — fulfill ve breach patikaları uçtan uca.
 
 use moneywar_domain::{
-    CityId, Command, ContractProposal, ContractState, GameState, ListingKind, Money, Player,
-    PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
+    CityId, Command, ContractProposal, ContractState, GameState, ListingKind, Money, NewsTier,
+    Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::advance_tick;
 
@@ -32,6 +32,10 @@ fn init_state() -> GameState {
     )
     .unwrap();
     s.players.insert(buyer.id, buyer);
+    // Bu integration testleri kontrat akışını izole eder; news tick fee
+    // dengesini kirletmesin diye oyuncuları Free'ye geçir.
+    s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
+    s.news_subscriptions.insert(PlayerId::new(2), NewsTier::Free);
     s
 }
 

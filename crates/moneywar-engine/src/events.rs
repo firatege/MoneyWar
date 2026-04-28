@@ -302,6 +302,10 @@ fn dispatch_news(state: &mut GameState, event: GameEvent, event_tick: Tick) {
         .collect();
 
     for (player_id, tier) in entries {
+        // Free tier'da olay haberi yok — sürpriz şoklar.
+        if !tier.receives_event_news() {
+            continue;
+        }
         let news_id = NewsId::new(state.counters.next_news_id);
         state.counters.next_news_id = state.counters.next_news_id.saturating_add(1);
         let Ok(item) = NewsItem::from_event(news_id, tier, event_tick, event) else {
@@ -414,10 +418,10 @@ mod tests {
     }
 
     #[test]
-    fn tuccar_receives_silver_news_without_explicit_subscription() {
+    fn tuccar_receives_bronze_news_without_explicit_subscription() {
         let mut s = state_at(0);
         add_player(&mut s, 1, Role::Tuccar);
-        // Subscription yok ama Tuccar Silver'ı otomatik alır.
+        // Subscription yok ama Tüccar Bronze'u otomatik alır (rol-default v2).
 
         for t in 1..=200 {
             let mut r = TickReport::new(Tick::new(t));
@@ -426,12 +430,32 @@ mod tests {
             s.current_tick = Tick::new(t);
             if let Some(inbox) = s.news_inbox.get(&PlayerId::new(1)) {
                 if !inbox.is_empty() {
-                    assert_eq!(inbox[0].tier, NewsTier::Silver);
+                    assert_eq!(inbox[0].tier, NewsTier::Bronze);
                     return;
                 }
             }
         }
-        panic!("expected Silver news for Tuccar within 200 ticks");
+        panic!("expected Bronze news for Tuccar within 200 ticks");
+    }
+
+    #[test]
+    fn explicit_free_subscriber_receives_no_event_news() {
+        let mut s = state_at(0);
+        add_player(&mut s, 1, Role::Sanayici);
+        // Açıkça Free'ye geç (default artık Bronze).
+        s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
+
+        for t in 1..=200 {
+            let mut r = TickReport::new(Tick::new(t));
+            let mut rng = rng_for(s.room_id, Tick::new(t));
+            advance_events(&mut s, &mut rng, &mut r, Tick::new(t));
+            s.current_tick = Tick::new(t);
+        }
+        let inbox = s.news_inbox.get(&PlayerId::new(1));
+        assert!(
+            inbox.map_or(true, |i| i.is_empty()),
+            "Explicit Free subscriber should not receive event news"
+        );
     }
 
     #[test]

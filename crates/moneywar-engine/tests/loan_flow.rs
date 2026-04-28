@@ -1,7 +1,7 @@
 //! Integration: NPC kredi — manuel geri ödeme ve otomatik default.
 
 use moneywar_domain::{
-    Command, GameState, LoanId, Money, Player, PlayerId, Role, RoomConfig, RoomId,
+    Command, GameState, LoanId, Money, NewsTier, Player, PlayerId, Role, RoomConfig, RoomId,
 };
 use moneywar_engine::advance_tick;
 
@@ -16,6 +16,8 @@ fn init_state() -> GameState {
     )
     .unwrap();
     s.players.insert(p.id, p);
+    // Bu test kredi akışını izole eder; news fee dengesini bozmasın.
+    s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
     s
 }
 

@@ -347,13 +347,51 @@ impl LogEntry {
         }
     }
 
-    /// Oyuncu haber aboneliği değiştirdi (cost = 0 olabilir — Tuccar Silver).
+    /// Oyuncu haber aboneliği değiştirdi (recurring tarifeye geçiş — initial
+    /// tick debit'i `cost` ile gösterilir; 0 olabilir — Tuccar Bronze).
     #[must_use]
     pub fn news_subscribed(tick: Tick, player: PlayerId, tier: NewsTier, cost: Money) -> Self {
         Self {
             tick,
             actor: Some(player),
             event: LogEvent::NewsSubscribed { player, tier, cost },
+        }
+    }
+
+    #[must_use]
+    pub fn news_tick_charged(tick: Tick, player: PlayerId, tier: NewsTier, cost: Money) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::NewsTickCharged { player, tier, cost },
+        }
+    }
+
+    #[must_use]
+    pub fn news_payment_warning(
+        tick: Tick,
+        player: PlayerId,
+        tier: NewsTier,
+        owed: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::NewsPaymentWarning { player, tier, owed },
+        }
+    }
+
+    #[must_use]
+    pub fn news_downgraded(
+        tick: Tick,
+        player: PlayerId,
+        from: NewsTier,
+        to: NewsTier,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::NewsDowngraded { player, from, to },
         }
     }
 
@@ -801,11 +839,33 @@ pub enum LogEvent {
         unpaid_balance: Money,
     },
 
-    /// Oyuncu haber tier aboneliği değiştirdi. Tuccar için Silver bedavadır.
+    /// Oyuncu haber tier aboneliği değiştirdi. Recurring fee — tick başına
+    /// `tier.tick_cost(role)` çekilir. Cost initial debit (ilk tick).
     NewsSubscribed {
         player: PlayerId,
         tier: NewsTier,
         cost: Money,
+    },
+
+    /// Tick başı abonelik debit edildi.
+    NewsTickCharged {
+        player: PlayerId,
+        tier: NewsTier,
+        cost: Money,
+    },
+
+    /// Cash yetmedi — sonraki tick yine yetmezse Free'ye düşer.
+    NewsPaymentWarning {
+        player: PlayerId,
+        tier: NewsTier,
+        owed: Money,
+    },
+
+    /// Cash hâlâ yetmedi — abonelik Free'ye düşürüldü.
+    NewsDowngraded {
+        player: PlayerId,
+        from: NewsTier,
+        to: NewsTier,
     },
 
     /// Motor yeni olay zamanladı. Abonelere `NewsItem` olarak inbox'a düştü.

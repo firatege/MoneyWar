@@ -97,16 +97,32 @@ pub const SATURATION_PER_PLAYER: u32 = 50;
 pub const SATURATION_MIN_PLAYERS: u8 = 2;
 
 // =============================================================================
-// Haber
+// Haber (4-tier abonelik, recurring tick fee)
 // =============================================================================
+//
+// 4 tier: Free < Bronze < Silver < Gold. Free herkese bedava (varsayılan).
+// Tüccar her tier'da indirimli — bilgi onun mesleği. Bronze tüm Tüccar'lara
+// bedava; daha üstü ucuz. Tüm ücretler **tick başına** kesilir; oyuncu cash'i
+// yetmezse 1 tick uyarı, sonraki tick yine yetmezse Free'ye düşer.
 
-/// Bronz tier aylık/sezonluk ücreti — bedava (herkese açık).
-pub const NEWS_COST_BRONZE_LIRA: i64 = 0;
-/// Gümüş abonelik ücreti (Tüccar için bedava, diğerleri için).
-pub const NEWS_COST_SILVER_LIRA: i64 = 500;
-/// Altın abonelik — premium.
-pub const NEWS_COST_GOLD_LIRA: i64 = 2_000;
+/// Free — bedava, sadece "var/yok" + rolling avg.
+pub const NEWS_TICK_COST_FREE_LIRA: i64 = 0;
+/// Bronz — kategorik (yok/az/orta/bol) + ask/bid bandı.
+pub const NEWS_TICK_COST_BRONZE_LIRA: i64 = 5;
+/// Gümüş — 5'e yuvarlı miktar + ask/bid 5 kuruşa yuvarlı.
+pub const NEWS_TICK_COST_SILVER_LIRA: i64 = 15;
+/// Altın — tam veri + tüm olay haberleri.
+pub const NEWS_TICK_COST_GOLD_LIRA: i64 = 40;
 
+/// Tüccar — Bronze hafif indirimli (rol avantajı korunur ama bedava değil).
+pub const NEWS_TICK_COST_BRONZE_TUCCAR_LIRA: i64 = 2;
+/// Tüccar — Gümüş indirimli.
+pub const NEWS_TICK_COST_SILVER_TUCCAR_LIRA: i64 = 5;
+/// Tüccar — Altın indirimli.
+pub const NEWS_TICK_COST_GOLD_TUCCAR_LIRA: i64 = 15;
+
+/// Free: olay haberi yok (sürpriz şoklar).
+pub const NEWS_LEAD_FREE: u32 = 0;
 /// Bronz: olay tick'inde duyurulur.
 pub const NEWS_LEAD_BRONZE: u32 = 0;
 /// Gümüş: 1 tick önceden.
@@ -226,14 +242,25 @@ mod tests {
     }
 
     #[test]
-    fn news_costs_are_monotonic() {
-        assert!(NEWS_COST_BRONZE_LIRA < NEWS_COST_SILVER_LIRA);
-        assert!(NEWS_COST_SILVER_LIRA < NEWS_COST_GOLD_LIRA);
+    fn news_tick_costs_are_monotonic() {
+        assert_eq!(NEWS_TICK_COST_FREE_LIRA, 0);
+        assert!(NEWS_TICK_COST_FREE_LIRA < NEWS_TICK_COST_BRONZE_LIRA);
+        assert!(NEWS_TICK_COST_BRONZE_LIRA < NEWS_TICK_COST_SILVER_LIRA);
+        assert!(NEWS_TICK_COST_SILVER_LIRA < NEWS_TICK_COST_GOLD_LIRA);
+    }
+
+    #[test]
+    fn tuccar_news_costs_are_discounted() {
+        // Tüccar her tier'da normalden ucuz (rol avantajı korunur).
+        assert!(NEWS_TICK_COST_BRONZE_TUCCAR_LIRA < NEWS_TICK_COST_BRONZE_LIRA);
+        assert!(NEWS_TICK_COST_SILVER_TUCCAR_LIRA < NEWS_TICK_COST_SILVER_LIRA);
+        assert!(NEWS_TICK_COST_GOLD_TUCCAR_LIRA < NEWS_TICK_COST_GOLD_LIRA);
     }
 
     #[test]
     fn news_leads_are_monotonic() {
-        assert!(NEWS_LEAD_BRONZE < NEWS_LEAD_SILVER);
+        assert_eq!(NEWS_LEAD_FREE, 0);
+        assert!(NEWS_LEAD_BRONZE <= NEWS_LEAD_SILVER);
         assert!(NEWS_LEAD_SILVER < NEWS_LEAD_GOLD);
     }
 

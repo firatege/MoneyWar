@@ -51,9 +51,14 @@ pub struct GameState {
 
     pub contracts: BTreeMap<ContractId, Contract>,
 
-    /// Oyuncunun şu anki haber abonelik tier'ı. Tüccar Silver'ı bedava alır
-    /// ama motor yine de burada kayıt tutar (uniform kod yolu).
+    /// Oyuncunun şu anki haber abonelik tier'ı. Recurring fee — tick başına
+    /// `tier.tick_cost(role)` çekilir. Yokluk = Free.
     pub news_subscriptions: BTreeMap<PlayerId, NewsTier>,
+
+    /// Cash yetersizliği nedeniyle uyarılan oyuncular. Bir sonraki tick yine
+    /// ödenemezse Free'ye düşer. Ödeme yapılırsa silinir.
+    #[serde(default)]
+    pub news_payment_warned: std::collections::BTreeSet<PlayerId>,
 
     /// Oyuncu başı haber kutusu (en yenisi sondadır).
     pub news_inbox: BTreeMap<PlayerId, Vec<NewsItem>>,
@@ -126,6 +131,7 @@ impl GameState {
             order_book: BTreeMap::new(),
             contracts: BTreeMap::new(),
             news_subscriptions: BTreeMap::new(),
+            news_payment_warned: std::collections::BTreeSet::new(),
             news_inbox: BTreeMap::new(),
             loans: BTreeMap::new(),
             price_history: BTreeMap::new(),

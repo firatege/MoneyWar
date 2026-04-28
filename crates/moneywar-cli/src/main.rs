@@ -166,7 +166,6 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
                     | Mode::Contracts
                     | Mode::RecentTrades
                     | Mode::NewsInbox
-                    | Mode::OpenBook
                     | Mode::CaravanPanel
                     | Mode::Holdings
                     | Mode::Chatter
@@ -260,7 +259,6 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('r') => app.mode = Mode::MarketIntel,
             KeyCode::Char('y') => app.mode = Mode::Contracts,
             KeyCode::Char('e') => app.mode = Mode::RecentTrades,
-            KeyCode::Char('k') => app.mode = Mode::OpenBook,
             KeyCode::Char('v') => app.mode = Mode::CaravanPanel,
             KeyCode::Char('g') => app.mode = Mode::DebugLog { scroll: 0 },
             // Wizard kısayolları — tek tuşla aksiyon menüsü.
@@ -375,14 +373,26 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => app.mode = Mode::Command { buffer },
         },
+        Mode::MarketIntel => match code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
+                app.mode = Mode::Normal;
+            }
+            // Hammadde / Mamul sekme geçişi.
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::Char('h')
+            | KeyCode::Char('l') => {
+                app.market_intel_show_finished = !app.market_intel_show_finished;
+            }
+            _ => {}
+        },
         Mode::Help
         | Mode::Info
         | Mode::Holdings
         | Mode::NewsInbox
         | Mode::RecentTrades
-        | Mode::OpenBook
         | Mode::CaravanPanel
-        | Mode::MarketIntel
         | Mode::Contracts
         | Mode::Chatter => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
@@ -507,9 +517,6 @@ enum Mode {
     NewsInbox,
     /// Son eşleşmeler overlay — e ile açılır. Kim kime ne sattı, fiyat, tick.
     RecentTrades,
-    /// Açık Pazar (orderbook depth) overlay — k ile açılır. Her (şehir, ürün)
-    /// için en iyi bid/ask'lar.
-    OpenBook,
     /// Kervan kontrol paneli — v ile açılır. Detaylı kervan listesi + hızlı dispatch.
     CaravanPanel,
     /// Debug log overlay — g ile açılır. Son tick'lerin ham LogEntry akışı
@@ -676,6 +683,9 @@ struct Wizard {
     /// Ship wizard'da "daha ürün ekle mi?" confirm adımında olup olmadığını
     /// söyler. `true` iken tek seçim: 1 (ek) veya 2 (bitir).
     confirm_more_cargo: bool,
+    /// Product seçim adımında aktif sekme: false=Hammadde, true=Son Ürün.
+    /// `r` overlay'indeki tab ile aynı kavramsal ayrım. Tab tuşu değiştirir.
+    product_show_finished: bool,
 }
 
 impl Wizard {
@@ -686,6 +696,7 @@ impl Wizard {
             text_buf: String::new(),
             extra_cargo: Vec::new(),
             confirm_more_cargo: false,
+            product_show_finished: false,
         }
     }
 
@@ -726,6 +737,8 @@ struct App {
     prev_prices: std::collections::BTreeMap<(CityId, ProductKind), Money>,
     auto_sim: bool,
     mode: Mode,
+    /// `r` overlay'inde aktif sekme: false=Hammadde, true=Mamul.
+    market_intel_show_finished: bool,
     /// Startup ekranında seçilen preset (oyun başlayınca `state.config`'e yazılır).
     selected_preset: PresetChoice,
     /// NPC zorluk — Easy (basit likidite) veya Hard (akıllı, rekabetçi).
@@ -877,6 +890,7 @@ impl App {
             prev_prices: std::collections::BTreeMap::new(),
             auto_sim: false,
             mode: Mode::Startup,
+            market_intel_show_finished: false,
             selected_preset: PresetChoice::Hizli,
             difficulty: Difficulty::Hard,
             pending_human_cmds: Vec::new(),
@@ -1728,7 +1742,6 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Holdings => render_holdings_overlay(f, area, app),
         Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
         Mode::RecentTrades => render_recent_trades_overlay(f, area, app),
-        Mode::OpenBook => render_open_book_overlay(f, area, app),
         Mode::CaravanPanel => render_caravan_panel_overlay(f, area, app),
         Mode::MarketIntel => render_market_intel_overlay(f, area, app),
         Mode::Contracts => render_contracts_overlay(f, area, app),
@@ -1764,8 +1777,14 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
         format!("son {window_actual} tick")
     };
     let tier = human_news_tier(&app.state);
+    let _ = window_label;
+    let category_label = if app.market_intel_show_finished {
+        "🏭 Mamul"
+    } else {
+        "🌾 Hammadde"
+    };
     let title = format!(
-        " 📊  Pazar Verileri  —  {window_label} + arz/talep  ({} çözünürlük) ",
+        " 📊  Canlı Pazar  —  {category_label}  ·  {} ",
         tier.display_name()
     );
     let block = Block::default()
@@ -1775,10 +1794,33 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    // Her (city, product) için aktif order book'tan arz (SELL toplam) +
-    // talep (BUY toplam) hesapla. Stoktan değil — emirlerden.
-    // Stok bilgisi (envanterde ne kadar var) oyuncu için pratik değil;
-    // satışa çıkmış mal + alıcı baskısı asıl strateji sinyali.
+    // Sekme indikatörü — üst satır.
+    let raw_style = if app.market_intel_show_finished {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    };
+    let fin_style = if app.market_intel_show_finished {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let tab_line = Paragraph::new(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("[ 🌾 Hammadde ]", raw_style),
+        Span::raw("    "),
+        Span::styled("[ 🏭 Mamul ]", fin_style),
+        Span::styled(
+            "    (← →  Tab değiştir)",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+
+    // Header satırı: Ürün + 3 şehir.
     let mut header_cells: Vec<ratatui::text::Text> = vec![ratatui::text::Text::from(Span::styled(
         "Ürün",
         Style::default()
@@ -1795,8 +1837,20 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     }
     let header_row = Row::new(header_cells);
 
+    let dim = Style::default().fg(Color::DarkGray);
+    // Arz/talep her tier'da görünür ama qty_label_with_fog tier'a göre
+    // çözünürlüğü ayarlar (Free=var/yok, Bronze=az/orta/bol, Silver=~5'li, Gold=tam).
+    let show_arz_tlp = !matches!(tier, NewsTier::Free);
+
+    // Sekme'ye göre ürün listesi.
+    let products_in_tab: &[ProductKind] = if app.market_intel_show_finished {
+        &ProductKind::FINISHED_GOODS
+    } else {
+        &ProductKind::RAW_MATERIALS
+    };
+
     let mut rows: Vec<Row> = Vec::new();
-    for product in ProductKind::ALL {
+    for product in products_in_tab.iter().copied() {
         let mut cells: Vec<ratatui::text::Text> = vec![ratatui::text::Text::from(Span::styled(
             format!("{product}"),
             Style::default()
@@ -1804,7 +1858,7 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 .add_modifier(Modifier::BOLD),
         ))];
         for city in CityId::ALL {
-            // Aktif emirler — order book'tan SELL/BUY toplam.
+            // Aktif emirler — order book'tan SELL/BUY toplam (sadece Gold'da gösterilir).
             let (sell_qty, buy_qty): (u32, u32) = app
                 .state
                 .order_book
@@ -1816,48 +1870,60 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                     })
                 })
                 .unwrap_or((0, 0));
-            let avg = app
-                .state
-                .rolling_avg_price(city, product, 5)
-                .or_else(|| app.state.effective_baseline(city, product));
-            let price_label = match avg {
-                Some(m) => format!("{m}"),
-                None => "—".to_string(),
-            };
 
-            // İki satır: 1) fiyat, 2) arz/talep (tier'a göre çözünürlüklü).
-            let price_line = Line::from(Span::styled(
-                price_label,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            let supply_color = if sell_qty == 0 {
-                Color::DarkGray
-            } else {
-                Color::Green
-            };
-            let demand_color = if buy_qty == 0 {
-                Color::DarkGray
-            } else {
-                Color::Cyan
-            };
-            let activity_line = Line::from(vec![
-                Span::styled(
-                    format!("arz {}", qty_label_with_fog(sell_qty, tier)),
-                    Style::default().fg(supply_color),
-                ),
-                Span::raw("  "),
-                Span::styled(
-                    format!("tlp {}", qty_label_with_fog(buy_qty, tier)),
-                    Style::default().fg(demand_color),
-                ),
-            ]);
-            let mut text = ratatui::text::Text::from(price_line);
-            text.lines.push(activity_line);
+            let ask_levels = top_levels(&app.state, city, product, OrderSide::Sell, 3);
+            let bid_levels = top_levels(&app.state, city, product, OrderSide::Buy, 3);
+            let ask = ask_levels.first().copied();
+            let bid = bid_levels.first().copied();
+
+            // Hücre: sadece "<ask> · <bid>" (Gold'da +2 depth + arz/tlp).
+            // Ortalama ana panelde zaten var — burada tekrar yok.
+            let book_line = Line::from(book_span_for_tier(tier, ask, bid));
+            let mut text = ratatui::text::Text::from(book_line);
+
+            if matches!(tier, NewsTier::Gold) {
+                text.lines
+                    .push(Line::from(depth_span_for_gold(OrderSide::Sell, &ask_levels)));
+                text.lines
+                    .push(Line::from(depth_span_for_gold(OrderSide::Buy, &bid_levels)));
+            }
+
+            if show_arz_tlp {
+                let supply_color = if sell_qty == 0 {
+                    Color::DarkGray
+                } else {
+                    Color::Green
+                };
+                let demand_color = if buy_qty == 0 {
+                    Color::DarkGray
+                } else {
+                    Color::Cyan
+                };
+                text.lines.push(Line::from(vec![
+                    Span::styled("Σ", dim),
+                    Span::styled(
+                        format!("{}", qty_label_with_fog(sell_qty, tier)),
+                        Style::default().fg(supply_color),
+                    ),
+                    Span::styled("/", dim),
+                    Span::styled(
+                        format!("{}", qty_label_with_fog(buy_qty, tier)),
+                        Style::default().fg(demand_color),
+                    ),
+                ]));
+            }
             cells.push(text);
         }
-        rows.push(Row::new(cells).height(2));
+        // Hücre satır sayısı + 1 boşluk satırı (görsel ferahlık):
+        // - Free: 1 + 1 = 2
+        // - Bronze/Silver: 2 + 1 = 3
+        // - Gold: 4 + 1 = 5
+        let content_height = match tier {
+            NewsTier::Free => 1,
+            NewsTier::Bronze | NewsTier::Silver => 2,
+            NewsTier::Gold => 4,
+        };
+        rows.push(Row::new(cells).height(content_height + 1));
     }
 
     let widths = [
@@ -1870,17 +1936,44 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(14), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(1), // sekme bar
+            Constraint::Length(1), // boşluk
+            Constraint::Min(10),   // tablo
+            Constraint::Length(2), // alt info
+        ])
         .split(inner);
-    f.render_widget(table, chunks[0]);
+    f.render_widget(tab_line, chunks[0]);
+    f.render_widget(table, chunks[2]);
 
     let tier_hint = match tier {
-        NewsTier::Bronze => {
-            "Bronz: kategorik (yok/az/orta/bol). Net görmek için `:news silver` aboneliği."
+        NewsTier::Free => {
+            "Ücretsiz: sadece var/yok. Bronze için `:news bronze` (Tüccar bedava). Ortalama ana panelde."
         }
-        NewsTier::Silver => "Gümüş: 5'e yuvarlanmış. Tam rakam için `:news gold`.",
-        NewsTier::Gold => "Altın: tam çözünürlük.",
+        NewsTier::Bronze => {
+            "Bronz: ask/bid bandı (±%10). Net rakam için `:news silver`. Ortalama ana panelde."
+        }
+        NewsTier::Silver => {
+            "Gümüş: ask/bid 5 kuruşa yuvarlı. Tam rakam için `:news gold`. Ortalama ana panelde."
+        }
+        NewsTier::Gold => {
+            "Altın: tam ask/bid + top-3 depth (⭐ kendi emrin) + arz/tlp + 2-tick olay lead."
+        }
     };
+    // Renk legend.
+    let legend_line = Line::from(vec![
+        Span::styled("satıcı (ask)", Style::default().fg(Color::LightRed)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("alıcı (bid)", Style::default().fg(Color::LightGreen)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "kendi emrin ⭐",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  ·  Esc kapat", Style::default().fg(Color::DarkGray)),
+    ]);
     let info = Paragraph::new(vec![
         Line::from(Span::styled(
             tier_hint,
@@ -1888,12 +1981,9 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
         )),
-        Line::from(Span::styled(
-            "arz = aktif satış emri · tlp = aktif bid · Esc/Enter/Space kapat",
-            Style::default().fg(Color::DarkGray),
-        )),
+        legend_line,
     ]);
-    f.render_widget(info, chunks[1]);
+    f.render_widget(info, chunks[3]);
 }
 
 /// Kontrat panel — `y` ile açılır. Üç bölüm:
@@ -2560,8 +2650,7 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ),
         help_kv("n", "Haber kutusu"),
         help_kv("e", "🔄 Son eşleşmeler (kim kime ne sattı)"),
-        help_kv("k", "📖 Açık Pazar (orderbook depth)"),
-        help_kv("r", "📊 Pazar raporu (ort. fiyat + tahmini stok aralığı)"),
+        help_kv("r", "📊 Pazar Verileri (ort. + ask/bid + tier'a göre depth)"),
         help_kv("y", "📜 Kontratlar (pano + aktif + benim önerilerim)"),
         help_kv(
             "j",
@@ -2695,7 +2784,7 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Style::default().fg(Color::Cyan),
     )));
     lines.push(help_cmd(
-        ":news <bronze|silver|gold>",
+        ":news <free|bronze|silver|gold>",
         "Haber aboneliği değiştir",
     ));
 
@@ -3114,8 +3203,8 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
         )));
     }
 
-    // Buy wizard: şehir + ürün seçildiyse mevcut stok + son clearing fiyatı.
-    if matches!(wizard.kind, ActionKind::Buy) && wizard.fields.len() >= 2 {
+    // Al/Sat wizard: şehir + ürün seçildiyse mevcut stok + son fiyat + canlı ask/bid (tier'a göre fog).
+    if matches!(wizard.kind, ActionKind::Buy | ActionKind::Sell) && wizard.fields.len() >= 2 {
         let city = match wizard.fields.first() {
             Some(FieldValue::City(c)) => *c,
             _ => return out,
@@ -3145,12 +3234,12 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
                     .get(&(city, product))
                     .copied()
                     .unwrap_or(Money::ZERO);
-                format!("baseline {baseline} (henüz trade yok)")
+                format!("baseline {baseline}")
             }
         };
         out.push(Line::from(Span::styled(
             format!(
-                "  📦 {} {}'de zaten {} birim   💹 {}",
+                "  📦 {} {}'de stoğun {} birim   💹 {}",
                 product,
                 city_short(city),
                 my_stock,
@@ -3158,6 +3247,58 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
             ),
             Style::default().fg(Color::Cyan),
         )));
+
+        // Canlı pazar — tier'a göre fog'lu ask/bid + ipucu.
+        let tier = human_news_tier(&app.state);
+        let ask = top_levels(&app.state, city, product, OrderSide::Sell, 1)
+            .into_iter()
+            .next();
+        let bid = top_levels(&app.state, city, product, OrderSide::Buy, 1)
+            .into_iter()
+            .next();
+        let mut spans: Vec<Span> = vec![Span::styled(
+            "  📊 Pazar  ",
+            Style::default().fg(Color::DarkGray),
+        )];
+        spans.extend(book_span_for_tier(tier, ask, bid));
+        out.push(Line::from(spans));
+
+        // Eyleme yönelik ipucu — tier ≥ Bronze ise.
+        if !matches!(tier, NewsTier::Free) {
+            let hint = match wizard.kind {
+                ActionKind::Buy => match ask {
+                    Some(a) => format!(
+                        "     💡 hemen kapışmak için bid ≥ {}",
+                        match tier {
+                            NewsTier::Bronze => money_band_label(a.price),
+                            NewsTier::Silver => format!("{}", money_round_5_kurus(a.price)),
+                            _ => format!("{}", a.price),
+                        }
+                    ),
+                    None => "     💡 satıcı yok — bid'in beklemede kalır".to_string(),
+                },
+                ActionKind::Sell => match bid {
+                    Some(b) => format!(
+                        "     💡 hemen kapışmak için ask ≤ {}",
+                        match tier {
+                            NewsTier::Bronze => money_band_label(b.price),
+                            NewsTier::Silver => format!("{}", money_round_5_kurus(b.price)),
+                            _ => format!("{}", b.price),
+                        }
+                    ),
+                    None => "     💡 alıcı yok — ask'ın beklemede kalır".to_string(),
+                },
+                _ => String::new(),
+            };
+            if !hint.is_empty() {
+                out.push(Line::from(Span::styled(
+                    hint,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
     }
 
     out
@@ -3270,14 +3411,46 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                 }
             }
             FieldKind::Product => {
-                // Akıllı liste: rol + wizard kind'a göre filtre + sıralama.
+                // Sekme indikatörü — `r` overlay ile aynı kavram.
+                let raw_style = if wizard.product_show_finished {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                };
+                let fin_style = if wizard.product_show_finished {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled("[ 🌾 Hammadde ]", raw_style),
+                    Span::raw("    "),
+                    Span::styled("[ 🏭 Son Ürün ]", fin_style),
+                    Span::styled(
+                        "    (Tab / ← → değiştir)",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+                lines.push(Line::from(""));
+
+                // Akıllı liste: rol + wizard kind + sekme'ye göre filtre + sıralama.
                 let role = app
                     .state
                     .players
                     .get(&HUMAN_ID)
                     .map(|p| p.role)
                     .unwrap_or(Role::Tuccar);
-                let products = filtered_products_for_wizard(&app.state, role, wizard.kind);
+                let products = filtered_products_for_wizard(
+                    &app.state,
+                    role,
+                    wizard.kind,
+                    wizard.product_show_finished,
+                );
                 for (i, p) in products.iter().enumerate() {
                     let label = if i == 0 {
                         format!("{p}  (Enter ile)")
@@ -3304,15 +3477,20 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                 }
             }
             FieldKind::NewsTier_ => {
-                lines.push(option_line(1, "Bronz (bedava)", Color::Rgb(205, 127, 50)));
+                lines.push(option_line(1, "Ücretsiz (sadece var/yok)", Color::DarkGray));
                 lines.push(option_line(
                     2,
-                    "Gümüş (500₺, Tüccar bedava)",
-                    Color::Rgb(192, 192, 192),
+                    "Bronz (5₺/tick, Tüccar 2₺) — kategorik miktar + ask/bid bandı",
+                    Color::Rgb(205, 127, 50),
                 ));
                 lines.push(option_line(
                     3,
-                    "Altın (2000₺, 2 tick önce)",
+                    "Gümüş (15₺/tick, Tüccar 5₺) — 5 kuruşa yuvarlı",
+                    Color::Rgb(192, 192, 192),
+                ));
+                lines.push(option_line(
+                    4,
+                    "Altın (40₺/tick, Tüccar 15₺) — tam veri + 2-tick olay",
                     Color::Rgb(255, 215, 0),
                 ));
             }
@@ -3541,26 +3719,27 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
     f.render_widget(para, inner);
 }
 
-/// İnsan oyuncunun efektif haber tier'ı. Subscription map ve Tüccar
-/// role'ünün bedava Silver bonusunu birleştirir. Bu tier pazar raporu
-/// çözünürlüğünü belirler. Engine `effective_news_tier` `pub(crate)` —
-/// burada CLI muadili.
+/// İnsan oyuncunun efektif haber tier'ı. Subscription map ve role-default
+/// (Tüccar=Bronze, Sanayici=Free) birleşir. Bu tier pazar raporu çözünürlüğünü
+/// belirler. Engine `effective_news_tier` `pub(crate)` — burada CLI muadili.
 fn human_news_tier(state: &GameState) -> NewsTier {
     let player = state.players.get(&HUMAN_ID);
     let subscribed = state.news_subscriptions.get(&HUMAN_ID).copied();
-    let role_free = player.is_some_and(|p| p.role.free_silver_news());
-    let base = subscribed.unwrap_or(NewsTier::Bronze);
-    if role_free && base < NewsTier::Silver {
-        NewsTier::Silver
-    } else {
-        base
-    }
+    let role_default = player.map_or(NewsTier::Free, |p| p.role.default_news_tier());
+    let sub = subscribed.unwrap_or(NewsTier::Free);
+    if sub > role_default { sub } else { role_default }
 }
 
-/// Miktar etiketi — tier'a göre çözünürlük: Bronze kategorik
-/// (yok/az/orta/bol), Silver 5'e yuvarlanmış, Gold exact.
+/// Miktar etiketi — tier'a göre çözünürlük.
 fn qty_label_with_fog(qty: u32, tier: NewsTier) -> String {
     match tier {
+        NewsTier::Free => {
+            if qty == 0 {
+                "yok".into()
+            } else {
+                "var".into()
+            }
+        }
         NewsTier::Bronze => match qty {
             0 => "yok".into(),
             1..=30 => "az".into(),
@@ -3579,23 +3758,186 @@ fn qty_label_with_fog(qty: u32, tier: NewsTier) -> String {
     }
 }
 
-/// Wizard ürün seçim listesi: role + action kind'a göre filtreli + sıralı.
-/// İlk eleman = "akıllı default" (Enter ile seçilir). Sanayici Sat → finished
-/// only, Al → ham only, Tüccar → tümü. Sıralama: Sat = stok desc; Al+Sanayici
-/// = fabrika raw_input ilk; Al+Tüccar = arbitraj farkı desc.
+/// Tek bir orderbook level — fiyat + qty + insan oyuncuya ait mi.
+#[derive(Debug, Clone, Copy)]
+struct BookLevel {
+    price: Money,
+    qty: u32,
+    mine: bool,
+}
+
+/// `(city, product)` için belirtilen taraf için top-N price level — fiyat
+/// kademelerine göre toplu (aynı fiyatta birden fazla emir varsa qty'leri
+/// toplanır, "mine" en az birinin senin olduğunu gösterir).
+fn top_levels(
+    state: &GameState,
+    city: CityId,
+    product: ProductKind,
+    side: OrderSide,
+    n: usize,
+) -> Vec<BookLevel> {
+    let Some(orders) = state.order_book.get(&(city, product)) else {
+        return Vec::new();
+    };
+    let mut by_price: std::collections::BTreeMap<Money, BookLevel> =
+        std::collections::BTreeMap::new();
+    for o in orders.iter().filter(|o| o.side == side) {
+        let lvl = by_price.entry(o.unit_price).or_insert(BookLevel {
+            price: o.unit_price,
+            qty: 0,
+            mine: false,
+        });
+        lvl.qty = lvl.qty.saturating_add(o.quantity);
+        if o.player == HUMAN_ID {
+            lvl.mine = true;
+        }
+    }
+    // Sell: artan fiyat (en ucuz önce). Buy: azalan fiyat (en yüksek önce).
+    let mut levels: Vec<BookLevel> = by_price.into_values().collect();
+    match side {
+        OrderSide::Sell => levels.sort_by(|a, b| a.price.cmp(&b.price)),
+        OrderSide::Buy => levels.sort_by(|a, b| b.price.cmp(&a.price)),
+    }
+    levels.truncate(n);
+    levels
+}
+
+
+/// Money'i 5 kuruşa yuvarla (Silver çözünürlüğü).
+fn money_round_5_kurus(m: Money) -> Money {
+    let cents = m.as_cents();
+    let rounded = (cents / 5) * 5;
+    Money::from_cents(rounded)
+}
+
+/// Money'i %10 bant olarak ifade et (Bronze fog).
+fn money_band_label(m: Money) -> String {
+    let cents = m.as_cents();
+    let lo = (cents * 95) / 100;
+    let hi = (cents * 105) / 100;
+    // Kuruş cinsinden 50'ye yuvarla.
+    let lo50 = (lo / 50) * 50;
+    let hi50 = ((hi + 49) / 50) * 50;
+    format!(
+        "{}-{}",
+        Money::from_cents(lo50),
+        Money::from_cents(hi50)
+    )
+}
+
+/// Pazar overlay/wizard'da "ask·bid" satırını tier'a göre üret. Etiket yok —
+/// renk ile anlam taşınır. Kırmızı = ask (satıcı fiyatı), Yeşil = bid (alıcı
+/// fiyatı). Gold tier'da insan oyuncu emri ⭐ ile vurgulanır.
+fn book_span_for_tier<'a>(
+    tier: NewsTier,
+    ask: Option<BookLevel>,
+    bid: Option<BookLevel>,
+) -> Vec<Span<'a>> {
+    let ask_color = Style::default().fg(Color::LightRed);
+    let bid_color = Style::default().fg(Color::LightGreen);
+    let mine_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+
+    if matches!(tier, NewsTier::Free) {
+        return vec![Span::styled("· · ·", dim)];
+    }
+
+    let format_price = |m: Money| -> String {
+        match tier {
+            NewsTier::Bronze => money_band_label(m),
+            NewsTier::Silver => format!("{}", money_round_5_kurus(m)),
+            NewsTier::Gold | NewsTier::Free => format!("{}", m),
+        }
+    };
+
+    let ask_span = match ask {
+        None => Span::styled("—".to_string(), dim),
+        Some(l) => {
+            let txt = match tier {
+                NewsTier::Gold => {
+                    let prefix = if l.mine { "⭐" } else { "" };
+                    format!("{prefix}{}×{}", format_price(l.price), l.qty)
+                }
+                _ => format_price(l.price),
+            };
+            Span::styled(txt, if l.mine { mine_style } else { ask_color })
+        }
+    };
+    let bid_span = match bid {
+        None => Span::styled("—".to_string(), dim),
+        Some(l) => {
+            let txt = match tier {
+                NewsTier::Gold => {
+                    let prefix = if l.mine { "⭐" } else { "" };
+                    format!("{prefix}{}×{}", format_price(l.price), l.qty)
+                }
+                _ => format_price(l.price),
+            };
+            Span::styled(txt, if l.mine { mine_style } else { bid_color })
+        }
+    };
+    // Format: ask · bid (sırasıyla kırmızı / yeşil)
+    vec![
+        ask_span,
+        Span::styled(" · ", dim),
+        bid_span,
+    ]
+}
+
+/// Gold tier'da gösterilen ek depth satırı: 2. ve 3. price level'lar
+/// (best'ten sonraki kademeler). Boş ise "—".
+fn depth_span_for_gold<'a>(
+    side: OrderSide,
+    levels: &[BookLevel],
+) -> Vec<Span<'a>> {
+    let label_color = Style::default().fg(Color::DarkGray);
+    let normal = Style::default().fg(if matches!(side, OrderSide::Sell) {
+        Color::LightRed
+    } else {
+        Color::LightGreen
+    });
+    let mine = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let label = if matches!(side, OrderSide::Sell) {
+        "  +ask "
+    } else {
+        "  +bid "
+    };
+    // İlk level zaten book_span'de gösterildi; depth = 2. + 3. seviye.
+    let extras: Vec<&BookLevel> = levels.iter().skip(1).take(2).collect();
+    if extras.is_empty() {
+        return vec![Span::styled(format!("{label}—"), label_color)];
+    }
+    let mut spans: Vec<Span> = vec![Span::styled(label, label_color)];
+    for (i, l) in extras.iter().enumerate() {
+        let prefix = if l.mine { "⭐" } else { "" };
+        let txt = format!("{prefix}{}×{}", l.price, l.qty);
+        spans.push(Span::styled(txt, if l.mine { mine } else { normal }));
+        if i + 1 < extras.len() {
+            spans.push(Span::raw("  "));
+        }
+    }
+    spans
+}
+
+/// Wizard ürün seçim listesi: aktif sekmeye (Hammadde/Son Ürün) göre filtreli,
+/// role + action kind'a göre sıralı. İlk eleman = Enter ile seçilen default.
+/// Sıralama: Sat = stok desc; Al+Sanayici = fabrika raw_input ilk;
+/// Al+Tüccar = arbitraj farkı desc.
 fn filtered_products_for_wizard(
     state: &GameState,
     role: Role,
     kind: ActionKind,
+    show_finished: bool,
 ) -> Vec<ProductKind> {
-    // Offer = kontrat satıcı tarafı; mantık olarak Sell ile aynı —
-    // Sanayici sadece bitmiş ürünleri satar, Tüccar her şey.
-    let mut candidates: Vec<ProductKind> = match (role, kind) {
-        (Role::Sanayici, ActionKind::Sell | ActionKind::Offer) => {
-            ProductKind::FINISHED_GOODS.to_vec()
-        }
-        (Role::Sanayici, ActionKind::Buy) => ProductKind::RAW_MATERIALS.to_vec(),
-        _ => ProductKind::ALL.to_vec(),
+    // Sekme'ye göre 3 ürün — `r` overlay'i ile aynı kavramsal ayrım.
+    let mut candidates: Vec<ProductKind> = if show_finished {
+        ProductKind::FINISHED_GOODS.to_vec()
+    } else {
+        ProductKind::RAW_MATERIALS.to_vec()
     };
 
     let player = state.players.get(&HUMAN_ID);
@@ -4119,6 +4461,7 @@ fn render_news_inbox_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
     } else {
         for n in disclosed.iter().rev().take(20) {
             let icon = match n.tier {
+                NewsTier::Free => "·",
                 NewsTier::Bronze => "🥉",
                 NewsTier::Silver => "🥈",
                 NewsTier::Gold => "🥇",
@@ -4163,6 +4506,7 @@ fn render_news_inbox_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
     } else {
         for n in pending.iter().take(10) {
             let icon = match n.tier {
+                NewsTier::Free => "·",
                 NewsTier::Bronze => "🥉",
                 NewsTier::Silver => "🥈",
                 NewsTier::Gold => "🥇",
@@ -4323,113 +4667,6 @@ fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  Esc / Enter / Space → kapat",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
-
-    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
-    f.render_widget(para, inner);
-}
-
-fn render_open_book_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let popup = centered_rect(85, 85, area);
-    f.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" 📖  Açık Pazar  —  orderbook depth (fog: owner gizli) ")
-        .border_style(Style::default().fg(Color::Blue));
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
-
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled(
-        "  Fiyat × miktar derinliği. Kim koymuş gizli — kendi emirin ⭐ sarı.",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
-    lines.push(Line::from(""));
-
-    let mut any = false;
-    for ((city, product), orders) in &app.state.order_book {
-        let (mut buys, mut sells): (Vec<_>, Vec<_>) = orders
-            .iter()
-            .partition(|o| matches!(o.side, OrderSide::Buy));
-        buys.sort_by(|a, b| b.unit_price.cmp(&a.unit_price));
-        sells.sort_by(|a, b| a.unit_price.cmp(&b.unit_price));
-
-        if buys.is_empty() && sells.is_empty() {
-            continue;
-        }
-        any = true;
-
-        let total_bid: u32 = buys.iter().map(|o| o.quantity).sum();
-        let total_ask: u32 = sells.iter().map(|o| o.quantity).sum();
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                format!("{} {}", city_short(*city), product),
-                Style::default()
-                    .fg(product_color(*product))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("   bid Σ{total_bid}  ·  ask Σ{total_ask}"),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
-
-        // BID chip satırı — owner yok, sadece miktar @ fiyat.
-        let mut bid_spans: Vec<Span> =
-            vec![Span::styled("    BID  ", Style::default().fg(Color::Green))];
-        for o in buys.iter().take(4) {
-            let mine = o.player == HUMAN_ID;
-            let star = if mine { "⭐" } else { "" };
-            let style = Style::default().fg(if mine { Color::Yellow } else { Color::Green });
-            bid_spans.push(Span::styled(
-                format!("{star}{}@{}", o.quantity, o.unit_price),
-                if mine {
-                    style.add_modifier(Modifier::BOLD)
-                } else {
-                    style
-                },
-            ));
-            bid_spans.push(Span::raw("  "));
-        }
-        lines.push(Line::from(bid_spans));
-
-        // ASK chip satırı.
-        let mut ask_spans: Vec<Span> =
-            vec![Span::styled("    ASK  ", Style::default().fg(Color::Red))];
-        for o in sells.iter().take(4) {
-            let mine = o.player == HUMAN_ID;
-            let star = if mine { "⭐" } else { "" };
-            let style = Style::default().fg(if mine { Color::Yellow } else { Color::Red });
-            ask_spans.push(Span::styled(
-                format!("{star}{}@{}", o.quantity, o.unit_price),
-                if mine {
-                    style.add_modifier(Modifier::BOLD)
-                } else {
-                    style
-                },
-            ));
-            ask_spans.push(Span::raw("  "));
-        }
-        lines.push(Line::from(ask_spans));
-        lines.push(Line::from(""));
-    }
-
-    if !any {
-        lines.push(Line::from(Span::styled(
-            "  (pazar boş — bir emir ver ya da SPACE ile tick ilerlet)",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
     lines.push(Line::from(Span::styled(
         "  Esc / Enter / Space → kapat",
         Style::default()
@@ -6290,6 +6527,16 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
     let Some(field) = wizard.current() else {
         return WizardOutcome::Continue;
     };
+    // Product seçim adımında Tab / ← / → ile Hammadde ↔ Son Ürün sekme geçişi.
+    if matches!(field, FieldKind::Product)
+        && matches!(
+            code,
+            KeyCode::Tab | KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
+        )
+    {
+        wizard.product_show_finished = !wizard.product_show_finished;
+        return WizardOutcome::Continue;
+    }
     if field.is_text() {
         let is_money = matches!(field, FieldKind::PriceLira | FieldKind::AmountLira);
         // Ship wizard Qty adımında `M` ile max yükle — stok × kalan kapasite min.
@@ -6440,14 +6687,24 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
                 .get(&HUMAN_ID)
                 .map(|p| p.role)
                 .unwrap_or(Role::Tuccar);
-            let products = filtered_products_for_wizard(&app.state, role, wizard.kind);
+            let products = filtered_products_for_wizard(
+                &app.state,
+                role,
+                wizard.kind,
+                wizard.product_show_finished,
+            );
             products.get(idx).map(|p| FieldValue::Product(*p))
         }
         FieldKind::FinishedProduct => ProductKind::FINISHED_GOODS
             .get(idx)
             .map(|p| FieldValue::Product(*p)),
         FieldKind::NewsTier_ => {
-            let tiers = [NewsTier::Bronze, NewsTier::Silver, NewsTier::Gold];
+            let tiers = [
+                NewsTier::Free,
+                NewsTier::Bronze,
+                NewsTier::Silver,
+                NewsTier::Gold,
+            ];
             tiers.get(idx).map(|t| FieldValue::NewsTier(*t))
         }
         FieldKind::OrderId_ => {
@@ -6926,9 +7183,10 @@ fn parse_repay_cmd(args: &[&str]) -> Result<Command, String> {
 
 fn parse_news_cmd(args: &[&str]) -> Result<Command, String> {
     if args.len() != 1 {
-        return Err("kullanım: news <bronze|silver|gold>".into());
+        return Err("kullanım: news <free|bronze|silver|gold>".into());
     }
     let tier = match args[0].to_lowercase().as_str() {
+        "free" | "ucretsiz" | "ücretsiz" | "iptal" | "cancel" => NewsTier::Free,
         "bronze" | "bronz" => NewsTier::Bronze,
         "silver" | "gumus" | "gümüş" => NewsTier::Silver,
         "gold" | "altın" | "altin" => NewsTier::Gold,
@@ -7074,6 +7332,7 @@ fn role_color(role: Role) -> Color {
 
 fn tier_color(tier: NewsTier) -> Color {
     match tier {
+        NewsTier::Free => Color::DarkGray,
         NewsTier::Bronze => Color::Rgb(205, 127, 50),
         NewsTier::Silver => Color::Rgb(192, 192, 192),
         NewsTier::Gold => Color::Rgb(255, 215, 0),

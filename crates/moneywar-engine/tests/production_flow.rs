@@ -2,8 +2,8 @@
 //! bir sonraki tick pazarda Tüccar'a satar.
 
 use moneywar_domain::{
-    CityId, Command, GameState, MarketOrder, Money, OrderId, OrderSide, Player, PlayerId,
-    ProductKind, Role, RoomConfig, RoomId, Tick,
+    CityId, Command, GameState, MarketOrder, Money, NewsTier, OrderId, OrderSide, Player,
+    PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::advance_tick;
 
@@ -34,6 +34,9 @@ fn init_state() -> GameState {
     )
     .unwrap();
     s.players.insert(tuccar.id, tuccar);
+    // Bu integration testleri üretim akışını izole eder; news fee'yi devre dışı bırak.
+    s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
+    s.news_subscriptions.insert(PlayerId::new(2), NewsTier::Free);
     s
 }
 

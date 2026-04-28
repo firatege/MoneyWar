@@ -105,6 +105,7 @@ pub fn advance_tick(
     advance_caravans(&mut new_state, &mut report, next_tick);
     advance_contracts(&mut new_state, &mut report, next_tick);
     advance_loans(&mut new_state, &mut report, next_tick);
+    crate::news::charge_news_subscriptions(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
@@ -661,9 +662,9 @@ mod tests {
         // 10 × 500 = 5000 cent × 2% = 100 cent = 1₺.
         assert_eq!(penalty_ev, moneywar_domain::Money::from_cents(100));
 
-        // Oyuncu cash'i 1000₺ - 1₺ = 999₺.
+        // Oyuncu cash'i: 1000₺ − 1₺ (ceza) − 2₺ (Tüccar Bronze tick fee) = 997₺.
         let final_cash = s1.players[&PlayerId::new(7)].cash;
-        assert_eq!(final_cash, moneywar_domain::Money::from_lira(999).unwrap());
+        assert_eq!(final_cash, moneywar_domain::Money::from_lira(997).unwrap());
     }
 
     #[test]

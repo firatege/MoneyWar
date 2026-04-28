@@ -99,7 +99,7 @@ proptest! {
         room in arb_room_id(),
         cmds in arb_cmds(),
     ) {
-        use moneywar_domain::{Money, Player, PlayerId, Role};
+        use moneywar_domain::{Money, NewsTier, Player, PlayerId, Role};
         let mut s0 = GameState::new(room, RoomConfig::hizli());
         // Cömert oyuncular ki settlement reject olmasın.
         for id in 1u64..=10 {
@@ -116,6 +116,12 @@ proptest! {
                 }
             }
             s0.players.insert(p.id, p);
+        }
+        // Money conservation testin amacı: clearing transfer'i para yaratmıyor/yok
+        // etmiyor. News tick fee ayrı bir sink (oyun ekonomisinden çıkar) — bu
+        // testte oyuncuları Free'ye geç ki o sink devre dışı kalsın.
+        for id in 1u64..=10 {
+            s0.news_subscriptions.insert(PlayerId::new(id), NewsTier::Free);
         }
         let total_before: i64 = s0.players.values().map(|p| p.cash.as_cents()).sum();
         let total_stock_before: u64 = s0.players.values().map(|p| p.inventory.total_units()).sum();

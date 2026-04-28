@@ -33,10 +33,14 @@ impl Role {
         matches!(self, Self::Sanayici)
     }
 
-    /// Bu rol Gümüş haber servisini bedava alır mı? (Tüccar avantajı)
+    /// Yeni oyuncuların başlangıç haber tier'ı — herkes Bronze'da başlar.
+    /// Free tier istenirse `:news free` komutuyla iptal edilebilir.
+    /// Not: bu sadece **başlangıç** tier'ı; gerçek abonelik durumu state'te
+    /// tutulur. Tier kilitlemesi `effective_news_tier`'da yapılır (artık
+    /// floor yok — herkes eşit, ücret dengelemesi `tick_cost` üstünden).
     #[must_use]
-    pub const fn free_silver_news(self) -> bool {
-        matches!(self, Self::Tuccar)
+    pub const fn default_news_tier(self) -> crate::NewsTier {
+        crate::NewsTier::Bronze
     }
 }
 
@@ -277,8 +281,10 @@ mod tests {
         assert!(Role::Sanayici.can_build_factory());
         assert!(!Role::Tuccar.can_build_factory());
 
-        assert!(Role::Tuccar.free_silver_news());
-        assert!(!Role::Sanayici.free_silver_news());
+        // v3: Herkes Bronze'dan başlar. Ücret indirimi `NewsTier::tick_cost(role)`
+        // üzerinden işler — Tüccar hâlâ daha az öder.
+        assert_eq!(Role::Tuccar.default_news_tier(), crate::NewsTier::Bronze);
+        assert_eq!(Role::Sanayici.default_news_tier(), crate::NewsTier::Bronze);
     }
 
     #[test]

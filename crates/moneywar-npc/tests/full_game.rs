@@ -78,6 +78,11 @@ fn init_world() -> GameState {
     .unwrap();
     s.players.insert(npc_buyer.id, npc_buyer);
 
+    // Money conservation testi: news fee ekonomi dışı sink olduğu için Free'ye geç.
+    s.news_subscriptions.insert(PlayerId::new(1), moneywar_domain::NewsTier::Free);
+    s.news_subscriptions.insert(PlayerId::new(100), moneywar_domain::NewsTier::Free);
+    s.news_subscriptions.insert(PlayerId::new(101), moneywar_domain::NewsTier::Free);
+
     s
 }
 
