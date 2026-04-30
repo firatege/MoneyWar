@@ -22,6 +22,7 @@ use moneywar_domain::{
 };
 use rand_chacha::ChaCha8Rng;
 
+use crate::DifficultyModulator;
 use crate::dss::contract::{accept_contract_candidates, propose_contract_candidates};
 use crate::dss::inputs::{
     arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
@@ -30,21 +31,29 @@ use crate::dss::inputs::{
 use crate::dss::utility::{ActionCandidate, score_action};
 use crate::dss::weights_for;
 use moneywar_domain::Personality;
-
-const TOP_K: usize = 3;
+use rand::Rng;
 
 /// Sanayici DSS karar fonksiyonu — top-K aksiyonu komut olarak döner.
+/// `modulator` zorluk parametresi: Easy'de 1 aksiyon + yüksek threshold,
+/// Hard'da 5 aksiyon + negatif threshold.
 #[must_use]
 pub fn decide_sanayici_dss(
     state: &GameState,
     pid: PlayerId,
     personality: Personality,
-    _rng: &mut ChaCha8Rng,
+    modulator: DifficultyModulator,
+    rng: &mut ChaCha8Rng,
     tick: Tick,
 ) -> Vec<Command> {
     let Some(player) = state.players.get(&pid) else {
         return Vec::new();
     };
+    // Easy'de yarı tick sessiz; Hard'da neredeyse hiç susmaz.
+    if modulator.silence_ratio_per10 > 0
+        && rng.random_ratio(modulator.silence_ratio_per10, 10)
+    {
+        return Vec::new();
+    }
     let weights = weights_for(personality);
     let ttl = state.config.balance.default_order_ttl;
 
@@ -254,13 +263,21 @@ pub fn decide_sanayici_dss(
         }
     }
 
-    // Top-K sırala (skor desc, deterministik tie-break Cmd debug-strı ile)
+    // Top-K sırala (skor desc, deterministik tie-break Cmd debug-strı ile).
     scored.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
     });
-    scored.into_iter().take(TOP_K).map(|(c, _)| c).collect()
+    // Threshold uygula: utility skor min eşiği üstü olan adayları al.
+    // Modulator.aggressiveness ile ölçeklendir — Easy'de threshold yüksek (seçici),
+    // Hard'da negatif (riskli aksiyon dahil).
+    scored
+        .into_iter()
+        .filter(|(_, score)| *score >= modulator.min_score_threshold)
+        .take(modulator.max_actions_per_tick as usize)
+        .map(|(c, _)| c)
+        .collect()
 }
 
 /// State'te insan oyuncuyu bulur — `is_npc=false`. `decide_all_npcs`
@@ -311,11 +328,28 @@ mod tests {
         (s, PlayerId::new(100))
     }
 
+    fn medium_mod() -> crate::DifficultyModulator {
+        // Test için silence yok — deterministic davranış garantili.
+        crate::DifficultyModulator {
+            max_actions_per_tick: 5,
+            silence_ratio_per10: 0,
+            aggressiveness: 1.0,
+            min_score_threshold: f64::NEG_INFINITY,
+        }
+    }
+
     #[test]
     fn aggressive_sanayici_with_no_factory_builds() {
         let (s, pid) = fresh_state();
         let mut rng = ChaCha8Rng::from_seed([0u8; 32]);
-        let cmds = decide_sanayici_dss(&s, pid, Personality::Aggressive, &mut rng, Tick::new(1));
+        let cmds = decide_sanayici_dss(
+            &s,
+            pid,
+            Personality::Aggressive,
+            medium_mod(),
+            &mut rng,
+            Tick::new(1),
+        );
         assert!(
             cmds.iter()
                 .any(|c| matches!(c, Command::BuildFactory { .. })),
@@ -331,6 +365,7 @@ mod tests {
             &s,
             PlayerId::new(999),
             Personality::Aggressive,
+            medium_mod(),
             &mut rng,
             Tick::new(1),
         );
@@ -342,8 +377,22 @@ mod tests {
         let (s, pid) = fresh_state();
         let mut r1 = ChaCha8Rng::from_seed([42u8; 32]);
         let mut r2 = ChaCha8Rng::from_seed([42u8; 32]);
-        let c1 = decide_sanayici_dss(&s, pid, Personality::Arbitrageur, &mut r1, Tick::new(1));
-        let c2 = decide_sanayici_dss(&s, pid, Personality::Arbitrageur, &mut r2, Tick::new(1));
+        let c1 = decide_sanayici_dss(
+            &s,
+            pid,
+            Personality::Arbitrageur,
+            medium_mod(),
+            &mut r1,
+            Tick::new(1),
+        );
+        let c2 = decide_sanayici_dss(
+            &s,
+            pid,
+            Personality::Arbitrageur,
+            medium_mod(),
+            &mut r2,
+            Tick::new(1),
+        );
         assert_eq!(c1, c2);
     }
 }

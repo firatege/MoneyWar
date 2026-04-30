@@ -120,12 +120,17 @@ fn twenty_tick_simulation_with_humans_and_npcs() {
 
     // 20 tick sonra motor ayakta, state tutarlı.
     assert_eq!(state.current_tick, Tick::new(20));
-    // Toplam cash — NPC/human transferler ± contract/loan etkisi yok.
-    // Money conservation oyuncu-arası transferlerde korunur.
+    // v3: Easy → DSS + SmartTrader fallback. NPC'ler BuyCaravan/BuildFactory
+    // yapabilir → cash sink (system'e gider, oyuncu-arası transfer değil).
+    // Strict conservation kalktı; sadece "negatife düşmedi" kontrol ediyoruz.
     let total_cash_after: i64 = state.players.values().map(|p| p.cash.as_cents()).sum();
-    assert_eq!(
-        total_cash_before, total_cash_after,
-        "cash conserved across pure market transfers"
+    assert!(
+        total_cash_after <= total_cash_before,
+        "cash sadece azalabilir (caravan/factory sink)"
+    );
+    assert!(
+        total_cash_after >= 0,
+        "kimse aşırı borca girmemeli"
     );
     // NPC'ler hala stok gösteriyor (sıfıra inmedi mantıksızca).
     let npc_stock = state.players[&PlayerId::new(100)]
@@ -239,7 +244,7 @@ fn liquidity_smoke_twenty_ticks_produces_matches() {
 
     for t in 1..=20u32 {
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
-        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Hard);
+        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Medium);
         let (new_state, report) = advance_tick(&state, &cmds).expect("advance");
         state = new_state;
         for entry in &report.entries {
@@ -307,7 +312,7 @@ fn fuzzy_expert_runs_without_crash_and_produces_commands() {
     let mut total_dss_commands = 0;
     for t in 1..=30u32 {
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
-        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Expert);
+        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Hard);
         total_dss_commands += cmds.len();
         let (new_state, _report) = advance_tick(&state, &cmds).expect("advance");
         state = new_state;

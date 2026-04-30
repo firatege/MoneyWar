@@ -25,23 +25,29 @@ use crate::dss::inputs::{
     arbitrage_signal, cluster_signal, competition_signal, event_signal, human_lead_ratio,
     money_lira, pending_event_signal, price_momentum,
 };
+use crate::DifficultyModulator;
 use crate::dss::utility::{ActionCandidate, score_action};
 use crate::dss::weights_for;
 use moneywar_domain::Personality;
-
-const TOP_K: usize = 3;
+use rand::Rng;
 
 #[must_use]
 pub fn decide_tuccar_dss(
     state: &GameState,
     pid: PlayerId,
     personality: Personality,
-    _rng: &mut ChaCha8Rng,
+    modulator: DifficultyModulator,
+    rng: &mut ChaCha8Rng,
     tick: Tick,
 ) -> Vec<Command> {
     let Some(player) = state.players.get(&pid) else {
         return Vec::new();
     };
+    if modulator.silence_ratio_per10 > 0
+        && rng.random_ratio(modulator.silence_ratio_per10, 10)
+    {
+        return Vec::new();
+    }
     let weights = weights_for(personality);
     let ttl = state.config.balance.default_order_ttl;
 
@@ -234,7 +240,13 @@ pub fn decide_tuccar_dss(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
     });
-    scored.into_iter().take(TOP_K).map(|(c, _)| c).collect()
+    // Difficulty modulator: threshold + max action.
+    scored
+        .into_iter()
+        .filter(|(_, score)| *score >= modulator.min_score_threshold)
+        .take(modulator.max_actions_per_tick as usize)
+        .map(|(c, _)| c)
+        .collect()
 }
 
 fn find_human(state: &GameState) -> Option<PlayerId> {
@@ -266,6 +278,16 @@ mod tests {
     use moneywar_domain::{Player, PlayerId, Role, RoomConfig, RoomId};
     use rand_chacha::rand_core::SeedableRng;
 
+    fn medium_mod() -> crate::DifficultyModulator {
+        // Test için silence yok — deterministic davranış garantili.
+        crate::DifficultyModulator {
+            max_actions_per_tick: 5,
+            silence_ratio_per10: 0,
+            aggressiveness: 1.0,
+            min_score_threshold: f64::NEG_INFINITY,
+        }
+    }
+
     #[test]
     fn tuccar_with_no_caravan_buys_one() {
         let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
@@ -283,6 +305,7 @@ mod tests {
             &s,
             PlayerId::new(100),
             Personality::Arbitrageur,
+            medium_mod(),
             &mut rng,
             Tick::new(1),
         );
@@ -310,6 +333,7 @@ mod tests {
             &s,
             PlayerId::new(100),
             Personality::TrendFollower,
+            medium_mod(),
             &mut r1,
             Tick::new(1),
         );
@@ -317,6 +341,7 @@ mod tests {
             &s,
             PlayerId::new(100),
             Personality::TrendFollower,
+            medium_mod(),
             &mut r2,
             Tick::new(1),
         );

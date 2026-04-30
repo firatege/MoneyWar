@@ -1,0 +1,25 @@
+[package]
+name = "moneywar-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Headless simulation runner + observability for MoneyWar — baseline ölçümü, NPC karar trace, A/B karşılaştırma"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+moneywar-domain = { workspace = true }
+moneywar-engine = { workspace = true }
+moneywar-npc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+
+[[bin]]
+name = "sim"
+path = "src/bin/sim.rs"

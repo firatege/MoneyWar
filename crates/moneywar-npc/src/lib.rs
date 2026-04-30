@@ -9,15 +9,17 @@
 //!   ham madde alır, üretir, bitmiş ürünü satar. Tüccar NPC arbitraj
 //!   yapar (ucuz şehir → kervanla → pahalı şehir).
 //!
-//! # Zorluk seviyeleri
+//! # Zorluk seviyeleri (v3 — 3 kademe, Expert kaldırıldı)
 //!
-//! [`Difficulty::Easy`] tüm NPC'lere [`MarketMaker`] uygular. Tüccar/Sanayici
-//! arasında fark yok. Likidite verir, ciddi rekabet yok.
+//! [`Difficulty::Easy`] tüm NPC'lere [`MarketMaker`] uygular. Likidite verir,
+//! ciddi rekabet yok.
 //!
-//! [`Difficulty::Hard`] her NPC'nin rolüne göre [`SmartTrader`] uygular.
-//! Sanayici fabrika kurar, üretim zincirini işletir; Tüccar şehirler arası
-//! arbitraj yapar. Tick başına 1-3 emir yollarlar — likidite hep var,
-//! rekabet ciddi.
+//! [`Difficulty::Medium`] her NPC'nin rolüne göre [`SmartTrader`] uygular.
+//! Sanayici fabrika kurar; Tüccar arbitraj yapar. Tick başına 1-3 emir.
+//!
+//! [`Difficulty::Hard`] DSS — kişilik arketipi + utility AI ile gerçek
+//! strateji. Sanayici/Tüccar için DSS kolu, diğer NPC kindleri için
+//! `SmartTrader`. Faz 4 sonrası tüm NPC'ler fuzzy motora geçer.
 //!
 //! # Determinism
 //!
@@ -25,6 +27,7 @@
 //! `decide_all_npcs` üzerinden sıralı işler (`BTreeMap` `player_id` ASC).
 
 pub mod dss;
+pub mod engine;
 mod error;
 pub mod fuzzy;
 
@@ -37,37 +40,83 @@ use moneywar_domain::{
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
-/// NPC zorluk seviyesi. Oyun başlangıcında seçilir, tüm NPC'lere uygulanır.
+/// NPC zorluk seviyesi (3 kademe — Easy/Medium/Hard).
+/// Oyun başlangıcında seçilir, tüm NPC'lere uygulanır.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Difficulty {
     /// Basit likidite NPC'si — rastgele al/sat, strateji yok.
-    #[default]
     Easy,
-    /// Akıllı NPC — role göre fabrika/kervan kullanır, multi-emir verir.
-    Hard,
+    /// Akıllı NPC — rolüne göre fabrika/kervan + multi-emir.
+    /// Default seçim (yeni başlayan oyuncuya dengeli rekabet).
+    #[default]
+    Medium,
     /// DSS NPC — kişilik arketipi + utility AI ile gerçek strateji.
-    /// 7 farklı archetype (Aggressive/TrendFollower/MeanReverter/Arbitrageur/
-    /// EventTrader/Hoarder/Cartel) seed RNG ile NPC'lere atanır.
-    Expert,
+    /// 7 archetype seed ile atanır. Faz 4+ sonrası fuzzy motora taşınacak.
+    Hard,
 }
 
 impl Difficulty {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Self::Easy => "Easy (basit likidite)",
-            Self::Hard => "Hard (akıllı NPC, rekabetçi)",
-            Self::Expert => "Expert (DSS kişilikli AI)",
+            Self::Easy => "Easy (kişilikli ama yavaş ve seçici)",
+            Self::Medium => "Medium (kişilikli, dengeli rekabet)",
+            Self::Hard => "Hard (kişilikli, agresif ve hızlı)",
         }
     }
     #[must_use]
     pub fn next(self) -> Self {
         match self {
-            Self::Easy => Self::Hard,
-            Self::Hard => Self::Expert,
-            Self::Expert => Self::Easy,
+            Self::Easy => Self::Medium,
+            Self::Medium => Self::Hard,
+            Self::Hard => Self::Easy,
         }
     }
+
+    /// Bu zorluğun NPC karar parametreleri. DSS motoru bunları okur:
+    /// - `max_actions_per_tick`: top-K aksiyon sayısı (Easy 1, Hard 4)
+    /// - `silence_ratio`: rng skip oranı (Easy 0.5 = yarı tick pasif, Hard 0.05)
+    /// - `aggressiveness`: bid/ask agresiflik scale (Easy 0.7, Hard 1.3)
+    /// - `min_score_threshold`: aksiyon emit eşiği (Easy 0.5, Hard 0.0)
+    #[must_use]
+    pub fn modulator(self) -> DifficultyModulator {
+        match self {
+            Self::Easy => DifficultyModulator {
+                max_actions_per_tick: 2,
+                silence_ratio_per10: 3,
+                aggressiveness: 0.7,
+                min_score_threshold: 0.4,
+            },
+            Self::Medium => DifficultyModulator {
+                max_actions_per_tick: 3,
+                silence_ratio_per10: 2,
+                aggressiveness: 1.0,
+                min_score_threshold: 0.0,
+            },
+            Self::Hard => DifficultyModulator {
+                max_actions_per_tick: 5,
+                silence_ratio_per10: 1,
+                aggressiveness: 1.3,
+                min_score_threshold: -0.5, // negatif skoru bile dene (riskli aksiyon)
+            },
+        }
+    }
+}
+
+/// NPC karar motoru için zorluk parametreleri. `Difficulty::modulator()` ile alınır.
+///
+/// "Salak NPC" konsepti: Easy modülasyonunda silence yüksek (yarı tick pasif),
+/// max 1 aksiyon, agresiflik düşük. Aynı DSS motoru çalışır ama Easy'de NPC
+/// daha az ve daha yumuşak hareket eder.
+#[derive(Debug, Clone, Copy)]
+pub struct DifficultyModulator {
+    pub max_actions_per_tick: u32,
+    /// `silence_ratio_per10 / 10` ihtimalle tick'i atla (örn 5 → %50 sessiz).
+    pub silence_ratio_per10: u32,
+    /// Bid/ask fiyat agresifliği multiplier'ı (1.0 = standart).
+    pub aggressiveness: f64,
+    /// Utility skor eşiği — bu altında olan aksiyonlar emit edilmez.
+    pub min_score_threshold: f64,
 }
 
 /// Bir NPC'nin bu tick için komut üreten davranışı.
@@ -738,34 +787,20 @@ pub fn decide_all_npcs(
         .collect();
     let mut cmds = Vec::new();
     for pid in npc_ids {
-        // Dispatch — player.npc_kind structural ayrımına göre. Set edilmemiş
-        // (None) NPC'ler `Difficulty`'ye göre genel davranışa düşer.
-        let player = state.players.get(&pid);
-        let kind = player.and_then(|p| p.npc_kind);
-        let personality = player.and_then(|p| p.personality);
-        let next: Vec<Command> = match kind {
-            Some(NpcKind::Alici) => AliciNpc.decide(state, pid, rng, tick),
-            Some(NpcKind::Esnaf) => EsnafNpc.decide(state, pid, rng, tick),
-            Some(NpcKind::Spekulator) => SpekulatorNpc.decide(state, pid, rng, tick),
-            // Sanayici / Tüccar → role-aware. Expert'te DSS, Hard'da SmartTrader,
-            // Easy'de MarketMaker. Expert için personality lazım (yoksa SmartTrader fallback).
-            _ => match (difficulty, personality, player.map(|p| p.role)) {
-                (Difficulty::Expert, Some(p), Some(Role::Sanayici)) => {
-                    crate::dss::sanayici::decide_sanayici_dss(state, pid, p, rng, tick)
-                }
-                (Difficulty::Expert, Some(p), Some(Role::Tuccar)) => {
-                    crate::dss::tuccar::decide_tuccar_dss(state, pid, p, rng, tick)
-                }
-                (Difficulty::Hard, _, _) | (Difficulty::Expert, None, _) => {
-                    SmartTrader.decide(state, pid, rng, tick)
-                }
-                _ => MarketMaker.decide(state, pid, rng, tick),
-            },
-        };
+        // Dispatch v3 — TÜM NPC kindleri tek fuzzy motoru kullanır.
+        // engine::decide_npc_fuzzy player'ın role + npc_kind'ına göre uygun
+        // rule base'i seçer; difficulty modulator parametreleri filtreler.
+        let _ = (kind_legacy_unused(state, pid), tick); // tick parametresi NextTick state'inde implicit
+        let modulator = difficulty.modulator();
+        let next = crate::engine::decide_npc_fuzzy(state, pid, modulator, rng);
         cmds.extend(next);
     }
     cmds
 }
+
+/// Eski `kind` lookup'ı removed — fuzzy decide'a geçti. Eski DSS path için
+/// bir tur deprecated tutuluyoruz, helper bunlara erişim sağlar.
+fn kind_legacy_unused(_state: &GameState, _pid: PlayerId) -> () {}
 
 // =============================================================================
 // Helpers
@@ -1049,8 +1084,10 @@ mod tests {
         s.players.insert(alici.id, alici);
         let mut rng = fresh_rng();
         let cmds = decide_all_npcs(&s, &mut rng, Tick::new(1), Difficulty::Hard);
-        // Hard mode'da tüccar olsa kervan alırdı; AliciNpc sadece buy verir.
-        assert!(cmds.iter().all(|c| matches!(c, Command::SubmitOrder(_))));
-        assert_eq!(cmds.len(), 3);
+        // Fuzzy v3: Alıcı sadece SubmitOrder verir, kervan/fabrika yok.
+        assert!(
+            cmds.iter().all(|c| matches!(c, Command::SubmitOrder(_))),
+            "Alıcı sadece pazar emri vermeli (kervan/fabrika yok)"
+        );
     }
 }

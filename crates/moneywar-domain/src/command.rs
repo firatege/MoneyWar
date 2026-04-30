@@ -75,6 +75,12 @@ pub enum Command {
 
     /// Kredi geri öde (Faz 5.5).
     RepayLoan { player: PlayerId, loan_id: LoanId },
+
+    /// NPC'nin kendi nakdine periyodik enjeksiyon. Talep döngüsü
+    /// için `AliciNpc` gibi pure-buyer NPC'ler kullanır. Motor sadece
+    /// `is_npc=true` oyuncular için kabul eder; insan oyuncudan gelirse
+    /// reddedilir. Cap kararı NPC tarafında verilir (motor zorlamaz).
+    CreditNpcCash { player: PlayerId, amount: Money },
 }
 
 impl Command {
@@ -97,7 +103,8 @@ impl Command {
             }
             Self::SubscribeNews { player, .. }
             | Self::TakeLoan { player, .. }
-            | Self::RepayLoan { player, .. } => *player,
+            | Self::RepayLoan { player, .. }
+            | Self::CreditNpcCash { player, .. } => *player,
         }
     }
 }

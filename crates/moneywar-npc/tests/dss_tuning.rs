@@ -342,14 +342,14 @@ fn tuning_easy_baseline() {
 
 #[test]
 fn tuning_hard_baseline() {
-    let report = run_full_season(Difficulty::Hard, &[Personality::Aggressive]);
+    let report = run_full_season(Difficulty::Medium, &[Personality::Aggressive]);
     print_report(&report);
     assert!(report.total_matches > 100, "Hard'da daha çok aktivite");
 }
 
 #[test]
 fn tuning_expert_mixed_personalities() {
-    let report = run_full_season(Difficulty::Expert, &Personality::ALL);
+    let report = run_full_season(Difficulty::Hard, &Personality::ALL);
     print_report(&report);
     assert!(report.total_matches > 100, "Expert akıllı pazar yapmalı");
 }
@@ -357,7 +357,7 @@ fn tuning_expert_mixed_personalities() {
 #[test]
 fn tuning_expert_only_aggressive() {
     let report = run_full_season(
-        Difficulty::Expert,
+        Difficulty::Hard,
         &[Personality::Aggressive, Personality::Aggressive],
     );
     print_report(&report);
@@ -366,7 +366,7 @@ fn tuning_expert_only_aggressive() {
 #[test]
 fn tuning_expert_only_hoarder() {
     let report = run_full_season(
-        Difficulty::Expert,
+        Difficulty::Hard,
         &[Personality::Hoarder, Personality::Hoarder],
     );
     print_report(&report);
@@ -375,7 +375,7 @@ fn tuning_expert_only_hoarder() {
 #[test]
 fn tuning_expert_only_arbitrageur() {
     let report = run_full_season(
-        Difficulty::Expert,
+        Difficulty::Hard,
         &[Personality::Arbitrageur, Personality::Arbitrageur],
     );
     print_report(&report);
@@ -391,7 +391,7 @@ fn tuning_personality_comparison() {
     println!("║  ──────────   ───────   ────────  ────────       ║");
     let mut results: Vec<(Personality, f64, f64, u32)> = Vec::new();
     for p in Personality::ALL {
-        let report = run_full_season(Difficulty::Expert, &[p]);
+        let report = run_full_season(Difficulty::Hard, &[p]);
         let tuccar_avg = report
             .npc_pnl_by_kind
             .get(&NpcKind::Tuccar)
@@ -435,7 +435,7 @@ fn tuning_adaptive_difficulty() {
         ("Aşırı lider (500K)", 500_000),
     ];
     for (label, cash) in cases {
-        let report = run_full_season_with_human_cash(Difficulty::Expert, &Personality::ALL, cash);
+        let report = run_full_season_with_human_cash(Difficulty::Hard, &Personality::ALL, cash);
         let tuccar_avg = report
             .npc_pnl_by_kind
             .get(&NpcKind::Tuccar)

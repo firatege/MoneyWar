@@ -892,7 +892,7 @@ impl App {
             mode: Mode::Startup,
             market_intel_show_finished: false,
             selected_preset: PresetChoice::Hizli,
-            difficulty: Difficulty::Hard,
+            difficulty: Difficulty::default(), // Medium — yeni oyuncuya dengeli
             pending_human_cmds: Vec::new(),
             status: None,
             next_human_order_id: 1,
@@ -1529,7 +1529,7 @@ fn seed_world(
     let mut next_id: u64 = 100;
 
     // NPC-Tüccar(lar) — arbitraj + likidite. Sezon başında seed RNG'den
-    // bir personality atanır (Difficulty::Expert için DSS davranışı kullanılır).
+    // bir personality atanır (Difficulty::Hard için DSS davranışı kullanılır).
     // EventTrader otomatik Gold tier abone — pre-positioning için.
     for _ in 0..composition.tuccar {
         let name = pick_npc_name(&mut rng, NpcKind::Tuccar, &mut used_names);
@@ -2462,10 +2462,10 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::styled(
                 app.difficulty.label(),
                 Style::default()
-                    .fg(if matches!(app.difficulty, Difficulty::Hard) {
-                        Color::Red
-                    } else {
-                        Color::Green
+                    .fg(match app.difficulty {
+                        Difficulty::Easy => Color::Green,
+                        Difficulty::Medium => Color::Yellow,
+                        Difficulty::Hard => Color::Red,
                     })
                     .add_modifier(Modifier::BOLD),
             ),
@@ -7373,6 +7373,7 @@ fn describe_command_short(cmd: &Command) -> String {
         Command::CancelContractProposal { contract_id, .. } => {
             format!("kontrat geri çek #{}", contract_id.value())
         }
+        Command::CreditNpcCash { amount, .. } => format!("npc nakit +{amount}"),
     }
 }
 
@@ -7418,6 +7419,7 @@ fn describe_command(cmd: &Command) -> String {
         Command::CancelContractProposal { contract_id, .. } => {
             format!("kontrat iptal: {contract_id}")
         }
+        Command::CreditNpcCash { amount, .. } => format!("npc nakit enjeksiyon: {amount}"),
     }
 }
 

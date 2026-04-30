@@ -27,7 +27,7 @@ use tracing::{error, info, warn};
 use crate::ServerState;
 
 /// Server difficulty — Sprint 3 default Hard. Sprint 4'te lobi config'inden gelecek.
-const SERVER_DIFFICULTY: Difficulty = Difficulty::Hard;
+const SERVER_DIFFICULTY: Difficulty = Difficulty::Medium;
 
 /// Tick advance modu.
 #[derive(Debug, Clone, Copy)]

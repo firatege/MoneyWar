@@ -175,7 +175,40 @@ fn dispatch(
         Command::RepayLoan { player, loan_id } => {
             repay_loan_impl(state, report, tick, *player, *loan_id)
         }
+        Command::CreditNpcCash { player, amount } => {
+            credit_npc_cash_impl(state, *player, *amount)
+        }
     }
+}
+
+/// `CreditNpcCash` — NPC'nin nakdine periyodik enjeksiyon (talep döngüsü).
+/// Sadece `is_npc=true` oyuncular için kabul, insan oyuncudan gelirse reddedilir.
+fn credit_npc_cash_impl(
+    state: &mut GameState,
+    player: PlayerId,
+    amount: moneywar_domain::Money,
+) -> Result<(), EngineError> {
+    let p = state.players.get_mut(&player).ok_or_else(|| {
+        EngineError::Domain(moneywar_domain::DomainError::Validation(format!(
+            "player {player} not found"
+        )))
+    })?;
+    if !p.is_npc {
+        return Err(EngineError::Domain(
+            moneywar_domain::DomainError::Validation(
+                "CreditNpcCash sadece NPC için".into(),
+            ),
+        ));
+    }
+    if amount.is_negative() || amount.is_zero() {
+        return Err(EngineError::Domain(
+            moneywar_domain::DomainError::Validation(
+                "CreditNpcCash amount > 0 olmalı".into(),
+            ),
+        ));
+    }
+    p.credit(amount)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
