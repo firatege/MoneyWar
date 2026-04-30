@@ -142,6 +142,23 @@ pub fn build_engine() -> Engine {
                 .when("momentum", "yuksek")
                 .then("buy_score", 0.95),
         )
+        // 19. Stok DÜŞÜK + nakit yüksek → BUY (boş pozisyonu doldur, market maker
+        //     mamulde de iki yönlü olsun). Trace'ten Spek mamulde sadece SAT
+        //     ediyordu; bu rule mamul BID'i açar, spread daralır.
+        .add_rule(
+            Rule::new()
+                .when("stock", "dusuk")
+                .when("cash", "yuksek")
+                .then("buy_score", 0.6),
+        )
+        // 20. Spread'i daraltıcı genel boost — fiyat orta + rekabet orta →
+        //     ASK'i agresif yap (pahalı satmaktan vazgeç, match şansı artsın).
+        .add_rule(
+            Rule::new()
+                .when("price_rel_avg", "orta")
+                .when("competition", "orta")
+                .then("ask_aggressiveness", 0.75),
+        )
 }
 
 #[cfg(test)]

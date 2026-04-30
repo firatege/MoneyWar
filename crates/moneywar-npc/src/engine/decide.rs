@@ -25,7 +25,7 @@
 
 use moneywar_domain::{
     CargoSpec, CityId, Command, ContractProposal, GameState, ListingKind, MarketOrder, Money,
-    OrderId, OrderSide, Personality, PlayerId, ProductKind, Role, Tick,
+    NpcKind, OrderId, OrderSide, Personality, Player, PlayerId, ProductKind, Role, Tick,
 };
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -148,6 +148,146 @@ fn apply_personality_bias(outputs: &mut Outputs, personality: Option<Personality
     }
 }
 
+/// Plan v5 Faz 12 — NPC tipi başına pulse/cadence (action periyodu).
+///
+/// Farklı rolllerin doğal ritmi farklı: Çiftçi yavaş üretir, Spekülatör
+/// sürekli market maker, Banka çok seyrek. Bu fonksiyon `(tick % period == 0)`
+/// kontrolü için periyodu döner — `decide_npc_fuzzy` skip eder.
+///
+/// Periyod 1 = her tick aktif. Bigger = daha seyrek.
+fn pulse_period(npc_kind: Option<NpcKind>) -> u32 {
+    match npc_kind {
+        Some(NpcKind::Spekulator) => 2, // market maker: 2 tick'te 1 (emir spam'i azalsın, match oranı artsın)
+        Some(NpcKind::Tuccar) => 1,     // tüccar: her tick (lojistik scanner — BUY+dispatch hızlı tetiklensin)
+        Some(NpcKind::Sanayici) => 2,   // sanayici: 2 tick'te 1 (cadence 1 ekstra BUY → ham fiyatı yükseliyordu)
+        Some(NpcKind::Esnaf) => 1,      // toptancı: her tick (pazar dolaşımı için)
+        Some(NpcKind::Alici) => 3,      // alıcı: 3 tick'te 1 (tüketim ritmi)
+        Some(NpcKind::Ciftci) => 1,     // çiftçi: her tick (eski 2 → ham arzı +%100, Sanayici 15 fabrikayı doyurmak için)
+        Some(NpcKind::Banka) => 12,     // banka: çok seyrek (bank.rs aynısını kullanır)
+        None => 1,                       // insan oyuncu (etki yok, NPC değil)
+    }
+}
+
+/// Plan v4 Faz 2 — NPC tipi başına izin verilen aksiyonlar (single-task gate).
+///
+/// Her NPC kendi şeridinde kalsın diye:
+/// - `Ciftci` → sadece SELL (ham madde)
+/// - `Esnaf` (Toptancı) → BUY ham, SELL ham/mamul (aracı)
+/// - `Sanayici` → BUY sadece kendi fabrikalarının `raw_input`'u, SELL sadece
+///                kendi fabrikalarının ürünü
+/// - `Tuccar` → BUY/SELL serbest ama ileride şehir-arbitraj gate eklenir
+/// - `Alici` → BUY sadece mamul; SELL likidite kolu (her şey)
+/// - `Spekulator` → market maker (her ikisi de serbest)
+/// - `Banka` → normal market aksiyonu yok (özel akış)
+fn allow_buy(player: &Player, state: &GameState, product: ProductKind) -> bool {
+    match player.npc_kind {
+        Some(NpcKind::Banka) | Some(NpcKind::Ciftci) => false,
+        Some(NpcKind::Alici) => product.is_finished(),
+        Some(NpcKind::Esnaf) => product.is_raw(),
+        Some(NpcKind::Sanayici) => {
+            if !product.is_raw() {
+                return false;
+            }
+            state
+                .factories
+                .values()
+                .any(|f| f.owner == player.id && f.product.raw_input() == Some(product))
+        }
+        Some(NpcKind::Tuccar) | Some(NpcKind::Spekulator) | None => true,
+    }
+}
+
+fn allow_sell(player: &Player, state: &GameState, product: ProductKind) -> bool {
+    match player.npc_kind {
+        Some(NpcKind::Banka) => false,
+        Some(NpcKind::Ciftci) => product.is_raw(),
+        Some(NpcKind::Sanayici) => {
+            if !product.is_finished() {
+                return false;
+            }
+            state
+                .factories
+                .values()
+                .any(|f| f.owner == player.id && f.product == product)
+        }
+        // Alıcı: TASARIMSAL TÜKETİCİ — SELL kapalı. Eski "likidite kolu" kuralı
+        // (cash low → mamul sat) Alıcı'yı arbitraj yapan oyuncu yapıyordu.
+        // PnL +45K (tek kazanan, Sanayici -33K kaybederken) bu yüzden.
+        // Alıcı sadece BUY mamul, SELL yok. Cash krizi → maaş periyodik çözer.
+        Some(NpcKind::Alici) => false,
+        Some(NpcKind::Esnaf)
+        | Some(NpcKind::Tuccar)
+        | Some(NpcKind::Spekulator)
+        | None => true,
+    }
+}
+
+fn allow_build_factory(player: &Player) -> bool {
+    !matches!(player.npc_kind, Some(NpcKind::Banka))
+}
+
+fn allow_contract(player: &Player) -> bool {
+    !matches!(
+        player.npc_kind,
+        Some(NpcKind::Banka) | Some(NpcKind::Alici) | Some(NpcKind::Ciftci)
+    )
+}
+
+fn allow_caravan(player: &Player) -> bool {
+    // Çiftçi/Banka/Alici kervan kullanmaz — Tüccar/insan oyuncu serbest.
+    matches!(player.npc_kind, Some(NpcKind::Tuccar) | None)
+}
+
+/// Plan v4 Faz 6 — Tüccar arbitraj gate.
+///
+/// Tüccar aynı şehirde BUY+SELL yapmasın diye:
+/// - BUY izni: bu şehir, başka şehir ortalamasından **daha ucuz** (≥ %3 spread)
+/// - SELL izni: bu şehir, başka şehir ortalamasından **daha pahalı** (≥ %3 spread)
+///
+/// Spread eşiği `ARBITRAGE_SPREAD_PCT` = 3 — kervan maliyeti ~%2-3 ile uyumlu.
+/// İlk audit'te %5 hiç tetiklenmedi (90 tick); %3 daha gerçekçi.
+const ARBITRAGE_SPREAD_PCT: i64 = 3;
+const ARBITRAGE_WINDOW: usize = 5;
+
+/// Tüccar arbitraj gate için fiyat — rolling avg yoksa baseline'a düş.
+/// Sezon başında price_history boş, gate hiç tetiklenmiyordu (Tuning v6.5 fix).
+fn arbitrage_price_cents(state: &GameState, city: CityId, product: ProductKind) -> Option<i64> {
+    state
+        .rolling_avg_price(city, product, ARBITRAGE_WINDOW)
+        .or_else(|| state.effective_baseline(city, product))
+        .map(|p| p.as_cents())
+}
+
+fn tuccar_buy_arbitrage_ok(state: &GameState, city: CityId, product: ProductKind) -> bool {
+    let here = match arbitrage_price_cents(state, city, product) {
+        Some(p) if p > 0 => p,
+        _ => return false,
+    };
+    CityId::ALL.iter().filter(|&&c| c != city).any(|&c| {
+        if let Some(there) = arbitrage_price_cents(state, c, product) {
+            // diğer şehir burdan en az %3 pahalı olmalı (burası ucuz)
+            (there - here) * 100 >= here * ARBITRAGE_SPREAD_PCT
+        } else {
+            false
+        }
+    })
+}
+
+fn tuccar_sell_arbitrage_ok(state: &GameState, city: CityId, product: ProductKind) -> bool {
+    let here = match arbitrage_price_cents(state, city, product) {
+        Some(p) if p > 0 => p,
+        _ => return false,
+    };
+    CityId::ALL.iter().filter(|&&c| c != city).any(|&c| {
+        if let Some(there) = arbitrage_price_cents(state, c, product) {
+            // diğer şehir burdan en az %3 ucuz olmalı (burası pahalı)
+            (here - there) * 100 >= here * ARBITRAGE_SPREAD_PCT
+        } else {
+            false
+        }
+    })
+}
+
 /// Fuzzy karar motoru — tüm (city, product) bucket'larını değerlendirir,
 /// modulator filter sonrası `Command` listesi döner.
 #[must_use]
@@ -170,6 +310,15 @@ pub fn decide_npc_fuzzy(
     let role = player.role;
     let npc_kind = player.npc_kind;
     let personality = player.personality;
+
+    // Plan v5 — NPC tipi pulse/cadence: bu tick aktif değilse skip.
+    let period = pulse_period(npc_kind);
+    if period > 1 {
+        let next_t = state.current_tick.next().value();
+        if next_t % period != 0 {
+            return Vec::new();
+        }
+    }
     let engine = engine_for(role, npc_kind);
     let tick = state.current_tick.next();
     let ttl = state.config.balance.default_order_ttl;
@@ -189,8 +338,18 @@ pub fn decide_npc_fuzzy(
             let bid_aggro = outputs.get("bid_aggressiveness").copied().unwrap_or(0.5);
             let ask_aggro = outputs.get("ask_aggressiveness").copied().unwrap_or(0.5);
 
-            // Buy emir adayı.
-            if buy_score >= modulator.min_score_threshold && buy_score > 0.3 {
+            // Tüccar için ek arbitraj gate — sadece spread varsa BUY/SELL.
+            let tuccar_buy_ok = !matches!(player.npc_kind, Some(NpcKind::Tuccar))
+                || tuccar_buy_arbitrage_ok(state, city, product);
+            let tuccar_sell_ok = !matches!(player.npc_kind, Some(NpcKind::Tuccar))
+                || tuccar_sell_arbitrage_ok(state, city, product);
+
+            // Buy emir adayı — NPC tipi gate + (Tüccar) arbitraj gate.
+            if allow_buy(player, state, product)
+                && tuccar_buy_ok
+                && buy_score >= modulator.min_score_threshold
+                && buy_score > 0.3
+            {
                 if let Some(cmd) = build_buy_order(
                     state, npc_id, city, product, bid_aggro, modulator, tick, ttl, &mut seq,
                 ) {
@@ -198,8 +357,12 @@ pub fn decide_npc_fuzzy(
                 }
             }
 
-            // Sell emir adayı.
-            if sell_score >= modulator.min_score_threshold && sell_score > 0.3 {
+            // Sell emir adayı — NPC tipi gate + (Tüccar) arbitraj gate.
+            if allow_sell(player, state, product)
+                && tuccar_sell_ok
+                && sell_score >= modulator.min_score_threshold
+                && sell_score > 0.3
+            {
                 if let Some(cmd) = build_sell_order(
                     state, npc_id, city, product, ask_aggro, modulator, tick, ttl, &mut seq,
                 ) {
@@ -207,29 +370,92 @@ pub fn decide_npc_fuzzy(
                 }
             }
 
-            // BuildFactory adayı (Sanayici only).
-            if matches!(role, Role::Sanayici) {
-                let build_score = outputs
-                    .get("build_factory_score")
-                    .copied()
-                    .unwrap_or(0.0);
-                if build_score >= modulator.min_score_threshold
-                    && build_score > 0.5
-                    && product.is_finished()
-                {
-                    candidates.push((
-                        Command::BuildFactory {
-                            owner: npc_id,
-                            city,
-                            product,
-                        },
-                        build_score,
-                    ));
+            // BuildFactory adayı (Sanayici + ekonomik gate).
+            //
+            // Duplicate guard: aynı (city, product) için NPC'nin fabrikası
+            // zaten varsa aday olarak ekleme.
+            //
+            // Şehir çeşitlendirmesi — NPC ID hash'iyle home_city ata
+            // (NPC.id % 3 → Istanbul/Ankara/Izmir). Home_city + lokal mamul'a
+            // büyük bonus → tüm Sanayici NPC'leri aynı 3 yere yığılmasın.
+            //
+            // EKONOMİK GATE (kullanıcı isteği) — fabrika kurarken Sanayici 3 koşulu
+            // değerlendirsin:
+            // 1. CASH BUFFER: build_cost + 10 batch'lık ham bütçesi <= cash
+            //    (kuruluş sonrası fabrikayı besleyecek paran kalsın)
+            // 2. HAM ARZ: o (city, raw_input) için ya rolling_avg ya da baseline
+            //    var (piyasada potansiyel arz gözüküyor — Çiftçi/Tüccar erişebilir)
+            // 3. TALEP: o (city, finished) için baseline var (Alıcı talebi olabilir)
+            //
+            // Hammaddenin ucuz olduğu şehir (cheap_raw match) varsa local market'tan
+            // direkt alabilir; değilse Tüccar dispatch'i bekler. Ham erişimi yok ise
+            // fabrikayı boş bırakır → cash sink. Bu gate önler.
+            if matches!(role, Role::Sanayici) && allow_build_factory(player) {
+                let already_has_factory = state
+                    .factories
+                    .values()
+                    .any(|f| f.owner == npc_id && f.city == city && f.product == product);
+                if !already_has_factory && product.is_finished() {
+                    let build_score = outputs
+                        .get("build_factory_score")
+                        .copied()
+                        .unwrap_or(0.0);
+                    if build_score >= modulator.min_score_threshold
+                        && build_score > 0.5
+                    {
+                        // Gate 1: cash buffer hesapla.
+                        let owned_count = u32::try_from(
+                            state.factories.values().filter(|f| f.owner == npc_id).count(),
+                        )
+                        .unwrap_or(u32::MAX);
+                        let build_cost = moneywar_domain::Factory::build_cost(owned_count);
+                        // 10 batch × 100 ham × ortalama baseline ~7₺ = 7K buffer.
+                        let raw_buffer_cents: i64 = 10
+                            * i64::from(moneywar_domain::Factory::BATCH_SIZE)
+                            * 700; // 7₺ = 700 cent
+                        let needed_cents = build_cost.as_cents() + raw_buffer_cents;
+                        let cash_ok = player.cash.as_cents() >= needed_cents;
+
+                        // Gate 2: ham arz erişimi — bu (city, raw) için piyasa fiyatı
+                        // var mı (rolling_avg veya baseline)?
+                        let raw_input = match product.raw_input() {
+                            Some(r) => r,
+                            None => continue,
+                        };
+                        let raw_supply_ok = state
+                            .rolling_avg_price(city, raw_input, 5)
+                            .or_else(|| state.effective_baseline(city, raw_input))
+                            .is_some();
+
+                        // Gate 3: mamul talep erişimi — bu (city, finished) için
+                        // piyasa fiyatı var mı?
+                        let demand_ok = state
+                            .rolling_avg_price(city, product, 5)
+                            .or_else(|| state.effective_baseline(city, product))
+                            .is_some();
+
+                        if cash_ok && raw_supply_ok && demand_ok {
+                            let home_city = match npc_id.value() % 3 {
+                                0 => CityId::Istanbul,
+                                1 => CityId::Ankara,
+                                _ => CityId::Izmir,
+                            };
+                            let home_bonus = if city == home_city { 0.15 } else { 0.0 };
+                            candidates.push((
+                                Command::BuildFactory {
+                                    owner: npc_id,
+                                    city,
+                                    product,
+                                },
+                                build_score + home_bonus,
+                            ));
+                        }
+                    }
                 }
             }
 
-            // Contract aday (Sanayici/Tüccar only) — fuzzy contract_score yüksekse.
-            if matches!(role, Role::Sanayici | Role::Tuccar) {
+            // Contract aday (Sanayici/Tüccar + gate).
+            if matches!(role, Role::Sanayici | Role::Tuccar) && allow_contract(player) {
                 let contract_score = outputs
                     .get("contract_score")
                     .copied()
@@ -246,7 +472,7 @@ pub fn decide_npc_fuzzy(
     }
 
     // BuyCaravan adayı (Tüccar only) — global, role-spesifik bir tek (city,product) skoru.
-    if matches!(role, Role::Tuccar) {
+    if matches!(role, Role::Tuccar) && allow_caravan(player) {
         // Pamuk + İstanbul örnek olarak kullan; aslında en yüksek arbitraj şehri.
         let inputs = compute_inputs(state, npc_id, CityId::Istanbul, ProductKind::Pamuk);
         let mut outputs = engine.evaluate(&inputs);
@@ -268,12 +494,13 @@ pub fn decide_npc_fuzzy(
     }
 
     // Dispatch adayları (Tüccar): kervan idle + stok varsa, en yüksek skorlu (from→to).
-    if matches!(role, Role::Tuccar) {
+    // Skor 1.5 → orchestrator top-K filter'da BUY/SELL/BuyCaravan adaylarının üstüne çıksın.
+    // Aksi halde 18 bucket × 2 = 36 BUY/SELL adayı dispatch'ı top-5'ten dışarı atar.
+    if matches!(role, Role::Tuccar) && allow_caravan(player) {
         if let Some(cmd) =
             build_dispatch_command(state, npc_id, &engine, modulator, tick, &mut seq)
         {
-            // Skoru hesapla (orchestrator'da basit: fuzzy dispatch_score yüksekse)
-            candidates.push((cmd, 0.7));
+            candidates.push((cmd, 1.5));
         }
     }
 
@@ -423,23 +650,35 @@ fn build_dispatch_command(
         .find(|c| c.owner == npc_id && c.is_idle())?;
     let from = idle_caravan.state.current_city()?;
 
-    // En arbitraj fırsatlı (from, to, product) seç
+    // En arbitraj fırsatlı (from, to, product) seç.
+    // Sezon başında rolling_avg yok → effective_baseline'a fallback (arbitrage gate ile aynı pattern).
     let mut best: Option<(CityId, ProductKind, i64)> = None;
     for product in ProductKind::ALL {
         let stock = player.inventory.get(from, product);
         if stock < 10 {
             continue;
         }
-        let here = state.rolling_avg_price(from, product, 5)?.as_cents();
+        let Some(here) = state
+            .rolling_avg_price(from, product, 5)
+            .or_else(|| state.effective_baseline(from, product))
+            .map(|p| p.as_cents())
+        else {
+            continue;
+        };
         for to in CityId::ALL {
             if to == from {
                 continue;
             }
-            if let Some(there_p) = state.rolling_avg_price(to, product, 5) {
-                let profit = there_p.as_cents() - here;
-                if profit > 25 && best.map_or(true, |(_, _, p)| profit > p) {
-                    best = Some((to, product, profit));
-                }
+            let Some(there_cents) = state
+                .rolling_avg_price(to, product, 5)
+                .or_else(|| state.effective_baseline(to, product))
+                .map(|p| p.as_cents())
+            else {
+                continue;
+            };
+            let profit = there_cents - here;
+            if profit > 25 && best.map_or(true, |(_, _, p)| profit > p) {
+                best = Some((to, product, profit));
             }
         }
     }
@@ -512,14 +751,16 @@ fn market_or_base(state: &GameState, city: CityId, product: ProductKind) -> Mone
         })
 }
 
-/// Cash kapasitesine göre alım miktarı (cash'in %25'i, cap 400).
+/// Cash kapasitesine göre alım miktarı (cash'in %15'i, cap 150).
+/// Eski %25/cap 400 → büyük emirler match verimi düşürüyordu (matched_qty
+/// orantısı: küçük emirler tam dolma şansı yüksek). Hedef match verim %5+.
 fn pick_buy_qty(cash_cents: i64, bid_cents: i64) -> u32 {
     if bid_cents <= 0 {
         return 0;
     }
-    let budget = cash_cents / 4; // %25
+    let budget = cash_cents * 12 / 100; // %12
     let max_qty = budget / bid_cents;
-    let capped = max_qty.clamp(0, 400);
+    let capped = max_qty.clamp(0, 120);
     u32::try_from(capped).unwrap_or(0)
 }
 
@@ -538,17 +779,19 @@ fn pick_buy_qty_sanayici(cash_cents: i64, bid_cents: i64, factory_count: u32) ->
     target.min(max_qty)
 }
 
-/// Stok'a göre satım miktarı (stoğun %40'ı, cap 250).
+/// Stok'a göre satım miktarı (stoğun %20'si, cap 80).
+/// Eski %40/cap 250 → küçük emirlere geçiş match verim hedefi için (%5+).
 fn pick_sell_qty(stock: u32) -> u32 {
-    let q = (stock * 2) / 5;
-    q.clamp(10, 250).min(stock)
+    let q = stock / 5;
+    q.clamp(10, 80).min(stock)
 }
 
-/// Sanayici mamul satışı — fabrikalar üretim biriktirir, stoğun %60'ını sat,
-/// cap 400. Cash sink önler (mamul birikmiyor).
+/// Sanayici mamul satışı — fabrikalar üretim biriktirir, stoğun %40'ını sat,
+/// cap 200. Cash sink önler (mamul birikmiyor). Eski cap 400 → 200 küçültüldü
+/// ki match verim hedefi yakalansın.
 fn pick_sell_qty_sanayici(stock: u32) -> u32 {
-    let q = (stock * 3) / 5;
-    q.clamp(50, 400).min(stock)
+    let q = (stock * 2) / 5;
+    q.clamp(40, 200).min(stock)
 }
 
 /// Fuzzy NPC order ID (DSS NPC_ORDER_ID_OFFSET ile uyumsuz tutmayalım — distinct prefix).
@@ -588,6 +831,8 @@ mod tests {
     #[test]
     fn rich_sanayici_emits_actions_at_medium() {
         let mut s = fresh_state();
+        // Plan v5 pulse: Sanayici 3 tick'te 1 → next_tick % 3 == 0 olsun.
+        s.current_tick = moneywar_domain::Tick::new(2);
         let pid = add_npc(&mut s, 100, Role::Sanayici, 40_000, NpcKind::Sanayici);
         let mut rng = ChaCha8Rng::from_seed([0u8; 32]);
         let cmds = decide_npc_fuzzy(&s, pid, Difficulty::Hard.modulator(), &mut rng);

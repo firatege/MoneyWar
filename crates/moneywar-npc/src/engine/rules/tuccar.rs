@@ -12,12 +12,26 @@ pub fn build_engine() -> Engine {
 
     e
         // ── BUY (al) ──
-        // 1. Arbitraj yüksek + nakit yüksek → al
+        // 1. Arbitraj yüksek + nakit yüksek → al (full agresif)
         .add_rule(
             Rule::new()
                 .when("arbitrage", "yuksek")
                 .when("cash", "yuksek")
                 .then("buy_score", 0.95),
+        )
+        // 1b. Arbitraj orta + nakit var → orta agresif al (Tuning v6)
+        .add_rule(
+            Rule::new()
+                .when("arbitrage", "orta")
+                .when("cash", "orta")
+                .then("buy_score", 0.7),
+        )
+        // 1c. Fiyat ucuz şehir + nakit orta → al (Tüccar arbitraj çekirdek)
+        .add_rule(
+            Rule::new()
+                .when("price_rel_avg", "dusuk")
+                .when("cash", "orta")
+                .then("buy_score", 0.8),
         )
         // 2. Fiyat ucuz + stok az → fırsat alımı
         .add_rule(
@@ -130,21 +144,34 @@ pub fn build_engine() -> Engine {
                 .when("caravan_count", "yuksek")
                 .then("buy_caravan_score", 0.0),
         )
-        // ── Talep yok ise dispatch etme ──
-        // 18. Hedef pazarda bid yoksa → DISPATCH ETME (boşa taşıma)
-        // (Kullanıcı şikayeti: "fiyat düşürdüm kimse almadı" — taşıma anlamsız)
+        // ── Dispatch (arbitraj-bazlı taşıma) ──
+        // 18. Stok var + arbitraj yüksek → DISPATCH (esas tetik: kâr fırsatı)
+        .add_rule(
+            Rule::new()
+                .when("stock", "yuksek")
+                .when("arbitrage", "yuksek")
+                .then("dispatch_score", 0.9),
+        )
+        // 18b. Stok var + arbitraj orta → DISPATCH (orta agresif)
+        .add_rule(
+            Rule::new()
+                .when("stock", "yuksek")
+                .when("arbitrage", "orta")
+                .then("dispatch_score", 0.65),
+        )
+        // 18c. Yerel bid yok + stok var → DISPATCH (yerel pazar zayıf, taşı)
         .add_rule(
             Rule::new()
                 .when("bid_supply_ratio", "dusuk")
                 .when("stock", "yuksek")
-                .then("dispatch_score", 0.1),
+                .then("dispatch_score", 0.55),
         )
-        // 19. Hedef pazarda bid yüksek + stok varsa → DISPATCH (taşı, sat)
+        // 19. Hedef pazarda bid yüksek + stok varsa → DISPATCH (sekonder sinyal)
         .add_rule(
             Rule::new()
                 .when("bid_supply_ratio", "yuksek")
                 .when("stock", "yuksek")
-                .then("dispatch_score", 0.9),
+                .then("dispatch_score", 0.7),
         )
         // ── Talep yok ise ASK düşürme anlamsız ──
         // 20. Talep yok + stok yüksek → ASK agresif AZALT (fiyat düşürme boşa)

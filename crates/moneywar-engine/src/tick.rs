@@ -106,6 +106,10 @@ pub fn advance_tick(
     advance_contracts(&mut new_state, &mut report, next_tick);
     advance_loans(&mut new_state, &mut report, next_tick);
     crate::news::charge_news_subscriptions(&mut new_state, &mut report, next_tick);
+    // v4 ekonomi akışı: maaş, mahsul, vergi (closed loop)
+    crate::economy::tick_economy(&mut new_state, &mut rng, &mut report, next_tick);
+    // v4 banka: distress NPC'lere kredi akışı (closed loop, lender field)
+    crate::bank::tick_banks(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;

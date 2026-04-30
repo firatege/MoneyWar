@@ -140,6 +140,54 @@ pub fn compute_inputs(
         (1.0 - inputs.get("urgency").copied().unwrap_or(0.0)).clamp(0.0, 1.0),
     );
 
+    // 14. Rival action pressure (Plan v5) — bu (city, product) için bu NPC
+    // **dışındaki** kaç farklı oyuncunun açık emri var. 0 = yalnız, 1 = 5+
+    // farklı rakip. NPC bandwagon ve coalition davranışını besler.
+    let rival_count = state
+        .order_book
+        .get(&(city, product))
+        .map(|orders| {
+            let mut rivals: std::collections::BTreeSet<PlayerId> = std::collections::BTreeSet::new();
+            for o in orders {
+                if o.player != npc_id {
+                    rivals.insert(o.player);
+                }
+            }
+            rivals.len()
+        })
+        .unwrap_or(0);
+    inputs.insert(
+        "rival_action_pressure",
+        (rival_count as f64 / 5.0).clamp(0.0, 1.0),
+    );
+
+    // 15. Ask supply ratio — arz baskısı (1 - bid_supply_ratio benzeri ama saf
+    // ask hacmi). 0 = arz yok, 1 = arz piyasayı bastırıyor (ucuz alım fırsatı).
+    let ask_pressure = if bid_qty + ask_qty == 0 {
+        0.0
+    } else {
+        f64::from(ask_qty) / f64::from(bid_qty + ask_qty)
+    };
+    inputs.insert("ask_supply_ratio", ask_pressure.clamp(0.0, 1.0));
+
+    // 16. Local raw advantage — bu (city, product) yerel uzmanlığa uyuyor mu?
+    //   * Raw için: bu şehir'in cheap_raw'ı bu raw mı? (Istanbul=Pamuk, ...)
+    //   * Mamul için: raw_input bu şehir'in cheap_raw'ı mı? (Kumas → Pamuk → Istanbul)
+    //   * Hiçbiri değilse 0.0.
+    // Sanayici fabrika kurma + Esnaf ham alım kararlarını şehir-spesifik yapan
+    // ana sinyal. Tie-break + uzmanlaşma için kritik.
+    let local_advantage = match product.raw_input() {
+        Some(raw) => {
+            // Mamul: raw_input bu şehir'in specialty'si mi?
+            if city.cheap_raw() == raw { 1.0 } else { 0.0 }
+        }
+        None => {
+            // Ham: bu şehir'in cheap_raw'ı mı?
+            if city.cheap_raw() == product { 1.0 } else { 0.0 }
+        }
+    };
+    inputs.insert("local_raw_advantage", local_advantage);
+
     inputs
 }
 

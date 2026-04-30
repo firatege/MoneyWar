@@ -3,21 +3,31 @@
 //! Args:
 //!   --seed <N>          Default: 42
 //!   --ticks <N>         Default: 90
-//!   --difficulty <X>    easy|hard  (Expert kaldırıldı; medium Faz 1'de gelir)
+//!   --difficulty <X>    easy|medium|hard  Default: hard
 //!   --scenario <NAME>   passive | active_sanayici | active_tuccar
 //!   --report-out <P>    Markdown rapor dosyaya yaz (yoksa stdout)
-//!   --multi-seed        1,7,42 ile koştur, üç rapor + ortalama
+//!   --multi-seed        10 seed paralel: 1,7,42,100,256,512,1024,2048,4096,8192
+//!   --serial            Multi-seed'i sıralı koştur (debug için)
+//!   --per-seed-dir <D>  Multi-seed: her seed için ayrı markdown (D/seed_<N>.md)
 //!
 //! Hızlı baseline:
-//!   cargo run -p moneywar-sim -- --multi-seed --report-out artifacts/baseline_v02.md
+//!   cargo run -p moneywar-sim -- --multi-seed --report-out artifacts/baseline.md
+//!
+//! Paralel 10 oyun + per-seed dosyalar:
+//!   cargo run -p moneywar-sim -- --multi-seed \
+//!       --report-out artifacts/aggregate.md \
+//!       --per-seed-dir artifacts/per-seed
 
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::thread;
+use std::time::Instant;
 
 use moneywar_npc::Difficulty;
 use moneywar_sim::{
-    render_markdown, PerRunMetrics, QualityScore, Scenario, SimRunner, Stats,
+    GameThresholds, PerRunMetrics, QualityScore, Scenario, SimResult, SimRunner, Stats,
+    default_contracts, logbuilder, render_markdown, render_threshold_report,
 };
 
 fn main() {
@@ -28,6 +38,10 @@ fn main() {
     let mut scenario: &'static Scenario = &Scenario::ACTIVE_SANAYICI;
     let mut report_out: Option<String> = None;
     let mut multi_seed = false;
+    let mut serial = false;
+    let mut per_seed_dir: Option<String> = None;
+    let mut threshold_report_out: Option<String> = None;
+    let mut log_dir: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -66,6 +80,22 @@ fn main() {
                 multi_seed = true;
                 i += 1;
             }
+            "--serial" => {
+                serial = true;
+                i += 1;
+            }
+            "--per-seed-dir" => {
+                per_seed_dir = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--threshold-out" => {
+                threshold_report_out = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--log-dir" => {
+                log_dir = Some(args[i + 1].clone());
+                i += 2;
+            }
             "-h" | "--help" => {
                 print_help();
                 return;
@@ -78,35 +108,66 @@ fn main() {
         }
     }
 
-    let mut combined = String::new();
     let seeds: Vec<u64> = if multi_seed {
-        // Genişletilmiş seed seti — daha güçlü istatistik (10 seed).
         vec![1, 7, 42, 100, 256, 512, 1024, 2048, 4096, 8192]
     } else {
         vec![seed]
     };
 
-    let mut all_metrics: Vec<PerRunMetrics> = Vec::new();
-    for s in &seeds {
-        let runner = SimRunner::new(*s, scenario)
-            .with_ticks(ticks)
-            .with_difficulty(diff);
-        let result = runner.run();
-        let metrics = PerRunMetrics::from_result(&result);
-        all_metrics.push(metrics);
-        // Sadece tek seed'de detaylı rapor; multi-seed'de agregat yeterli.
-        if !multi_seed {
-            let md = render_markdown(&result);
-            combined.push_str(&md);
-            combined.push_str("\n---\n\n");
+    let started = Instant::now();
+    let results: Vec<SimResult> = if multi_seed && !serial {
+        run_parallel(&seeds, scenario, ticks, diff)
+    } else {
+        seeds
+            .iter()
+            .map(|s| {
+                SimRunner::new(*s, scenario)
+                    .with_ticks(ticks)
+                    .with_difficulty(diff)
+                    .run()
+            })
+            .collect()
+    };
+    let elapsed_ms = started.elapsed().as_millis();
+    eprintln!(
+        "🏁 {} run × {} tick → {} ms ({})",
+        results.len(),
+        ticks,
+        elapsed_ms,
+        if multi_seed && !serial {
+            "parallel"
+        } else {
+            "serial"
+        }
+    );
+
+    let all_metrics: Vec<PerRunMetrics> = results.iter().map(PerRunMetrics::from_result).collect();
+
+    // Per-seed dosyaları yaz (multi-seed'de istenirse).
+    if multi_seed {
+        if let Some(dir) = &per_seed_dir {
+            let dir_path = Path::new(dir);
+            let _ = fs::create_dir_all(dir_path);
+            for r in &results {
+                let path = dir_path.join(format!("seed_{}.md", r.seed));
+                fs::write(&path, render_markdown(r)).expect("write per-seed");
+            }
+            eprintln!("Per-seed raporları: {}/seed_*.md", dir);
         }
     }
 
-    // Multi-seed'de agregat istatistik raporu üret.
+    // Birleşik rapor (stdout veya report-out).
+    let mut combined = String::new();
     if multi_seed && !all_metrics.is_empty() {
         let stats = Stats::collect(diff, &all_metrics);
         let quality = QualityScore::from_stats(&stats);
         combined.push_str(&render_aggregate_report(&stats, &quality, &all_metrics));
+        combined.push_str(&render_per_seed_summary(&results, &all_metrics));
+    } else {
+        for r in &results {
+            combined.push_str(&render_markdown(r));
+            combined.push_str("\n---\n\n");
+        }
     }
 
     if let Some(path) = report_out {
@@ -118,6 +179,70 @@ fn main() {
     } else {
         print!("{combined}");
     }
+
+    // Threshold raporu (rol kontrat + oyun kapısı denetimi).
+    if multi_seed {
+        if let Some(path) = threshold_report_out {
+            let stats = Stats::collect(diff, &all_metrics);
+            let contracts = default_contracts();
+            let thresholds = GameThresholds::hard_default();
+            let md = render_threshold_report(&contracts, &thresholds, &results, &stats);
+            if let Some(parent) = Path::new(&path).parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            fs::write(&path, &md).expect("write threshold report");
+            eprintln!("Threshold raporu: {path}");
+        }
+    }
+
+    // Tek-flag log builder: timestamped klasör + tüm raporlar/data.
+    if let Some(root) = log_dir {
+        let root_path = Path::new(&root);
+        let _ = fs::create_dir_all(root_path);
+        let run_dir = logbuilder::create_run_dir(root_path);
+        let cmdline = args.join(" ");
+        logbuilder::write_full_log(
+            &run_dir,
+            &cmdline,
+            &seeds,
+            ticks,
+            diff,
+            scenario.name,
+            &results,
+            &all_metrics,
+            elapsed_ms,
+        );
+        eprintln!("📁 Log klasörü: {}", run_dir.display());
+        eprintln!("   ├── manifest.json");
+        eprintln!("   ├── aggregate.md");
+        eprintln!("   ├── thresholds.md");
+        eprintln!("   ├── tuning_issues.md");
+        eprintln!("   └── per_seed/seed_<N>.{{md, _actions.jsonl, _clearings.csv}}");
+    }
+}
+
+/// 10 seed'i paralel iş parçacıklarında koştur. Her thread bir SimRunner çalıştırır.
+fn run_parallel(
+    seeds: &[u64],
+    scenario: &'static Scenario,
+    ticks: u32,
+    diff: Difficulty,
+) -> Vec<SimResult> {
+    let handles: Vec<_> = seeds
+        .iter()
+        .map(|&s| {
+            thread::spawn(move || {
+                SimRunner::new(s, scenario)
+                    .with_ticks(ticks)
+                    .with_difficulty(diff)
+                    .run()
+            })
+        })
+        .collect();
+    let mut out: Vec<SimResult> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+    // Seed sırasına göre sırala (deterministik output).
+    out.sort_by_key(|r| r.seed);
+    out
 }
 
 /// Multi-seed agregat raporunu Markdown olarak üret.
@@ -181,7 +306,7 @@ fn render_aggregate_report(
     }
     let _ = writeln!(out);
 
-    let _ = writeln!(out, "## Per-Seed Detayları");
+    let _ = writeln!(out, "## Per-Seed Özet");
     let _ = writeln!(
         out,
         "| Seed | Match | Verim % | Bankrupt | Stale | İnsan PnL |"
@@ -205,6 +330,22 @@ fn render_aggregate_report(
     out
 }
 
+/// Tüm run'ların full Markdown raporunu agregate'in altına ekler — tek dosyada
+/// hem ortalama hem detay görmek isteyenler için.
+fn render_per_seed_summary(results: &[SimResult], _metrics: &[PerRunMetrics]) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "---");
+    let _ = writeln!(out, "# 🔎 Per-Seed Detay Raporları");
+    let _ = writeln!(out);
+    for r in results {
+        let _ = writeln!(out, "## Seed {}", r.seed);
+        out.push_str(&render_markdown(r));
+        let _ = writeln!(out, "\n---\n");
+    }
+    out
+}
+
 fn print_help() {
     println!(
         "moneywar-sim — headless deterministic simulation\n\n\
@@ -212,9 +353,14 @@ fn print_help() {
          OPTIONS:\n\
            --seed <N>          Default: 42\n\
            --ticks <N>         Default: 90\n\
-           --difficulty <X>    easy|hard|expert  Default: hard\n\
+           --difficulty <X>    easy|medium|hard  Default: hard\n\
            --scenario <NAME>   passive | active_sanayici | active_tuccar\n\
-           --report-out <P>    Markdown rapor dosya yolu (yoksa stdout)\n\
-           --multi-seed        seeds 1,7,42 üçü için koştur\n"
+           --report-out <P>    Birleşik markdown rapor dosya yolu\n\
+           --multi-seed        10 seed paralel koştur (1,7,42,100,256,512,1024,2048,4096,8192)\n\
+           --serial            Multi-seed'i sıralı koştur (debug için)\n\
+           --per-seed-dir <D>  Her seed için ayrı dosya: D/seed_<N>.md\n\
+           --threshold-out <P> Rol kontrat + oyun kapısı denetim raporu\n\
+           --log-dir <D>       Tek flag: D/run_<timestamp>/ altında manifest+aggregate+\n\
+                                thresholds+tuning_issues+per_seed/(md+jsonl+csv)\n"
     );
 }

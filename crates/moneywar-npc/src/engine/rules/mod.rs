@@ -14,6 +14,7 @@
 //! Sanayici ek: `build_factory_score`. Spekülatör ek: `spread_score`.
 
 pub mod alici;
+pub mod ciftci;
 pub mod esnaf;
 pub mod sanayici;
 pub mod spekulator;
@@ -23,15 +24,14 @@ use crate::fuzzy::Engine;
 use moneywar_domain::{NpcKind, Personality, Role};
 
 /// NPC kategorisi → uygun rule base engine seç.
-///
-/// Sanayici / Tüccar role'üne ek olarak Esnaf/Spekülatör/Alıcı NpcKind'leri
-/// kendi kural setlerini alır. Hiçbiri uymazsa tüccar default.
 #[must_use]
 pub fn engine_for(role: Role, npc_kind: Option<NpcKind>) -> Engine {
     match npc_kind {
         Some(NpcKind::Esnaf) => esnaf::build_engine(),
         Some(NpcKind::Alici) => alici::build_engine(),
         Some(NpcKind::Spekulator) => spekulator::build_engine(),
+        Some(NpcKind::Ciftci) => ciftci::build_engine(),
+        Some(NpcKind::Banka) => Engine::new(), // Banka fuzzy yok, özel akış
         _ => match role {
             Role::Sanayici => sanayici::build_engine(),
             Role::Tuccar => tuccar::build_engine(),

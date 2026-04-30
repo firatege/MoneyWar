@@ -395,6 +395,54 @@ impl LogEntry {
         }
     }
 
+    /// Ekonomi: Alıcı NPC'ye periyodik maaş ödendi (cash inject).
+    #[must_use]
+    pub fn economy_salary(tick: Tick, player: PlayerId, amount: Money) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::EconomySalary { player, amount },
+        }
+    }
+
+    /// Ekonomi: Çiftçi NPC mahsul refill'i aldı (stok inject).
+    #[must_use]
+    pub fn economy_harvest(
+        tick: Tick,
+        player: PlayerId,
+        city: moneywar_domain::CityId,
+        product: moneywar_domain::ProductKind,
+        quantity: u32,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(player),
+            event: LogEvent::EconomyHarvest {
+                player,
+                city,
+                product,
+                quantity,
+            },
+        }
+    }
+
+    /// Ekonomi: Üretici NPC'lerden vergi alındı, Alıcı'lara dağıtıldı.
+    #[must_use]
+    pub fn economy_tax_redistributed(
+        tick: Tick,
+        total_amount: Money,
+        recipient_count: u32,
+    ) -> Self {
+        Self {
+            tick,
+            actor: None,
+            event: LogEvent::EconomyTaxRedistributed {
+                total_amount,
+                recipient_count,
+            },
+        }
+    }
+
     /// Motor RNG ile yeni bir olay zamanladı. Abone oyunculara haberi,
     /// tier lead-time'ına göre inbox'larına düştü (bkz. `state.news_inbox`).
     #[must_use]
@@ -875,6 +923,26 @@ pub enum LogEvent {
         event_id: EventId,
         game_event: GameEvent,
         event_tick: Tick,
+    },
+
+    /// Ekonomi: Alıcı NPC maaş aldı.
+    EconomySalary {
+        player: PlayerId,
+        amount: Money,
+    },
+
+    /// Ekonomi: Çiftçi NPC mahsul refill aldı.
+    EconomyHarvest {
+        player: PlayerId,
+        city: moneywar_domain::CityId,
+        product: moneywar_domain::ProductKind,
+        quantity: u32,
+    },
+
+    /// Ekonomi: vergi toplandı, Alıcı'lara dağıtıldı.
+    EconomyTaxRedistributed {
+        total_amount: Money,
+        recipient_count: u32,
     },
 }
 

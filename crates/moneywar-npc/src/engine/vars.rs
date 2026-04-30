@@ -132,6 +132,30 @@ pub fn season_remaining_var() -> LinguisticVar {
     three_term_var("season_remaining")
 }
 
+/// Rakip aksiyon baskısı (Plan v5 reactive) — bu (city, product) için bu
+/// NPC dışında **kaç farklı rakip** açık emir tutuyor. Yüksek = yoğun rekabet,
+/// düşük = sakin pazar. NPC'lerin birbirine react etmesini fuzzy seviyede
+/// modeller (cluster signal'in güçlü versiyonu).
+#[must_use]
+pub fn rival_action_pressure_var() -> LinguisticVar {
+    three_term_var("rival_action_pressure")
+}
+
+/// Ask/supply ratio — `bid_supply_ratio`'nun karşıtı (arz baskısı).
+/// dusuk=arz yok, yuksek=arz çok (fırsat fiyatı).
+#[must_use]
+pub fn ask_supply_ratio_var() -> LinguisticVar {
+    three_term_var("ask_supply_ratio")
+}
+
+/// Local raw advantage — (city, product) yerel uzmanlığa uyuyor mu?
+/// 0 = uymuyor, 1 = uyuyor. Sanayici fabrika kurma ve Esnaf ham alım
+/// kararlarını şehir-spesifik yapan binary sinyal.
+#[must_use]
+pub fn local_raw_advantage_var() -> LinguisticVar {
+    three_term_var("local_raw_advantage")
+}
+
 /// Tüm standart fuzzy değişkenleri tek listede döndür. Rule base'ler
 /// `Engine::new().add_var(...)` ile ekler.
 #[must_use]
@@ -150,6 +174,9 @@ pub fn build_standard_vars() -> Vec<LinguisticVar> {
         factory_count_var(),
         caravan_count_var(),
         season_remaining_var(),
+        rival_action_pressure_var(),
+        ask_supply_ratio_var(),
+        local_raw_advantage_var(),
     ]
 }
 
@@ -159,9 +186,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn standard_vars_count_is_thirteen() {
-        // 8 ana + 5 ileri sinyal = 13.
-        assert_eq!(build_standard_vars().len(), 13);
+    fn standard_vars_count_is_sixteen() {
+        // 8 ana + 5 ileri + 2 v5 + 1 v6 (local_raw_advantage) = 16.
+        assert_eq!(build_standard_vars().len(), 16);
     }
 
     #[test]
@@ -228,6 +255,9 @@ mod tests {
             "factory_count",
             "caravan_count",
             "season_remaining",
+            "rival_action_pressure",
+            "ask_supply_ratio",
+            "local_raw_advantage",
         ] {
             assert!(
                 names.contains(&expected),

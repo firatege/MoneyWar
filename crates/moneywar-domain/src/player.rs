@@ -136,18 +136,24 @@ impl Inventory {
 /// güzelleştirilebilir ("Selim Bey") çünkü NPC tipi name'den bağımsız.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum NpcKind {
-    /// Akıllı tüccar — arbitraj + kervan dispatch.
+    /// Akıllı tüccar — arbitraj + kervan dispatch (sıkı: BUY ucuz şehir, SELL pahalı).
     Tuccar,
-    /// Akıllı sanayici — fabrika kurar, üretir, satar.
+    /// Akıllı sanayici — fabrika kurar, sadece kendi raw_input'unu alır,
+    /// sadece kendi mamulü üretip satar (sıkı role gate).
     Sanayici,
-    /// Saf alıcı (talep sink) — sadece buy emri verir.
+    /// Tüketici (talep sink) — mamul alır, periyodik maaş gelir akışı.
     Alici,
-    /// Saf satıcı (dükkan/esnaf) — sadece sell emri verir.
+    /// Toptancı (eski Esnaf) — Çiftçi'den ham al, Sanayici'ye/Alıcı'ya sat.
+    /// Aracı katman: arz/talep dengesine duyarlı bid-ask.
     Esnaf,
-    /// Spekülatör — her tick (city, product)'e hem alış hem satış emri verir.
-    /// Spread'i daraltıp piyasa likiditesini canlandırır; "mallar bekliyor"
-    /// hissini öldürür. Kâr beklentisi: küçük ama tutarlı (market making).
+    /// Spekülatör — market maker, hem bid hem ask, spread oyunu.
     Spekulator,
+    /// Çiftçi (yeni v4) — hammadde üreticisi. Periyodik mahsul alır,
+    /// pazara satar. SELL only — uzman: 1 ürün (Pamuk/Buğday/Zeytin).
+    Ciftci,
+    /// Banka (yeni v4) — likidite sağlayıcı. Kredi/mevduat akışı.
+    /// Faiz dinamik: ekonomi durumuna göre %10-25.
+    Banka,
 }
 
 impl NpcKind {
@@ -158,8 +164,10 @@ impl NpcKind {
             Self::Tuccar => "Tüccar",
             Self::Sanayici => "Sanayici",
             Self::Alici => "Alıcı",
-            Self::Esnaf => "Esnaf",
+            Self::Esnaf => "Toptancı",
             Self::Spekulator => "Spekülatör",
+            Self::Ciftci => "Çiftçi",
+            Self::Banka => "Banka",
         }
     }
 }

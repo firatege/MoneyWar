@@ -19,6 +19,12 @@ pub struct Loan {
     pub take_tick: Tick,
     pub due_tick: Tick,
     pub repaid: bool,
+    /// Borç verici Banka NPC. `None` → sistem bankası (eski mekanik, oyuncu
+    /// `TakeLoan` komutuyla alır, para korunumu sistem dışı). `Some(banka_id)`
+    /// → Banka NPC kasasından çıktı, geri ödemede Banka'ya geri dönecek
+    /// (Plan v4 closed loop).
+    #[serde(default)]
+    pub lender: Option<PlayerId>,
 }
 
 impl Loan {
@@ -49,7 +55,16 @@ impl Loan {
             take_tick,
             due_tick,
             repaid: false,
+            lender: None,
         })
+    }
+
+    /// Builder-style — borç vericiyi (Banka NPC) set eder.
+    /// Plan v4 closed loop: Banka kasasından çıktı, geri ödemede Banka'ya döner.
+    #[must_use]
+    pub fn with_lender(mut self, lender: PlayerId) -> Self {
+        self.lender = Some(lender);
+        self
     }
 
     /// Vade sonunda ödenecek toplam (principal + faiz).

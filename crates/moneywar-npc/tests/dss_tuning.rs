@@ -337,14 +337,25 @@ fn print_report(r: &SeasonReport) {
 fn tuning_easy_baseline() {
     let report = run_full_season(Difficulty::Easy, &[Personality::Aggressive]);
     print_report(&report);
-    assert!(report.total_matches > 50, "Easy yine de likidite üretmeli");
+    // v4/v5: Pulse cadence + arbitraj gate ile Easy daha sakin.
+    assert!(
+        report.total_matches >= 30,
+        "Easy yine de likidite üretmeli, got {}",
+        report.total_matches
+    );
 }
 
 #[test]
 fn tuning_hard_baseline() {
     let report = run_full_season(Difficulty::Medium, &[Personality::Aggressive]);
     print_report(&report);
-    assert!(report.total_matches > 100, "Hard'da daha çok aktivite");
+    // v4: Tüccar arbitraj gate same-city BUY+SELL'i kapadığı için match
+    // hacmi düştü. Bu rapor amaçlı test — tuning sonrası volume yükselecek.
+    assert!(
+        report.total_matches >= 80,
+        "Hard'da yine de likidite üretmeli, got {}",
+        report.total_matches
+    );
 }
 
 #[test]

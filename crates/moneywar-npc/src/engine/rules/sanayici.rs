@@ -18,10 +18,18 @@ pub fn build_engine() -> Engine {
 
     e
         // ── BUY kuralları ──
-        // 1. Fabrikası VAR + ham madde stok az → çok agresif al (üretim sürekliliği)
+        // 1. Fabrikası VAR (orta) + ham madde stok az → agresif al (üretim sürekliliği)
         .add_rule(
             Rule::new()
                 .when("factory_count", "orta")
+                .when("stock", "dusuk")
+                .then("buy_score", 0.95),
+        )
+        // 1-bis. Tuning v6.5: Fabrikası ÇOK var (yuksek) + stok az → AGRESİF al
+        // 3+ fabrika "orta"yı geçtiği için rule 1 tetiklenmiyordu — bu eksiklik.
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "yuksek")
                 .when("stock", "dusuk")
                 .then("buy_score", 0.95),
         )
@@ -37,6 +45,16 @@ pub fn build_engine() -> Engine {
                 .when("stock", "dusuk")
                 .when("cash", "yuksek")
                 .then("buy_score", 0.7),
+        )
+        // 1d. Tuning v6.5: LOCAL ADVANTAGE — fabrika ürününün raw_input'u
+        // bu şehirin specialty'si ise hammadde orada en ucuz, oradan al.
+        // (Kumas fab → Pamuk → Istanbul; Un fab → Bugday → Ankara; Zeytinyagi → Zeytin → Izmir)
+        // Tie-break sorunu yapısal kıran ana rule.
+        .add_rule(
+            Rule::new()
+                .when("local_raw_advantage", "yuksek")
+                .when("stock", "dusuk")
+                .then("buy_score", 0.98),
         )
         // 2. Ucuz fırsat — fiyat düşük + stok az → al
         .add_rule(
@@ -93,32 +111,91 @@ pub fn build_engine() -> Engine {
                 .then("sell_score", 0.05),
         )
         // ── Aggressiveness ──
-        // 11. Olay yaklaşıyor → bid agresif
+        // 11. Olay yaklaşıyor → bid orta-yüksek (raw'ı zamanında al)
         .add_rule(
             Rule::new()
                 .when("event", "yuksek")
+                .then("bid_aggressiveness", 0.7),
+        )
+        // 11b. Fabrikam var + stok az → AGRESİF BID (ham besleme önceliği).
+        // Eski: Sanayici BID hep 0.5, Tüccar 0.85 → Tüccar pazarı domine ediyordu.
+        // 5 Sanayici NPC'den 3'ü ham match alamıyordu (BUY R 3600 → SELL F 200).
+        // Üretim için ham kritik → fab varsa ham almaktan çekinme.
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "yuksek")
+                .when("stock", "dusuk")
                 .then("bid_aggressiveness", 0.9),
         )
-        // 12. Rekabet yüksek → ask agresif (kapış)
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "orta")
+                .when("stock", "dusuk")
+                .then("bid_aggressiveness", 0.85),
+        )
+        // 12. Rekabet yüksek → ask orta (kapış)
         .add_rule(
             Rule::new()
                 .when("competition", "yuksek")
+                .then("ask_aggressiveness", 0.7),
+        )
+        // 12b. Stok yüksek + fabrika çok → AGRESİF ASK (üretim devam etsin,
+        // mamul stoğu eritilsin → satış kâr → fab beslemesi sürekli).
+        // Sanayici PnL -27K idi → ASK güçlendirmek mamul satış gelirini artırır.
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "yuksek")
+                .when("stock", "yuksek")
                 .then("ask_aggressiveness", 0.85),
         )
         // ── Build factory (sıkı koşul: sadece fabrikası YOK + nakit YÜKSEK + sezon başı) ──
-        // 13a. Hiç fabrikası yok + nakit yüksek + sezon başı → fabrika kur
+        // Tuning v6.5: local_raw_advantage ile şehir-spesifik kararlar.
+        // Aynı skorlu adaylar tie-break ile hep Ankara/Istanbul'a yığılıyordu;
+        // şimdi specialty şehir kazansın.
+
+        // 13a. Hiç fabrikası yok + nakit yüksek + LOCAL ADVANTAGE → öncelikli fabrika
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "dusuk")
+                .when("cash", "yuksek")
+                .when("local_raw_advantage", "yuksek")
+                .then("build_factory_score", 0.95),
+        )
+        // 13a-alt. Fabrikası yok + nakit yüksek + sezon başı + lokal değil → orta öncelik
         .add_rule(
             Rule::new()
                 .when("factory_count", "dusuk")
                 .when("cash", "yuksek")
                 .when("urgency", "dusuk")
-                .then("build_factory_score", 0.9),
+                .when("local_raw_advantage", "dusuk")
+                .then("build_factory_score", 0.55),
         )
-        // 13b. 1+ fabrikası var → kurma (cash sink olmasın)
+        // 13b. 1-2 fabrikası var + nakit AZ → kurma (cash sink olmasın)
         .add_rule(
             Rule::new()
                 .when("factory_count", "orta")
+                .when("cash", "dusuk")
                 .then("build_factory_score", 0.05),
+        )
+        // 13c. 1-2 fabrikası var + nakit YÜKSEK + sezon var + lokal avantaj
+        //      → KÂR ETTİ, GENİŞLE (yeni şehirde fabrika aç).
+        // Sanayici sezon başında 30K cash + 1-2 fabrika kurar, sonra kâr eder.
+        // Kâr birikince başka şehir/ürün'e yatırım yapsın diye bu rule.
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "orta")
+                .when("cash", "yuksek")
+                .when("season_remaining", "yuksek")
+                .when("local_raw_advantage", "yuksek")
+                .then("build_factory_score", 0.85),
+        )
+        // 13d. 1-2 fabrikası var + nakit YÜKSEK + sezon ortası → orta öncelik
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "orta")
+                .when("cash", "yuksek")
+                .when("season_remaining", "orta")
+                .then("build_factory_score", 0.5),
         )
         // ── Contract ──
         // 14. Arbitraj yüksek → kontrat öner
@@ -162,29 +239,29 @@ pub fn build_engine() -> Engine {
                 .when("stock", "yuksek")
                 .then("ask_aggressiveness", 0.2),
         )
-        // 20. Talep yüksek + stok yüksek → ASK agresif (alıcı yarışı)
+        // 20. Talep yüksek + stok yüksek → ASK agresif (kapış)
         .add_rule(
             Rule::new()
                 .when("bid_supply_ratio", "yuksek")
                 .when("stock", "yuksek")
-                .then("ask_aggressiveness", 0.95),
+                .then("ask_aggressiveness", 0.85),
         )
         // ── Tune v12: Sanayici cash-sink fix ──
-        // 21. Fabrikası VAR + stok ORTA → her durumda sat (üretim devam etmeli)
+        // 21. Fabrikası VAR + stok ORTA → sat, orta agresif (margin koru)
         .add_rule(
             Rule::new()
                 .when("factory_count", "orta")
                 .when("stock", "orta")
                 .then("sell_score", 0.85)
-                .then("ask_aggressiveness", 0.8),
+                .then("ask_aggressiveness", 0.7),
         )
-        // 22. Fabrikası VAR + stok ORTA → kervan ile dispatch (mamul taşı sat)
+        // 22. Fabrikası VAR + stok yüksek → daha agresif sat (likidite)
         .add_rule(
             Rule::new()
                 .when("factory_count", "orta")
                 .when("stock", "yuksek")
                 .then("sell_score", 0.9)
-                .then("ask_aggressiveness", 0.85),
+                .then("ask_aggressiveness", 0.78),
         )
         // 23. İflas riski yok + sezon kalan → fabrika varsa SAT zorunlu (mamul biriktirme)
         .add_rule(

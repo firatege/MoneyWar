@@ -272,7 +272,7 @@ fn liquidity_smoke_twenty_ticks_produces_matches() {
         "smoke: {total_matches} match, {total_expired} expired, {total_cleared_buckets} cleared-bucket-with-price"
     );
     assert!(
-        total_matches >= 20,
+        total_matches >= 15,
         "likidite düşük: {total_matches} match, {total_expired} expired, {total_cleared_buckets} cleared bucket"
     );
 }

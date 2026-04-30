@@ -95,6 +95,7 @@ pub(crate) fn process_repay_loan(
         ))));
     }
     let total_due = loan.total_due()?;
+    let lender = loan.lender;
 
     let borrower = state.players.get_mut(&player).ok_or_else(|| {
         EngineError::Domain(DomainError::Validation(format!(
@@ -108,6 +109,13 @@ pub(crate) fn process_repay_loan(
         }));
     }
     borrower.debit(total_due)?;
+
+    // Plan v4: Banka NPC kredi vermişse, geri ödeme Banka'ya gider (closed loop).
+    if let Some(bank_id) = lender {
+        if let Some(bank) = state.players.get_mut(&bank_id) {
+            let _ = bank.credit(total_due);
+        }
+    }
 
     state.loans.remove(&loan_id);
     let on_time = !tick.is_before(Tick::ZERO); // her zaman true — komut bazında on-time sayılır.
@@ -139,6 +147,7 @@ pub(crate) fn advance_loans(state: &mut GameState, report: &mut TickReport, tick
 fn auto_settle(state: &mut GameState, report: &mut TickReport, tick: Tick, lid: LoanId) {
     let loan = *state.loans.get(&lid).expect("checked");
     let borrower = loan.borrower;
+    let lender = loan.lender;
     let Ok(total_due) = loan.total_due() else {
         // Overflow edge: loan'ı yok say, default event yaz.
         state.loans.remove(&lid);
@@ -158,6 +167,12 @@ fn auto_settle(state: &mut GameState, report: &mut TickReport, tick: Tick, lid: 
         if let Some(p) = state.players.get_mut(&borrower) {
             let _ = p.debit(total_due);
         }
+        // Banka NPC kredi vermişse geri yatır (closed loop).
+        if let Some(bank_id) = lender {
+            if let Some(bank) = state.players.get_mut(&bank_id) {
+                let _ = bank.credit(total_due);
+            }
+        }
         state.loans.remove(&lid);
         report.push(LogEntry::loan_repaid(tick, borrower, lid, total_due, false));
     } else {
@@ -166,6 +181,12 @@ fn auto_settle(state: &mut GameState, report: &mut TickReport, tick: Tick, lid: 
         let unpaid_balance = total_due.checked_sub(seized).unwrap_or(Money::ZERO);
         if let Some(p) = state.players.get_mut(&borrower) {
             let _ = p.debit(seized);
+        }
+        // Default durumunda Banka mevcut nakdi alır (kısmi geri kazanım).
+        if let Some(bank_id) = lender {
+            if let Some(bank) = state.players.get_mut(&bank_id) {
+                let _ = bank.credit(seized);
+            }
         }
         state.loans.remove(&lid);
         report.push(LogEntry::loan_defaulted(

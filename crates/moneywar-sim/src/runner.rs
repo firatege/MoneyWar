@@ -17,6 +17,30 @@ use crate::{
     trace::{NpcDecisionTrace, TickTrace},
 };
 
+/// NpcKind başına aksiyon dağılımı + ihlal sayacı (audit için).
+///
+/// Her NpcKind kendi şeridinde kalmalı (Plan v4 Faz 2 gate). Bu metrikler
+/// gate sonrası emit edilen komutları sayar — gate çalışmıyorsa
+/// `forbidden_action_count` artar.
+#[derive(Debug, Default, Clone)]
+pub struct RoleActionMix {
+    pub buy_raw: u32,
+    pub buy_finished: u32,
+    pub sell_raw: u32,
+    pub sell_finished: u32,
+    pub build_factory: u32,
+    pub buy_caravan: u32,
+    pub dispatch: u32,
+    pub propose_contract: u32,
+    pub accept_contract: u32,
+    pub take_loan: u32,
+    pub repay_loan: u32,
+    /// Bu NpcKind için yasak aksiyon (Plan v4 gate ihlal sayacı).
+    pub forbidden_action_count: u32,
+    /// Toplam emit edilen komut.
+    pub total_commands: u32,
+}
+
 /// Sim sonucu: tick başı snapshot ve karar trace'leri.
 #[derive(Debug)]
 pub struct SimResult {
@@ -26,6 +50,10 @@ pub struct SimResult {
     pub difficulty: Difficulty,
     pub snapshots: Vec<TickSnapshot>,
     pub traces: Vec<TickTrace>,
+    /// Plan v4 davranış audit — NpcKind başına aksiyon dağılımı.
+    pub action_mix_by_kind: std::collections::BTreeMap<String, RoleActionMix>,
+    /// Banka NPC'lerinin toplam kredi açma sayısı.
+    pub bank_loans_issued: u32,
 }
 
 /// Sim koşturucu — config + scenario alır, run() ile sonuç verir.
@@ -40,29 +68,32 @@ pub struct SimRunner {
     pub include_npcs: NpcComposition,
 }
 
-/// NPC kompozisyonu — `RoomConfig::NpcsConfig`'in test-friendly versiyonu.
+/// NPC kompozisyonu — v4 tek-görev tasarımı: 24 NPC.
 #[derive(Debug, Clone, Copy)]
 pub struct NpcComposition {
     pub tuccar: u8,
     pub sanayici: u8,
-    pub esnaf: u8,
+    pub esnaf: u8, // = Toptancı (revize)
     pub spekulator: u8,
     pub alici: u8,
+    pub ciftci: u8, // yeni v4 (3 ürün × 1 = 3 Çiftçi)
+    pub banka: u8,  // yeni v4 (3 şehir × 1 = 3 Banka)
 }
 
 impl Default for NpcComposition {
     fn default() -> Self {
-        // v3 x2 canlı pazar: 4T/2S/4E/6A/4Sp = 20 NPC.
-        // Pazar her tick aktif, "ölü emir" hissi yok.
-        // Üretim: 2 Sanayici × ~30 = 60/tick mamul.
-        // Talep: 6 Alıcı × ~7 + Esnaf rotation + Spek = ~50-70/tick.
-        // Hafif denge, fuzzy match verimliliği artmalı.
+        // v6 ölçek + ham arz boost: 4T/5S/4Top/6Ç/8A/3Sp/3B = 33 NPC.
+        // Çiftçi 4→6: ham arzı +%50 (15 fabrika talebini doyurmak için).
+        // Tüccar mamul BUY (314 emit) Sanayici SELL (205 emit) arz/talep
+        // dengesizliği match verimini %4.6'da tutuyordu — kök neden ham yetersizliği.
         Self {
             tuccar: 4,
-            sanayici: 2,
+            sanayici: 5,
             esnaf: 4,
-            spekulator: 4,
-            alici: 6,
+            spekulator: 3,
+            alici: 8,
+            ciftci: 6,
+            banka: 3,
         }
     }
 }
@@ -108,6 +139,9 @@ impl SimRunner {
 
         let mut snapshots: Vec<TickSnapshot> = Vec::new();
         let mut traces: Vec<TickTrace> = Vec::new();
+        let mut action_mix_by_kind: std::collections::BTreeMap<String, RoleActionMix> =
+            std::collections::BTreeMap::new();
+        let mut bank_loans_issued: u32 = 0;
 
         // Tick 0 snapshot (başlangıç).
         let initial_report = TickReport::new(Tick::ZERO);
@@ -130,7 +164,16 @@ impl SimRunner {
                 npc_decisions: Vec::new(),
             };
             for cmd in &npc_cmds {
-                let actor = cmd.requester();
+                // DispatchCaravan'ın requester() placeholder döndürür (PlayerId(0));
+                // gerçek owner caravan'da. Trace ve audit için lookup et.
+                let actor = match cmd {
+                    Command::DispatchCaravan { caravan_id, .. } => state
+                        .caravans
+                        .get(caravan_id)
+                        .map(|c| c.owner)
+                        .unwrap_or_else(|| cmd.requester()),
+                    _ => cmd.requester(),
+                };
                 let player = state.players.get(&actor);
                 let (name, kind, pers) = player
                     .map(|p| {
@@ -143,10 +186,16 @@ impl SimRunner {
                     .unwrap_or_else(|| (format!("?{}", actor.value()), None, None));
                 let action_summary = describe_command(cmd);
                 let mut entry = NpcDecisionTrace::empty(t, actor.value(), name);
-                entry.kind = kind;
+                entry.kind = kind.clone();
                 entry.personality = pers;
                 entry.actions_emitted.push(action_summary);
                 tick_trace.npc_decisions.push(entry);
+
+                // Plan v4 audit — komut tipine göre NpcKind aksiyon mix'ine ekle.
+                if let Some(kind_label) = kind {
+                    let mix = action_mix_by_kind.entry(kind_label.clone()).or_default();
+                    record_action(cmd, &kind_label, mix, &state);
+                }
             }
 
             let (next_state, report) = match advance_tick(&state, &all_cmds) {
@@ -157,6 +206,13 @@ impl SimRunner {
                 }
             };
             state = next_state;
+
+            // Banka tarafından açılan kredileri say (LoanTaken event'leri).
+            for entry in &report.entries {
+                if let moneywar_engine::LogEvent::LoanTaken { .. } = &entry.event {
+                    bank_loans_issued += 1;
+                }
+            }
 
             snapshots.push(TickSnapshot::from_state(&state, &report, tick));
             traces.push(tick_trace);
@@ -169,7 +225,64 @@ impl SimRunner {
             difficulty: self.difficulty,
             snapshots,
             traces,
+            action_mix_by_kind,
+            bank_loans_issued,
         }
+    }
+}
+
+/// Plan v4 audit — komutu NpcKind şeritine göre kategorize et + ihlalleri say.
+///
+/// `kind_label` `Debug` çıktısı (`"Ciftci"`, `"Sanayici"` …). Yasak aksiyon
+/// emit edildiyse `forbidden_action_count` artar — gate ihlali demek.
+fn record_action(cmd: &Command, kind_label: &str, mix: &mut RoleActionMix, _state: &GameState) {
+    mix.total_commands += 1;
+    match cmd {
+        Command::SubmitOrder(o) => {
+            let is_raw = o.product.is_raw();
+            let is_buy = matches!(o.side, moneywar_domain::OrderSide::Buy);
+            match (is_buy, is_raw) {
+                (true, true) => mix.buy_raw += 1,
+                (true, false) => mix.buy_finished += 1,
+                (false, true) => mix.sell_raw += 1,
+                (false, false) => mix.sell_finished += 1,
+            }
+            // Yasaklı kombinasyonlar (gate çalışıyor olmalı, çift kontrol):
+            let forbidden = match kind_label {
+                "Ciftci" => is_buy || !is_raw, // Çiftçi sadece SELL raw
+                "Banka" => true,                // Banka komut emit etmemeli
+                "Alici" => is_buy && is_raw,    // Alıcı raw almasın
+                "Esnaf" => is_buy && !is_raw,   // Toptancı mamul almasın
+                _ => false,
+            };
+            if forbidden {
+                mix.forbidden_action_count += 1;
+            }
+        }
+        Command::BuildFactory { .. } => {
+            mix.build_factory += 1;
+            // Sadece Sanayici fabrika kursun.
+            if !matches!(kind_label, "Sanayici") {
+                mix.forbidden_action_count += 1;
+            }
+        }
+        Command::BuyCaravan { .. } => {
+            mix.buy_caravan += 1;
+            if !matches!(kind_label, "Tuccar") {
+                mix.forbidden_action_count += 1;
+            }
+        }
+        Command::DispatchCaravan { .. } => {
+            mix.dispatch += 1;
+            if !matches!(kind_label, "Tuccar") {
+                mix.forbidden_action_count += 1;
+            }
+        }
+        Command::ProposeContract(_) => mix.propose_contract += 1,
+        Command::AcceptContract { .. } => mix.accept_contract += 1,
+        Command::TakeLoan { .. } => mix.take_loan += 1,
+        Command::RepayLoan { .. } => mix.repay_loan += 1,
+        _ => {}
     }
 }
 
@@ -218,6 +331,30 @@ fn build_state(runner: &SimRunner) -> GameState {
     let mut s = GameState::new(RoomId::new(runner.seed), RoomConfig::hizli());
     let mut rng = ChaCha8Rng::seed_from_u64(runner.seed);
 
+    // price_baseline'ı doldur — domain'de hiç insert yok, BTreeMap boş başlıyor.
+    // Sonuç: effective_baseline() hep None → arbitrage_price_cents fallback'i
+    // sezon başında çalışmıyor → dead bucket'lar self-reinforcing oluyor.
+    // Şema: lokal cheap_raw 4₺, off-cheap raw 7₺, mamul her şehirde 14₺.
+    // %75 spread Tüccar arbitraj gate'i (≥%3) için fazlasıyla yeterli.
+    for city in CityId::ALL {
+        let cheap = city.cheap_raw();
+        for product in ProductKind::ALL {
+            // Mamul 14 → 16: Sanayici PnL -28K idi (üretici negatif).
+            // Mamul fiyatı +%14 → Sanayici ASK gelirini artırır, üretim katma
+            // değerini hak ettiği seviyeye çıkarır. Alıcı'nın mamule ödemesi
+            // de artar → Alıcı PnL daha gerçekçi azalır.
+            let lira = if product.is_finished() {
+                16
+            } else if product == cheap {
+                4
+            } else {
+                7
+            };
+            s.price_baseline
+                .insert((city, product), Money::from_lira(lira).unwrap());
+        }
+    }
+
     // İnsan oyuncu
     let mut human = Player::new(
         HUMAN_ID,
@@ -258,14 +395,17 @@ fn build_state(runner: &SimRunner) -> GameState {
         next_id += 1;
     }
 
-    // NPC-Sanayici
+    // NPC-Sanayici — 30K cash 3 fab kuruluşunda (0+8+15=23K) tükeniyordu,
+    // kalan 7K bankruptcy_risk "yuksek" tetikleyip buy_score=0 yapıyordu.
+    // Sonuç: 5 NPC'den 3'ü hiç ham almıyordu → fabrikalar boş → mamul üretimi
+    // düşük → match verim düştü. 50K → 23K kuruluş + 27K ham alma bütçesi.
     for _ in 0..runner.include_npcs.sanayici {
         let pers = pick_personality(&mut rng);
         let mut npc = Player::new(
             PlayerId::new(next_id),
             format!("Sanayici-{next_id}"),
             Role::Sanayici,
-            Money::from_lira(30_000).unwrap(),
+            Money::from_lira(50_000).unwrap(),
             true,
         )
         .unwrap()
@@ -278,9 +418,11 @@ fn build_state(runner: &SimRunner) -> GameState {
         next_id += 1;
     }
 
-    // NPC-Esnaf
+    // NPC-Esnaf (Toptancı) — Tuning v6: boş raf, sezon başı Çiftçi'den ham
+    // almaya başlasın. 50K/5K başlangıç stoğu fuzzy `stock` signal'i hep
+    // "yuksek" yapıp BUY skorunu baskılıyordu.
     for _ in 0..runner.include_npcs.esnaf {
-        let mut npc = Player::new(
+        let npc = Player::new(
             PlayerId::new(next_id),
             format!("Esnaf-{next_id}"),
             Role::Tuccar,
@@ -289,14 +431,16 @@ fn build_state(runner: &SimRunner) -> GameState {
         )
         .unwrap()
         .with_kind(moneywar_domain::NpcKind::Esnaf);
-        distribute_inv(&mut npc, &mut rng, 50_000);
         s.news_subscriptions
             .insert(PlayerId::new(next_id), NewsTier::Free);
         s.players.insert(npc.id, npc);
         next_id += 1;
     }
 
-    // NPC-Spekulator
+    // NPC-Spekulator — 8K başlangıç stoğu hep "stock yuksek" yapıp SELL spam'ı
+    // tetikliyordu (BUY:SELL = 1:3 asimetrisi). 2K'ya indirildi: piyasaya
+    // başlangıç likidite verir ama market maker rolü kâr ettikçe BUY-SELL
+    // dengeli kalır. Match verim hedefi %5+.
     for _ in 0..runner.include_npcs.spekulator {
         let mut npc = Player::new(
             PlayerId::new(next_id),
@@ -307,7 +451,7 @@ fn build_state(runner: &SimRunner) -> GameState {
         )
         .unwrap()
         .with_kind(moneywar_domain::NpcKind::Spekulator);
-        distribute_inv(&mut npc, &mut rng, 8_000);
+        distribute_inv(&mut npc, &mut rng, 2_000);
         s.news_subscriptions
             .insert(PlayerId::new(next_id), NewsTier::Free);
         s.players.insert(npc.id, npc);
@@ -325,6 +469,40 @@ fn build_state(runner: &SimRunner) -> GameState {
         )
         .unwrap()
         .with_kind(moneywar_domain::NpcKind::Alici);
+        s.news_subscriptions
+            .insert(PlayerId::new(next_id), NewsTier::Free);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
+
+    // NPC-Ciftci (yeni v4) — uzman, sezonluk mahsul akışı
+    for _ in 0..runner.include_npcs.ciftci {
+        let npc = Player::new(
+            PlayerId::new(next_id),
+            format!("Ciftci-{next_id}"),
+            Role::Tuccar,
+            Money::from_lira(8_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(moneywar_domain::NpcKind::Ciftci);
+        s.news_subscriptions
+            .insert(PlayerId::new(next_id), NewsTier::Free);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
+
+    // NPC-Banka (yeni v4) — likidite sağlayıcı
+    for _ in 0..runner.include_npcs.banka {
+        let npc = Player::new(
+            PlayerId::new(next_id),
+            format!("Banka-{next_id}"),
+            Role::Tuccar,
+            Money::from_lira(200_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(moneywar_domain::NpcKind::Banka);
         s.news_subscriptions
             .insert(PlayerId::new(next_id), NewsTier::Free);
         s.players.insert(npc.id, npc);

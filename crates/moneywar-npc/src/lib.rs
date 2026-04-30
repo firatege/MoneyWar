@@ -33,6 +33,7 @@ pub mod fuzzy;
 
 pub use error::NpcError;
 
+#[allow(unused_imports)]
 use moneywar_domain::{
     Caravan, CargoSpec, CityId, Command, GameState, MarketOrder, Money, NpcKind, OrderId,
     OrderSide, PlayerId, ProductKind, Role, Tick,

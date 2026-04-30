@@ -41,6 +41,9 @@
 
 /// Her fabrika tick başına bu kadar ham madde → bitmiş ürün (§10).
 /// 10 → 100: tüccar oyunu hissi için tüm hacim 10× ölçeklendi.
+/// Üretim batch boyutu. 100 sezon başına ~30 batch potansiyel sağlar.
+/// 50'ye düşürmek Çiftçi'yi kazandırdı (+6.7K) ama Sanayici'yi -32K'ya
+/// sürükledi (kâr marjı erimişti). 100 koru.
 pub const FACTORY_BATCH_SIZE: u32 = 100;
 
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
@@ -55,10 +58,11 @@ pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 // =============================================================================
 
 /// Kurulum maliyet tablosu — `existing_count` index'i ile oku.
-/// İlk fabrika bedava (starter), sonra artan maliyet.
-/// Eski [0, 10K, 15K, 22K, 30K] → +%50: scale-up daha pahalı, "3 fabrika kur
-/// ezbere strateji" daha bilinçli yatırım gerektirir.
-pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 15_000, 25_000, 40_000, 60_000];
+/// İlk fabrika bedava, sonra artan maliyet.
+/// Sanayici PnL -28K — fab kuruluş 23K cash sink + ham maliyet > kâr.
+/// Tablo [8K,15K,25K,40K] → [4K,10K,18K,30K]: 3 fab kuruluş 14K (eski 23K),
+/// kalan 9K cash ham bütçesinde değerlendirilir, Sanayici kârlı işletme yapar.
+pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 4_000, 10_000, 18_000, 30_000];
 
 // =============================================================================
 // Kervan

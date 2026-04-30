@@ -40,3 +40,4 @@ coverage/
 /debug/
 /moneywar.toml
 artifacts/
+logs/

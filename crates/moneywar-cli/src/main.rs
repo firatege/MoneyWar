@@ -1411,9 +1411,11 @@ fn npc_title(kind: NpcKind, name: &str) -> &'static str {
     }
     match kind {
         NpcKind::Sanayici => "Usta",
-        NpcKind::Esnaf => "Esnaf",
+        NpcKind::Esnaf => "Toptancı",
         NpcKind::Alici | NpcKind::Tuccar => "Bey",
         NpcKind::Spekulator => "Efendi",
+        NpcKind::Ciftci => "Çiftçi",
+        NpcKind::Banka => "Banka",
     }
 }
 
