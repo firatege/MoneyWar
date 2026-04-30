@@ -24,8 +24,8 @@
 //! - `min_score_threshold`: utility kabul eşiği
 
 use moneywar_domain::{
-    CargoSpec, CityId, Command, GameState, MarketOrder, Money, OrderId, OrderSide, PlayerId,
-    ProductKind, Role, Tick,
+    CargoSpec, CityId, Command, ContractProposal, GameState, ListingKind, MarketOrder, Money,
+    OrderId, OrderSide, Personality, PlayerId, ProductKind, Role, Tick,
 };
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -33,6 +33,120 @@ use rand_chacha::ChaCha8Rng;
 use crate::DifficultyModulator;
 use crate::engine::inputs::compute_inputs;
 use crate::engine::rules::engine_for;
+use crate::fuzzy::Outputs;
+
+/// Personality başına fuzzy output multiplier'ları. NPC'nin kişiliği fuzzy
+/// kararlardan sonra çıkışları kendine göre eğer:
+/// - Aggressive risk almayı sever, bid/ask agresif.
+/// - Hoarder satmaz, biriktirir.
+/// - Arbitrageur kervan/dispatch öncelikli.
+/// - EventTrader olay-reaktif aksiyonlarda agresif.
+/// - MeanReverter sakin, fiyat dalgalanmalarına az tepki.
+/// - TrendFollower momentum sinyali zaten kuralda — bias düz.
+/// - Cartel kontrat odaklı, uzun vadeli.
+struct PersonalityBias {
+    buy_score: f64,
+    sell_score: f64,
+    bid_aggressiveness: f64,
+    ask_aggressiveness: f64,
+    build_factory_score: f64,
+    buy_caravan_score: f64,
+    contract_score: f64,
+}
+
+impl PersonalityBias {
+    const NEUTRAL: Self = Self {
+        buy_score: 1.0,
+        sell_score: 1.0,
+        bid_aggressiveness: 1.0,
+        ask_aggressiveness: 1.0,
+        build_factory_score: 1.0,
+        buy_caravan_score: 1.0,
+        contract_score: 1.0,
+    };
+
+    fn for_personality(p: Personality) -> Self {
+        match p {
+            Personality::Aggressive => Self {
+                buy_score: 1.2,
+                sell_score: 1.0,
+                bid_aggressiveness: 1.3,
+                ask_aggressiveness: 1.3,
+                build_factory_score: 1.2,
+                buy_caravan_score: 1.2,
+                contract_score: 1.0,
+            },
+            Personality::TrendFollower => Self::NEUTRAL,
+            Personality::MeanReverter => Self {
+                buy_score: 1.0,
+                sell_score: 1.0,
+                bid_aggressiveness: 0.9,
+                ask_aggressiveness: 0.9,
+                ..Self::NEUTRAL
+            },
+            Personality::Arbitrageur => Self {
+                buy_score: 1.1,
+                sell_score: 1.0,
+                bid_aggressiveness: 1.0,
+                ask_aggressiveness: 1.0,
+                build_factory_score: 0.9,
+                buy_caravan_score: 1.3,
+                contract_score: 1.2,
+            },
+            Personality::EventTrader => Self {
+                buy_score: 1.1,
+                sell_score: 1.1,
+                bid_aggressiveness: 1.2,
+                ask_aggressiveness: 1.2,
+                ..Self::NEUTRAL
+            },
+            Personality::Hoarder => Self {
+                buy_score: 1.0,
+                sell_score: 0.7,
+                bid_aggressiveness: 0.8,
+                ask_aggressiveness: 0.7,
+                build_factory_score: 1.0,
+                buy_caravan_score: 0.8,
+                contract_score: 1.1,
+            },
+            Personality::Cartel => Self {
+                buy_score: 1.1,
+                sell_score: 1.0,
+                bid_aggressiveness: 1.1,
+                ask_aggressiveness: 1.1,
+                build_factory_score: 1.0,
+                buy_caravan_score: 1.0,
+                contract_score: 1.3,
+            },
+        }
+    }
+}
+
+fn apply_personality_bias(outputs: &mut Outputs, personality: Option<Personality>) {
+    let Some(p) = personality else { return };
+    let bias = PersonalityBias::for_personality(p);
+    if let Some(v) = outputs.get_mut("buy_score") {
+        *v = (*v * bias.buy_score).clamp(0.0, 1.5);
+    }
+    if let Some(v) = outputs.get_mut("sell_score") {
+        *v = (*v * bias.sell_score).clamp(0.0, 1.5);
+    }
+    if let Some(v) = outputs.get_mut("bid_aggressiveness") {
+        *v = (*v * bias.bid_aggressiveness).clamp(0.0, 1.5);
+    }
+    if let Some(v) = outputs.get_mut("ask_aggressiveness") {
+        *v = (*v * bias.ask_aggressiveness).clamp(0.0, 1.5);
+    }
+    if let Some(v) = outputs.get_mut("build_factory_score") {
+        *v = (*v * bias.build_factory_score).clamp(0.0, 1.5);
+    }
+    if let Some(v) = outputs.get_mut("buy_caravan_score") {
+        *v = (*v * bias.buy_caravan_score).clamp(0.0, 1.5);
+    }
+    if let Some(v) = outputs.get_mut("contract_score") {
+        *v = (*v * bias.contract_score).clamp(0.0, 1.5);
+    }
+}
 
 /// Fuzzy karar motoru — tüm (city, product) bucket'larını değerlendirir,
 /// modulator filter sonrası `Command` listesi döner.
@@ -55,6 +169,7 @@ pub fn decide_npc_fuzzy(
     };
     let role = player.role;
     let npc_kind = player.npc_kind;
+    let personality = player.personality;
     let engine = engine_for(role, npc_kind);
     let tick = state.current_tick.next();
     let ttl = state.config.balance.default_order_ttl;
@@ -66,7 +181,8 @@ pub fn decide_npc_fuzzy(
     for city in CityId::ALL {
         for product in ProductKind::ALL {
             let inputs = compute_inputs(state, npc_id, city, product);
-            let outputs = engine.evaluate(&inputs);
+            let mut outputs = engine.evaluate(&inputs);
+            apply_personality_bias(&mut outputs, personality);
 
             let buy_score = outputs.get("buy_score").copied().unwrap_or(0.0);
             let sell_score = outputs.get("sell_score").copied().unwrap_or(0.0);
@@ -111,6 +227,21 @@ pub fn decide_npc_fuzzy(
                     ));
                 }
             }
+
+            // Contract aday (Sanayici/Tüccar only) — fuzzy contract_score yüksekse.
+            if matches!(role, Role::Sanayici | Role::Tuccar) {
+                let contract_score = outputs
+                    .get("contract_score")
+                    .copied()
+                    .unwrap_or(0.0);
+                if contract_score >= modulator.min_score_threshold && contract_score > 0.5 {
+                    if let Some(cmd) = build_contract_proposal(
+                        state, npc_id, city, product, ask_aggro, tick,
+                    ) {
+                        candidates.push((cmd, contract_score));
+                    }
+                }
+            }
         }
     }
 
@@ -118,7 +249,8 @@ pub fn decide_npc_fuzzy(
     if matches!(role, Role::Tuccar) {
         // Pamuk + İstanbul örnek olarak kullan; aslında en yüksek arbitraj şehri.
         let inputs = compute_inputs(state, npc_id, CityId::Istanbul, ProductKind::Pamuk);
-        let outputs = engine.evaluate(&inputs);
+        let mut outputs = engine.evaluate(&inputs);
+        apply_personality_bias(&mut outputs, personality);
         let caravan_score = outputs
             .get("buy_caravan_score")
             .copied()
@@ -176,13 +308,25 @@ fn build_buy_order(
     let market = market_or_base(state, city, product);
     // Bid agresif: market × (1 + (bid_aggro - 0.5) × 0.5 × modulator.aggressiveness)
     // bid_aggro 0.5 = market, 1.0 = +%25 üstü → ask'larla daha çok karşılaşır.
-    // Eski 0.3 scale'da fiyatlar çapraz olmuyordu, %1.2 match verimliliği.
-    let aggro_factor = 1.0 + (bid_aggro - 0.5) * 0.5 * modulator.aggressiveness;
+    // Tune v12: scale 0.5 → 0.7 — fiyatlar daha agresif çapraz olur
+    let aggro_factor = 1.0 + (bid_aggro - 0.5) * 0.7 * modulator.aggressiveness;
     let bid_cents = (market.as_cents() as f64 * aggro_factor) as i64;
     if bid_cents <= 0 {
         return None;
     }
-    let qty = pick_buy_qty(player.cash.as_cents(), bid_cents);
+    // Sanayici hammadde alımı: fabrikası varsa büyük al (üretim besler).
+    // Diğerleri default qty cap.
+    let is_sanayici_raw = matches!(player.role, Role::Sanayici) && product.is_raw();
+    let factory_count = state
+        .factories
+        .values()
+        .filter(|f| f.owner == npc_id)
+        .count();
+    let qty = if is_sanayici_raw && factory_count > 0 {
+        pick_buy_qty_sanayici(player.cash.as_cents(), bid_cents, factory_count as u32)
+    } else {
+        pick_buy_qty(player.cash.as_cents(), bid_cents)
+    };
     if qty == 0 {
         return None;
     }
@@ -224,12 +368,24 @@ fn build_sell_order(
     let market = market_or_base(state, city, product);
     // Ask agresif: market × (1 - (ask_aggro - 0.5) × 0.5 × modulator.aggressiveness)
     // ask_aggro 1.0 = -%25 (agresif satış), 0.5 = market.
-    let aggro_factor = 1.0 - (ask_aggro - 0.5) * 0.5 * modulator.aggressiveness;
+    let aggro_factor = 1.0 - (ask_aggro - 0.5) * 0.7 * modulator.aggressiveness;
     let ask_cents = (market.as_cents() as f64 * aggro_factor) as i64;
     if ask_cents <= 0 {
         return None;
     }
-    let qty = stock.min(pick_sell_qty(stock));
+    // Sanayici mamul satışı agresif — fabrikası varsa stok eritir.
+    let is_sanayici_finished =
+        matches!(player.role, Role::Sanayici) && product.is_finished();
+    let factory_count = state
+        .factories
+        .values()
+        .filter(|f| f.owner == npc_id)
+        .count();
+    let qty = if is_sanayici_finished && factory_count > 0 {
+        pick_sell_qty_sanayici(stock)
+    } else {
+        stock.min(pick_sell_qty(stock))
+    };
     if qty == 0 {
         return None;
     }
@@ -302,6 +458,50 @@ fn build_dispatch_command(
     })
 }
 
+/// Sanayici/Tüccar için kontrat öneri oluştur — public listing, mamul satışı.
+/// Stoğu varsa SAT kontratı (gelecek tick'te teslim).
+fn build_contract_proposal(
+    state: &GameState,
+    npc_id: PlayerId,
+    city: CityId,
+    product: ProductKind,
+    ask_aggro: f64,
+    tick: Tick,
+) -> Option<Command> {
+    let player = state.players.get(&npc_id)?;
+    let stock = player.inventory.get(city, product);
+    if stock < 30 {
+        return None;
+    }
+    let market = market_or_base(state, city, product);
+    // Kontrat fiyatı market × (1 + ask_aggro × 0.05) — küçük markup.
+    let unit_cents = (market.as_cents() as f64 * (1.0 + (ask_aggro - 0.5) * 0.1)) as i64;
+    if unit_cents <= 0 {
+        return None;
+    }
+    let qty = stock.min(80).max(30);
+    // Deposit küçük: NPC için kontrat zorunlu değil.
+    let deposit_cents = (unit_cents.saturating_mul(i64::from(qty))) / 20; // %5
+    let deposit = Money::from_cents(deposit_cents.max(100));
+    // Cash kontrol — yetmezse atla.
+    if player.cash.as_cents() < deposit_cents * 2 {
+        return None;
+    }
+    let delivery = tick.checked_add(8).unwrap_or(tick); // 8 tick sonra teslim
+    let proposal = ContractProposal {
+        seller: npc_id,
+        listing: ListingKind::Public,
+        product,
+        quantity: qty,
+        unit_price: Money::from_cents(unit_cents),
+        delivery_city: city,
+        delivery_tick: delivery,
+        seller_deposit: deposit,
+        buyer_deposit: deposit,
+    };
+    Some(Command::ProposeContract(proposal))
+}
+
 fn market_or_base(state: &GameState, city: CityId, product: ProductKind) -> Money {
     state
         .rolling_avg_price(city, product, 5)
@@ -313,7 +513,6 @@ fn market_or_base(state: &GameState, city: CityId, product: ProductKind) -> Mone
 }
 
 /// Cash kapasitesine göre alım miktarı (cash'in %25'i, cap 400).
-/// Sanayici fabrikasını besler — büyük alımlar için cap yüksek.
 fn pick_buy_qty(cash_cents: i64, bid_cents: i64) -> u32 {
     if bid_cents <= 0 {
         return 0;
@@ -324,10 +523,32 @@ fn pick_buy_qty(cash_cents: i64, bid_cents: i64) -> u32 {
     u32::try_from(capped).unwrap_or(0)
 }
 
+/// Sanayici hammadde alımı — fabrika sayısı × 100 birim hedef. Cash sınırlı.
+/// 1 fabrika 30 batch × 2 ham = 60 ham/tick tüketir; 100 birim 2-3 tickte tüketilir.
+fn pick_buy_qty_sanayici(cash_cents: i64, bid_cents: i64, factory_count: u32) -> u32 {
+    if bid_cents <= 0 || factory_count == 0 {
+        return 0;
+    }
+    let target = factory_count.saturating_mul(100); // hedef qty
+    // Cash bütçesi %35 — Sanayici fabrika besleme önceliği.
+    let budget = cash_cents * 35 / 100;
+    let cash_capped = budget / bid_cents;
+    let max_qty =
+        u32::try_from(cash_capped.clamp(0, i64::from(u32::MAX))).unwrap_or(0);
+    target.min(max_qty)
+}
+
 /// Stok'a göre satım miktarı (stoğun %40'ı, cap 250).
 fn pick_sell_qty(stock: u32) -> u32 {
     let q = (stock * 2) / 5;
     q.clamp(10, 250).min(stock)
+}
+
+/// Sanayici mamul satışı — fabrikalar üretim biriktirir, stoğun %60'ını sat,
+/// cap 400. Cash sink önler (mamul birikmiyor).
+fn pick_sell_qty_sanayici(stock: u32) -> u32 {
+    let q = (stock * 3) / 5;
+    q.clamp(50, 400).min(stock)
 }
 
 /// Fuzzy NPC order ID (DSS NPC_ORDER_ID_OFFSET ile uyumsuz tutmayalım — distinct prefix).

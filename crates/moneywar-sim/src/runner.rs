@@ -52,16 +52,17 @@ pub struct NpcComposition {
 
 impl Default for NpcComposition {
     fn default() -> Self {
-        // v3 dengeli kompozisyon: 1S/2T/2E/3A/2Sp = 10 NPC.
-        // Üretim: 1 Sanayici × 30 + 2 Esnaf × ~10 = ~50/tick arz.
-        // Talep: 3 Alıcı × ~7 + Sanayici_buy + Spek = ~35/tick talep.
-        // Hafif arz fazlası — oyuncu satışına alıcı yer kalır.
+        // v3 x2 canlı pazar: 4T/2S/4E/6A/4Sp = 20 NPC.
+        // Pazar her tick aktif, "ölü emir" hissi yok.
+        // Üretim: 2 Sanayici × ~30 = 60/tick mamul.
+        // Talep: 6 Alıcı × ~7 + Esnaf rotation + Spek = ~50-70/tick.
+        // Hafif denge, fuzzy match verimliliği artmalı.
         Self {
-            tuccar: 2,
-            sanayici: 1,
-            esnaf: 2,
-            spekulator: 2,
-            alici: 3,
+            tuccar: 4,
+            sanayici: 2,
+            esnaf: 4,
+            spekulator: 4,
+            alici: 6,
         }
     }
 }

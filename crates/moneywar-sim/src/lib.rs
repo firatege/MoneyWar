@@ -21,10 +21,12 @@ pub mod report;
 pub mod runner;
 pub mod scenario;
 pub mod snapshot;
+pub mod stats;
 pub mod trace;
 
 pub use report::render_markdown;
 pub use runner::{NpcComposition, SimResult, SimRunner};
 pub use scenario::Scenario;
 pub use snapshot::{ClearingSnapshot, OrderBookSummary, PlayerSnapshot, TickSnapshot};
+pub use stats::{PerRunMetrics, QualityScore, Stats, Summary};
 pub use trace::{NpcDecisionTrace, TickTrace};

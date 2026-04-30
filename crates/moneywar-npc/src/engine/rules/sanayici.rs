@@ -105,13 +105,20 @@ pub fn build_engine() -> Engine {
                 .when("competition", "yuksek")
                 .then("ask_aggressiveness", 0.85),
         )
-        // ── Build factory ──
-        // 13. Nakit yüksek + sezon başı → fabrika kur
+        // ── Build factory (sıkı koşul: sadece fabrikası YOK + nakit YÜKSEK + sezon başı) ──
+        // 13a. Hiç fabrikası yok + nakit yüksek + sezon başı → fabrika kur
         .add_rule(
             Rule::new()
+                .when("factory_count", "dusuk")
                 .when("cash", "yuksek")
                 .when("urgency", "dusuk")
                 .then("build_factory_score", 0.9),
+        )
+        // 13b. 1+ fabrikası var → kurma (cash sink olmasın)
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "orta")
+                .then("build_factory_score", 0.05),
         )
         // ── Contract ──
         // 14. Arbitraj yüksek → kontrat öner
@@ -161,6 +168,30 @@ pub fn build_engine() -> Engine {
                 .when("bid_supply_ratio", "yuksek")
                 .when("stock", "yuksek")
                 .then("ask_aggressiveness", 0.95),
+        )
+        // ── Tune v12: Sanayici cash-sink fix ──
+        // 21. Fabrikası VAR + stok ORTA → her durumda sat (üretim devam etmeli)
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "orta")
+                .when("stock", "orta")
+                .then("sell_score", 0.85)
+                .then("ask_aggressiveness", 0.8),
+        )
+        // 22. Fabrikası VAR + stok ORTA → kervan ile dispatch (mamul taşı sat)
+        .add_rule(
+            Rule::new()
+                .when("factory_count", "orta")
+                .when("stock", "yuksek")
+                .then("sell_score", 0.9)
+                .then("ask_aggressiveness", 0.85),
+        )
+        // 23. İflas riski yok + sezon kalan → fabrika varsa SAT zorunlu (mamul biriktirme)
+        .add_rule(
+            Rule::new()
+                .when("bankruptcy_risk", "dusuk")
+                .when("factory_count", "orta")
+                .then("sell_score", 0.75),
         )
 }
 
