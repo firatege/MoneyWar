@@ -70,13 +70,12 @@ fn tuccar_istanbul_to_ankara_arbitrage_full_cycle() {
         0
     );
 
-    // Tick 3, 4: hâlâ yolda (arrival_tick = 2 + 3 = 5).
+    // v3: arrival_tick = 2 + 2 = 4. Tick 3'te hâlâ yolda.
     let (s3, _) = advance_tick(&s2, &[]).unwrap();
-    let (s4, _) = advance_tick(&s3, &[]).unwrap();
-    assert!(!s4.caravans[&cid].is_idle());
+    assert!(!s3.caravans[&cid].is_idle());
 
-    // Tick 5: varış → Ankara envanter'ine 40 pamuk.
-    let (s5, _) = advance_tick(&s4, &[]).unwrap();
+    // Tick 4: varış → Ankara envanter'ine 40 pamuk.
+    let (s5, _) = advance_tick(&s3, &[]).unwrap();
     assert!(s5.caravans[&cid].is_idle());
     assert_eq!(
         s5.players[&PlayerId::new(1)]

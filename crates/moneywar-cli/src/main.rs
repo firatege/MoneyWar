@@ -1544,7 +1544,8 @@ fn seed_world(
         .unwrap()
         .with_kind(NpcKind::Tuccar)
         .with_personality(personality);
-        distribute_inventory(&mut npc, &mut rng, 5_000);
+        // v3: hammadde açığını kapatmak için Tüccar başlangıç stoğu 5k → 8k.
+        distribute_inventory(&mut npc, &mut rng, 8_000);
         let npc_id = npc.id;
         s.players.insert(npc_id, npc);
         if matches!(personality, Personality::EventTrader) {
@@ -1784,7 +1785,7 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
         "🌾 Hammadde"
     };
     let title = format!(
-        " 📊  Canlı Pazar  —  {category_label}  ·  {} ",
+        " 📊  Canlı Pazar  —  ort + ask · bid  ·  {category_label}  ·  {} ",
         tier.display_name()
     );
     let block = Block::default()
@@ -1876,10 +1877,26 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
             let ask = ask_levels.first().copied();
             let bid = bid_levels.first().copied();
 
-            // Hücre: sadece "<ask> · <bid>" (Gold'da +2 depth + arz/tlp).
-            // Ortalama ana panelde zaten var — burada tekrar yok.
+            // Üst satır: rolling avg fiyat (sarı). Ana panel son tick gösterir,
+            // burada son 5 tick ortalaması — trend duyarlı strateji için.
+            let avg = app
+                .state
+                .rolling_avg_price(city, product, 5)
+                .or_else(|| app.state.effective_baseline(city, product));
+            let avg_str = match avg {
+                Some(m) => format!("ort {m}"),
+                None => "ort —".to_string(),
+            };
+            let avg_line = Line::from(Span::styled(
+                avg_str,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
             let book_line = Line::from(book_span_for_tier(tier, ask, bid));
-            let mut text = ratatui::text::Text::from(book_line);
+            let mut text = ratatui::text::Text::from(avg_line);
+            text.lines.push(book_line);
 
             if matches!(tier, NewsTier::Gold) {
                 text.lines
@@ -1915,13 +1932,13 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
             cells.push(text);
         }
         // Hücre satır sayısı + 1 boşluk satırı (görsel ferahlık):
-        // - Free: 1 + 1 = 2
-        // - Bronze/Silver: 2 + 1 = 3
-        // - Gold: 4 + 1 = 5
+        // - Free: ort + ask·bid kilitli = 2 + 1 = 3
+        // - Bronze/Silver: ort + ask·bid + arz/tlp = 3 + 1 = 4
+        // - Gold: ort + ask·bid + 2 depth + arz/tlp = 5 + 1 = 6
         let content_height = match tier {
-            NewsTier::Free => 1,
-            NewsTier::Bronze | NewsTier::Silver => 2,
-            NewsTier::Gold => 4,
+            NewsTier::Free => 2,
+            NewsTier::Bronze | NewsTier::Silver => 3,
+            NewsTier::Gold => 5,
         };
         rows.push(Row::new(cells).height(content_height + 1));
     }
@@ -1962,17 +1979,18 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
     };
     // Renk legend.
     let legend_line = Line::from(vec![
-        Span::styled("satıcı (ask)", Style::default().fg(Color::LightRed)),
-        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("alıcı (bid)", Style::default().fg(Color::LightGreen)),
-        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            "kendi emrin ⭐",
+            "ort (5-tick avg)",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  ·  Esc kapat", Style::default().fg(Color::DarkGray)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("satıcı (ask)", Style::default().fg(Color::LightRed)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("alıcı (bid)", Style::default().fg(Color::LightGreen)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("⭐ kendi emrin · Esc kapat", Style::default().fg(Color::DarkGray)),
     ]);
     let info = Paragraph::new(vec![
         Line::from(Span::styled(
@@ -4085,23 +4103,28 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
     )));
     if let Some(player) = app.state.players.get(&HUMAN_ID) {
-        // Header satırı: ürün adlarının yanına şehir sütun başlıkları.
+        // Sabit genişlikli kolonlar: ürün adı 12 char sol, her şehir 8 char
+        // sağa hizalı, toplam 8 char sağa hizalı. "İst/Ank/İzm" + sayılar
+        // birbirinin altına dümdüz oturur.
+        const PROD_W: usize = 12;
+        const COL_W: usize = 8;
+
         let mut header_spans: Vec<Span> = vec![Span::styled(
-            "  Ürün         ",
+            format!("  {:<PROD_W$}", "Ürün"),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )];
         for city in CityId::ALL {
             header_spans.push(Span::styled(
-                format!("{:<12}", city_short(city)),
+                format!("{:>COL_W$}", city_short(city)),
                 Style::default()
                     .fg(Color::Blue)
                     .add_modifier(Modifier::BOLD),
             ));
         }
         header_spans.push(Span::styled(
-            "Toplam",
+            format!("{:>COL_W$}", "Σ"),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -4116,10 +4139,9 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 .collect();
             let row_total: u32 = qtys.iter().sum();
             grand_total = grand_total.saturating_add(u64::from(row_total));
-            // Sıfır toplamlı ürünleri sönük göster (yer tutar ama göze batmaz).
             let row_dim = row_total == 0;
             let mut spans: Vec<Span> = vec![Span::styled(
-                format!("  {:<12} ", product),
+                format!("  {:<PROD_W$}", format!("{}", product)),
                 if row_dim {
                     Style::default().fg(Color::DarkGray)
                 } else {
@@ -4134,10 +4156,10 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                spans.push(Span::styled(format!("{:<12}", q), style));
+                spans.push(Span::styled(format!("{:>COL_W$}", q), style));
             }
             spans.push(Span::styled(
-                format!("{}", row_total),
+                format!("{:>COL_W$}", row_total),
                 if row_dim {
                     Style::default().fg(Color::DarkGray)
                 } else {
@@ -7521,6 +7543,7 @@ fn summarize_report(report: &moneywar_engine::TickReport, state: &GameState) -> 
     let mut npc_production: u32 = 0;
     let mut human_arrivals: u32 = 0;
     let mut npc_arrivals: u32 = 0;
+    let mut npc_dispatches: u32 = 0;
     let mut rejects: u32 = 0;
     let mut contracts_events: u32 = 0;
 
@@ -7637,21 +7660,13 @@ fn summarize_report(report: &moneywar_engine::TickReport, state: &GameState) -> 
                     city_short(*starting_city)
                 ));
             }
-            LogEvent::CaravanDispatched {
-                from,
-                to,
-                cargo_total,
-                ..
-            } => {
+            LogEvent::CaravanDispatched { .. } => {
+                // NPC dispatch'leri ayrı satır spam'i yapmaz; "NPC trafik"
+                // özet satırında dispatch sayısı gösterilir. İnsan dispatch'i
+                // zaten human_lines tarafında detaylı yazılır.
                 if let Some(actor) = entry.actor {
                     if actor != HUMAN_ID {
-                        events_lines.push(format!(
-                            "  🚂 {} {} → {} ({} birim)",
-                            player_name(actor),
-                            city_short(*from),
-                            city_short(*to),
-                            cargo_total
-                        ));
+                        npc_dispatches += 1;
                     }
                 }
             }
@@ -7687,15 +7702,22 @@ fn summarize_report(report: &moneywar_engine::TickReport, state: &GameState) -> 
     // Human'ın işlemleri detay olarak.
     out.extend(human_lines);
 
-    // NPC trafiği tek satır özet (sadece NPC-NPC match ya da NPC üretim/varış varsa).
+    // NPC trafiği tek satır özet — dispatch'ler ayrı satır olmaz, burada sayılır.
     let npc_matches = total_matches.saturating_sub(human_matches);
-    if npc_matches > 0 || npc_production > 0 || npc_arrivals > 0 {
+    if npc_matches > 0
+        || npc_production > 0
+        || npc_arrivals > 0
+        || npc_dispatches > 0
+    {
         let mut npc_parts: Vec<String> = Vec::new();
         if npc_matches > 0 {
             npc_parts.push(format!("{npc_matches} match"));
         }
         if npc_production > 0 {
             npc_parts.push(format!("+{npc_production} üretim"));
+        }
+        if npc_dispatches > 0 {
+            npc_parts.push(format!("{npc_dispatches} dispatch"));
         }
         if npc_arrivals > 0 {
             npc_parts.push(format!("{npc_arrivals} varış"));

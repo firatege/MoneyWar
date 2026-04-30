@@ -61,8 +61,8 @@ fn city_distance_and_product_chain_connect() {
     assert_eq!(raw, ProductKind::Pamuk);
     assert_eq!(raw.finished_output(), Some(ProductKind::Kumas));
 
-    // İstanbul → Ankara 3 tick
-    assert_eq!(CityId::Istanbul.distance_to(CityId::Ankara), 3);
+    // İstanbul → Ankara 2 tick (v3: yarıya indi)
+    assert_eq!(CityId::Istanbul.distance_to(CityId::Ankara), 2);
 }
 
 #[test]

@@ -311,8 +311,8 @@ mod tests {
         let c = s.caravans.get(&cid).unwrap();
         match &c.state {
             moneywar_domain::CaravanState::EnRoute { arrival_tick, .. } => {
-                // Istanbul → Ankara = 3 tick. Tick 1'de dispatch → arrival 4.
-                assert_eq!(*arrival_tick, Tick::new(4));
+                // v3: Istanbul → Ankara = 2 tick. Tick 1'de dispatch → arrival 3.
+                assert_eq!(*arrival_tick, Tick::new(3));
             }
             moneywar_domain::CaravanState::Idle { .. } => panic!("expected EnRoute"),
         }
@@ -415,7 +415,7 @@ mod tests {
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         let cid = *s.caravans.keys().next().unwrap();
 
-        // Dispatch tick 1, arrival_tick = 1 + 3 = 4.
+        // v3: Dispatch tick 1, Istanbul→Ankara 2 tick, arrival_tick = 1 + 2 = 3.
         process_dispatch_caravan(
             &mut s,
             &mut r,
@@ -427,9 +427,8 @@ mod tests {
         )
         .unwrap();
 
-        // Tick 2, 3: hâlâ EnRoute.
+        // Tick 2: hâlâ EnRoute.
         advance_caravans(&mut s, &mut r, Tick::new(2));
-        advance_caravans(&mut s, &mut r, Tick::new(3));
         assert!(!s.caravans[&cid].is_idle());
         assert_eq!(
             s.players[&pid]
@@ -438,9 +437,9 @@ mod tests {
             0
         );
 
-        // Tick 4: varış.
-        let mut r4 = TickReport::new(Tick::new(4));
-        advance_caravans(&mut s, &mut r4, Tick::new(4));
+        // Tick 3: varış.
+        let mut r4 = TickReport::new(Tick::new(3));
+        advance_caravans(&mut s, &mut r4, Tick::new(3));
         assert!(s.caravans[&cid].is_idle());
         assert_eq!(s.caravans[&cid].state.current_city(), Some(CityId::Ankara));
         assert_eq!(

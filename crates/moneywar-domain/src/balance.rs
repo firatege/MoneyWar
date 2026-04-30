@@ -176,20 +176,22 @@ pub const FACTORY_SCORE_DEN: i64 = 2;
 // Şehir mesafeleri
 // =============================================================================
 
-/// İstanbul ↔ Ankara (§3) tick cinsinden.
-pub const DIST_ISTANBUL_ANKARA: u32 = 3;
-/// Ankara ↔ İzmir — en yakın çift.
-pub const DIST_ANKARA_IZMIR: u32 = 2;
-/// İstanbul ↔ İzmir — deniz yolu, en uzun.
-pub const DIST_ISTANBUL_IZMIR: u32 = 4;
+/// İstanbul ↔ Ankara — v3'te yarıya indi (3→2 tick).
+pub const DIST_ISTANBUL_ANKARA: u32 = 2;
+/// Ankara ↔ İzmir — en yakın çift, hâlâ 1 tick.
+pub const DIST_ANKARA_IZMIR: u32 = 1;
+/// İstanbul ↔ İzmir — deniz yolu (4→2 tick).
+pub const DIST_ISTANBUL_IZMIR: u32 = 2;
 
 // =============================================================================
 // Bozulma
 // =============================================================================
 
-/// Un: bu kadar tick sonra %100 kaybolur (§4).
-pub const PERISH_UN_TICKS: u32 = 3;
-pub const PERISH_UN_LOSS_PCT: u32 = 100;
+/// Un: bu kadar tick sonra fire başlar. v3'te yumuşatıldı (3→5, %100→%50)
+/// — kervan en uzun rotası (İst↔İzm = 4 tick) varış sırasında kayıpsız geçsin
+/// ama "Un'u uzun süre cebinde tutarsan zarar" mekaniği kalsın.
+pub const PERISH_UN_TICKS: u32 = 5;
+pub const PERISH_UN_LOSS_PCT: u32 = 50;
 
 /// Zeytinyağı: 5 tick sonra %10 fire.
 pub const PERISH_ZEYTINYAGI_TICKS: u32 = 5;

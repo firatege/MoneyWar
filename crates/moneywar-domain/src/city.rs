@@ -142,9 +142,10 @@ mod tests {
 
     #[test]
     fn distance_matches_design() {
-        assert_eq!(CityId::Istanbul.distance_to(CityId::Ankara), 3);
-        assert_eq!(CityId::Ankara.distance_to(CityId::Izmir), 2);
-        assert_eq!(CityId::Istanbul.distance_to(CityId::Izmir), 4);
+        // v3: mesafeler yarıya indi (3,2,4 → 2,1,2). UX hızlandırma.
+        assert_eq!(CityId::Istanbul.distance_to(CityId::Ankara), 2);
+        assert_eq!(CityId::Ankara.distance_to(CityId::Izmir), 1);
+        assert_eq!(CityId::Istanbul.distance_to(CityId::Izmir), 2);
     }
 
     #[test]

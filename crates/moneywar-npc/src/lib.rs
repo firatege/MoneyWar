@@ -582,6 +582,49 @@ impl NpcBehavior for EsnafNpc {
                 cmds.push(Command::SubmitOrder(o));
             }
         }
+
+        // v3: Esnaf'ın "dükkan rotasyonu" — mamul stoğu eşik altına düştüğü
+        // (city, mamul) çiftleri için küçük bid'ler. Müşteriye satacağı bitmiş
+        // ürünleri toptancıdan alır mantığı. Hammadde alımı yok (zaten satıyor).
+        const SHELF_THRESHOLD: u32 = 100;
+        const SHELF_BID_QTY_MIN: u32 = 50;
+        const SHELF_BID_QTY_MAX: u32 = 100;
+        let cash_budget_cap = Money::from_cents(player.cash.as_cents() * 30 / 100);
+        let mut budget_used: i64 = 0;
+        let mut bid_seq: u32 = 1000; // ask seq'i ile çakışmasın
+        for finished in ProductKind::FINISHED_GOODS {
+            for city in CityId::ALL {
+                let stock = player.inventory.get(city, finished);
+                if stock >= SHELF_THRESHOLD {
+                    continue;
+                }
+                let market = market_or_base(state, city, finished);
+                let bid_cents = (market.as_cents() * 93) / 100;
+                let qty = rng.random_range(SHELF_BID_QTY_MIN..=SHELF_BID_QTY_MAX);
+                let total = bid_cents.saturating_mul(i64::from(qty));
+                // Cash kontrolü: %30 başlangıç bütçesi tüketilmiş mi?
+                if budget_used.saturating_add(total) > cash_budget_cap.as_cents() {
+                    continue;
+                }
+                budget_used = budget_used.saturating_add(total);
+                let id = OrderId::new(npc_order_id(self_id, tick, bid_seq));
+                bid_seq += 1;
+                if let Ok(o) = MarketOrder::new_with_ttl(
+                    id,
+                    self_id,
+                    city,
+                    finished,
+                    OrderSide::Buy,
+                    qty,
+                    Money::from_cents(bid_cents),
+                    tick,
+                    ttl,
+                ) {
+                    cmds.push(Command::SubmitOrder(o));
+                }
+            }
+        }
+
         cmds
     }
 }
