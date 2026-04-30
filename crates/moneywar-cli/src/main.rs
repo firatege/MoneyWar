@@ -5446,9 +5446,6 @@ fn help_cmd(cmd: &str, desc: &str) -> Line<'static> {
 
 fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let season = app.state.season_progress();
-    // Sezon arc faz göstergesi: erken=Bahar, orta=Yaz, geç=Hasat. Olay
-    // sıklığı ve atmosfer bu fazlara göre değişir; oyuncu görsel olarak
-    // nerede olduğunu görsün → "tickleri amaçsız geçmiyor" hissi.
     let (phase_icon, phase_label, phase_color) = if season.is_late() {
         ("🍂", "Hasat", Color::Rgb(220, 120, 60))
     } else if season.is_mid() {
@@ -5456,6 +5453,18 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     } else {
         ("🌱", "Bahar", Color::Green)
     };
+    // Sezon progress bar — 8 karakter mini visual: ████▓▒░░░░ pattern
+    let total = app.state.config.season_ticks.max(1);
+    let done = app.state.current_tick.value().min(total);
+    let bar = season_progress_bar(done, total, 8);
+    // İnsan cash kritik mi (< 5K₺)?
+    let human_cash_lira = app
+        .state
+        .players
+        .get(&HUMAN_ID)
+        .map(|p| p.cash.as_cents() / 100)
+        .unwrap_or(0);
+    let cash_warning = human_cash_lira < 5_000 && !app.game_over();
     let title = Line::from(vec![
         Span::styled(
             "  MoneyWar  ",
@@ -5474,6 +5483,11 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            bar,
+            Style::default().fg(phase_color),
         ),
         Span::raw("  "),
         Span::styled(
@@ -5513,6 +5527,14 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .fg(Color::Black)
                     .bg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
+            )
+        } else if cash_warning {
+            Span::styled(
+                format!("  ⚠ CASH KRİTİK ({}₺) — likidite!", human_cash_lira),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK),
             )
         } else {
             Span::raw("")
@@ -5851,6 +5873,28 @@ fn render_player_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
 /// Para kısa formatı — skor dökümü gibi dar alanlar için.
 /// 12 345 678 cent → "123k", 1_234_567_890 → "12.3M".
+/// Sezon ilerleme bar'ı — `done/total` oranını N karakter visual barla göster.
+/// Dolu kısım `█`, boş kısım `░`. Örn. 5/10 (50%) 8 char → `████░░░░`.
+fn season_progress_bar(done: u32, total: u32, width: usize) -> String {
+    if total == 0 || width == 0 {
+        return String::new();
+    }
+    let pct = (done as f64 / total as f64).clamp(0.0, 1.0);
+    let filled = (pct * width as f64).round() as usize;
+    let filled = filled.min(width);
+    let mut s = String::with_capacity(width * 3);
+    s.push('[');
+    for i in 0..width {
+        if i < filled {
+            s.push('█');
+        } else {
+            s.push('░');
+        }
+    }
+    s.push(']');
+    s
+}
+
 fn compact_money(money: Money) -> String {
     let cents = money.as_cents();
     let abs = cents.unsigned_abs();
