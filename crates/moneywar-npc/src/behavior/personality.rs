@@ -18,9 +18,9 @@ use moneywar_domain::{NpcKind, Personality};
 pub fn for_kind_personality(kind: Option<NpcKind>, _personality: Option<Personality>) -> Weights {
     match kind {
         Some(NpcKind::Ciftci) => ciftci_default(),
+        Some(NpcKind::Alici) => alici_default(),
         // Faz C+'da doldurulacak roller:
-        Some(NpcKind::Alici)
-        | Some(NpcKind::Esnaf)
+        Some(NpcKind::Esnaf)
         | Some(NpcKind::Sanayici)
         | Some(NpcKind::Tuccar)
         | Some(NpcKind::Spekulator)
@@ -44,6 +44,25 @@ const fn ciftci_default() -> Weights {
         price_rel_avg: 0.3,
         competition: -0.2,
         cash: -0.3,
+        ..Weights::ZERO
+    }
+}
+
+/// Alıcı default ağırlıkları — buy-only tüketici mantığı.
+/// - `cash +1.0`: cash varsa AL (ana sürücü, tüketici)
+/// - `price_rel_avg -0.5`: ucuzken al (pahalıyken sus)
+/// - `stock -0.3`: kendi mamul stoğu varsa iştahı azalt
+/// - `momentum +0.2`: yükseliyor → şimdi al (geç kalma)
+/// - `urgency +0.2`: sezon sonu hafif basınç
+/// - `competition -0.2`: rakip baskı varsa bekle
+const fn alici_default() -> Weights {
+    Weights {
+        cash: 1.0,
+        price_rel_avg: -0.5,
+        stock: -0.3,
+        momentum: 0.2,
+        urgency: 0.2,
+        competition: -0.2,
         ..Weights::ZERO
     }
 }

@@ -118,9 +118,9 @@ fn enumerate_for_kind(
 ) -> Vec<ActionCandidate> {
     match player.npc_kind {
         Some(NpcKind::Ciftci) => roles::ciftci::enumerate(state, player),
-        // Faz C sırası — şu an boş (eski motor bu rolleri hâlâ çalıştırıyor):
-        Some(NpcKind::Alici)
-        | Some(NpcKind::Esnaf)
+        Some(NpcKind::Alici) => roles::alici::enumerate(state, player),
+        // Faz C+ sırası — şu an boş (eski motor bu rolleri hâlâ çalıştırıyor):
+        Some(NpcKind::Esnaf)
         | Some(NpcKind::Sanayici)
         | Some(NpcKind::Tuccar)
         | Some(NpcKind::Spekulator)

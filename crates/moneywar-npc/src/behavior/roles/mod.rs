@@ -5,6 +5,7 @@
 //! utility skor verir, top-K'yı seçer.
 //!
 //! Faz B: Çiftçi pilot (sell-only).
-//! Faz C sırası: Alıcı → Esnaf → Spekülatör → Tüccar → Sanayici → Banka.
+//! Faz C: Alıcı (buy-only mamul). Sıradaki: Esnaf → Spekülatör → Tüccar → Sanayici → Banka.
 
+pub mod alici;
 pub mod ciftci;
