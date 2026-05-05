@@ -20,9 +20,9 @@ pub fn for_kind_personality(kind: Option<NpcKind>, _personality: Option<Personal
         Some(NpcKind::Ciftci) => ciftci_default(),
         Some(NpcKind::Alici) => alici_default(),
         Some(NpcKind::Sanayici) => sanayici_default(),
+        Some(NpcKind::Esnaf) => esnaf_default(),
         // Faz C+'da doldurulacak roller:
-        Some(NpcKind::Esnaf)
-        | Some(NpcKind::Tuccar)
+        Some(NpcKind::Tuccar)
         | Some(NpcKind::Spekulator)
         | Some(NpcKind::Banka)
         | None => Weights::ZERO,
@@ -68,6 +68,23 @@ const fn sanayici_default() -> Weights {
     }
 }
 
+/// Esnaf default ağırlıkları — toptancı, ham mal aracısı.
+/// - `cash +0.5`: cash varsa al (BUY ana sürücü)
+/// - `arbitrage +0.3`: şehirler arası fark fırsat
+/// - `urgency +0.2`: sezon basıncı
+/// - `competition -0.2`: rakip baskı
+/// - `local_raw_advantage +0.2`: uzmanlık şehir önceliği
+const fn esnaf_default() -> Weights {
+    Weights {
+        cash: 0.5,
+        arbitrage: 0.3,
+        urgency: 0.2,
+        local_raw_advantage: 0.2,
+        competition: -0.2,
+        ..Weights::ZERO
+    }
+}
+
 /// Alıcı default ağırlıkları — buy-only tüketici mantığı.
 /// - `cash +1.0`: cash varsa AL (ana sürücü, tüketici)
 /// - `price_rel_avg -0.5`: ucuzken al (pahalıyken sus)
@@ -101,9 +118,8 @@ mod tests {
 
     #[test]
     fn unmigrated_roles_return_zero() {
-        // Esnaf / Tüccar / Spekülatör / Banka henüz Faz C-2+'da göç etmedi.
+        // Tüccar / Spekülatör / Banka henüz göç etmedi.
         for kind in [
-            NpcKind::Esnaf,
             NpcKind::Tuccar,
             NpcKind::Spekulator,
             NpcKind::Banka,
