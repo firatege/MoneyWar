@@ -1,12 +1,12 @@
-//! Plan v4 davranış sözleşmeleri (RoleContract) + global oyun kapısı.
+//! Plan v4 davranış sözleşmeleri (`RoleContract`) + global oyun kapısı.
 //!
-//! Her NpcKind için **ne yapmalı** + **ne yapmamalı** tanımlı. Test koşumunda
+//! Her `NpcKind` için **ne yapmalı** + **ne yapmamalı** tanımlı. Test koşumunda
 //! gerçek aksiyon mix'i bu kontratlara karşı denetlenir.
 //!
 //! İki katman:
-//! 1. **RoleContract** — NpcKind başına aksiyon dağılımı + PnL bandı + ihlal
+//! 1. **`RoleContract`** — `NpcKind` başına aksiyon dağılımı + `PnL` bandı + ihlal
 //!    sayacı (yasak komut emiti).
-//! 2. **GameThresholds** — sezon genelinde piyasanın canlılığı, batık sayısı,
+//! 2. **`GameThresholds`** — sezon genelinde piyasanın canlılığı, batık sayısı,
 //!    fiyat stabilitesi, talep doygunluğu.
 //!
 //! Hard difficulty için baseline sayılar; tuning sonrası daraltılabilir.
@@ -24,7 +24,7 @@ pub struct CheckResult {
     pub detail: String,
 }
 
-/// NpcKind başına davranış kontratı. Aşağıdaki tüm sınırları sezon sonu
+/// `NpcKind` başına davranış kontratı. Aşağıdaki tüm sınırları sezon sonu
 /// audit eder.
 #[derive(Debug, Clone)]
 pub struct RoleContract {
@@ -33,11 +33,11 @@ pub struct RoleContract {
     pub mandate: &'static str,
     /// Yapması beklenen aksiyon türleri (en az 1 emit zorunlu).
     pub required_actions: &'static [RequiredAction],
-    /// Asla yapmaması gereken aksiyon listesi (forbidden_action_count == 0).
+    /// Asla yapmaması gereken aksiyon listesi (`forbidden_action_count` == 0).
     pub forbidden_label: &'static str,
-    /// PnL alt sınırı (lira, sezon bazlı).
+    /// `PnL` alt sınırı (lira, sezon bazlı).
     pub min_pnl_lira: f64,
-    /// PnL üst sınırı (lira). Aşırı PnL = oyun dengesini bozar (ekonomi sızıntısı).
+    /// `PnL` üst sınırı (lira). Aşırı `PnL` = oyun dengesini bozar (ekonomi sızıntısı).
     pub max_pnl_lira: f64,
     /// Toplam emit edilen komutun bu kategorideki minimum payı (0.0..1.0).
     pub min_dominant_action_share: f64,
@@ -219,7 +219,7 @@ pub fn audit_role(
     n_seeds: u32,
 ) -> Vec<CheckResult> {
     let mut out = Vec::new();
-    let scale = (n_npcs * n_seeds).max(1) as f64;
+    let scale = f64::from((n_npcs * n_seeds).max(1));
 
     // 1. Yasaklı aksiyon yok.
     out.push(CheckResult {
@@ -231,14 +231,14 @@ pub fn audit_role(
     // 2. Beklenen aksiyon türleri (NPC sayısı ile ölçeklensin).
     for req in contract.required_actions {
         let count = req.field.count(mix_total);
-        let need = (req.min_count as f64 * scale).ceil() as u32;
+        let need = (f64::from(req.min_count) * scale).ceil() as u32;
         out.push(CheckResult {
             label: format!(
                 "[{}] {} ≥ {} (toplam {} NPC × {} seed)",
                 contract.kind, req.label, need, n_npcs, n_seeds
             ),
             passed: count >= need,
-            detail: format!("emit={} need={}", count, need),
+            detail: format!("emit={count} need={need}"),
         });
     }
 
@@ -249,7 +249,7 @@ pub fn audit_role(
             contract.kind, contract.min_pnl_lira, contract.max_pnl_lira
         ),
         passed: pnl_avg >= contract.min_pnl_lira && pnl_avg <= contract.max_pnl_lira,
-        detail: format!("avg={:.0}₺", pnl_avg),
+        detail: format!("avg={pnl_avg:.0}₺"),
     });
 
     out
@@ -260,13 +260,13 @@ pub fn audit_role(
 pub struct GameThresholds {
     /// Toplam clearing sayısı sezon başına (10 seed mean).
     pub min_total_matches_per_run: f64,
-    /// Match verim % min (matched_qty / submitted).
+    /// Match verim % min (`matched_qty` / submitted).
     pub min_match_efficiency_pct: f64,
     /// İflas eden NPC sayısı max (sezon başına).
     pub max_bankrupt_npcs: f64,
     /// En eski emrin yaşı tick max.
     pub max_stale_order_age: f64,
-    /// İnsan oyuncuya hayatta kalma garantisi (PnL alt sınır).
+    /// İnsan oyuncuya hayatta kalma garantisi (`PnL` alt sınır).
     pub min_human_pnl_lira: f64,
     /// Banka kredi olayı min sayısı (closed loop tetiklendi mi).
     pub min_bank_loans_issued: u32,
@@ -311,7 +311,7 @@ fn count_dead_buckets(runs: &[SimResult]) -> f64 {
         // 3 şehir × 6 ürün = 18.
         total_dead += 18 - active.len() as u32;
     }
-    total_dead as f64 / runs.len() as f64
+    f64::from(total_dead) / runs.len() as f64
 }
 
 /// Global oyun kapısını denetle.
@@ -368,7 +368,7 @@ pub fn audit_game_with_runs(
             thresholds.min_bank_loans_issued
         ),
         passed: bank_loans_total >= thresholds.min_bank_loans_issued,
-        detail: format!("total={}", bank_loans_total),
+        detail: format!("total={bank_loans_total}"),
     });
     if !runs.is_empty() {
         let dead = count_dead_buckets(runs);
@@ -377,8 +377,8 @@ pub fn audit_game_with_runs(
                 "Ölü bucket ≤ {} / 18 (pazar dolaşımı)",
                 thresholds.max_dead_buckets
             ),
-            passed: dead <= thresholds.max_dead_buckets as f64,
-            detail: format!("mean={:.1}/18", dead),
+            passed: dead <= f64::from(thresholds.max_dead_buckets),
+            detail: format!("mean={dead:.1}/18"),
         });
     }
     out
@@ -395,7 +395,7 @@ pub fn render_threshold_report(
     let mut out = String::new();
     let n_seeds = runs.len() as u32;
 
-    let _ = writeln!(out, "# 🛡️ Threshold Audit — {} seed × Hard 90 tick", n_seeds);
+    let _ = writeln!(out, "# 🛡️ Threshold Audit — {n_seeds} seed × Hard 90 tick");
     let _ = writeln!(out);
 
     // Global oyun kapısı.
@@ -450,8 +450,7 @@ pub fn render_threshold_report(
         let pnl_avg = stats
             .pnl_by_role
             .get(contract.kind)
-            .map(|s| s.mean)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.mean);
         let n_npcs = *npc_count_per_kind.get(contract.kind).unwrap_or(&0);
         let checks = audit_role(contract, &mix, pnl_avg, n_npcs, n_seeds);
         let passed = checks.iter().filter(|c| c.passed).count();
@@ -467,8 +466,7 @@ pub fn render_threshold_report(
         let _ = writeln!(out);
         let _ = writeln!(
             out,
-            "**Aksiyon dağılımı (10 seed toplam, {} NPC × {} seed):**",
-            n_npcs, n_seeds
+            "**Aksiyon dağılımı (10 seed toplam, {n_npcs} NPC × {n_seeds} seed):**"
         );
         let _ = writeln!(
             out,

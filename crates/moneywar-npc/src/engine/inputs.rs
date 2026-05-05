@@ -49,19 +49,17 @@ pub fn compute_inputs(
     let cash_norm = state
         .players
         .get(&npc_id)
-        .map(|p| ((p.cash.as_cents() as f64 / 100.0) / TYPICAL_STARTING_CASH_LIRA).clamp(0.0, 1.0))
-        .unwrap_or(0.0);
+        .map_or(0.0, |p| ((p.cash.as_cents() as f64 / 100.0) / TYPICAL_STARTING_CASH_LIRA).clamp(0.0, 1.0));
     inputs.insert("cash", cash_norm);
 
     // 2. Stock — bu (city, product) için NPC stoğu.
     let stock_norm = state
         .players
         .get(&npc_id)
-        .map(|p| {
+        .map_or(0.0, |p| {
             let qty = p.inventory.get(city, product);
             (f64::from(qty) / TYPICAL_STOCK_CAPACITY).clamp(0.0, 1.0)
-        })
-        .unwrap_or(0.0);
+        });
     inputs.insert("stock", stock_norm);
 
     // 3. price_rel_avg — son fiyat / fair value. Centered around 1.0.
@@ -72,7 +70,7 @@ pub fn compute_inputs(
 
     // 4. Momentum — `[-1, 1]` → fuzzy `[0, 1]`: 0=düşüyor, 0.5=sabit, 1=yükseliyor.
     let mom = price_momentum(state, city, product);
-    inputs.insert("momentum", ((mom + 1.0) / 2.0).clamp(0.0, 1.0));
+    inputs.insert("momentum", f64::midpoint(mom, 1.0).clamp(0.0, 1.0));
 
     // 5. Urgency — sezon ilerlemesi (0 = başlangıç, 1 = son tick).
     let total = state.config.season_ticks.max(1);
@@ -94,13 +92,12 @@ pub fn compute_inputs(
     let (bid_qty, ask_qty) = state
         .order_book
         .get(&(city, product))
-        .map(|orders| {
+        .map_or((0, 0), |orders| {
             orders.iter().fold((0u32, 0u32), |(b, a), o| match o.side {
                 moneywar_domain::OrderSide::Buy => (b + o.quantity, a),
                 moneywar_domain::OrderSide::Sell => (b, a + o.quantity),
             })
-        })
-        .unwrap_or((0, 0));
+        });
     let bid_ratio = if bid_qty + ask_qty == 0 {
         0.5
     } else {
@@ -113,8 +110,7 @@ pub fn compute_inputs(
     let cash_lira = state
         .players
         .get(&npc_id)
-        .map(|p| (p.cash.as_cents() as f64) / 100.0)
-        .unwrap_or(0.0);
+        .map_or(0.0, |p| (p.cash.as_cents() as f64) / 100.0);
     let bankruptcy = ((50_000.0 - cash_lira) / 45_000.0).clamp(0.0, 1.0);
     inputs.insert("bankruptcy_risk", bankruptcy);
 
@@ -146,7 +142,7 @@ pub fn compute_inputs(
     let rival_count = state
         .order_book
         .get(&(city, product))
-        .map(|orders| {
+        .map_or(0, |orders| {
             let mut rivals: std::collections::BTreeSet<PlayerId> = std::collections::BTreeSet::new();
             for o in orders {
                 if o.player != npc_id {
@@ -154,8 +150,7 @@ pub fn compute_inputs(
                 }
             }
             rivals.len()
-        })
-        .unwrap_or(0);
+        });
     inputs.insert(
         "rival_action_pressure",
         (rival_count as f64 / 5.0).clamp(0.0, 1.0),

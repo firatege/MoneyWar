@@ -1,4 +1,4 @@
-//! Headless simulation runner + observability for MoneyWar.
+//! Headless simulation runner + observability for `MoneyWar`.
 //!
 //! Phase 0 of the fuzzy-AI test platform plan: kullanıcı şikayetlerini
 //! ölçülebilir hale getirir, fix öncesi/sonrası karşılaştırma sağlar.

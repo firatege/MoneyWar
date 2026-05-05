@@ -2,7 +2,7 @@
 //!
 //! Banka NPC, batma riski olan diğer NPC'lere kredi açar. Closed loop:
 //! - Banka kasasından principal çıkar → borçlunun cash'ine eklenir.
-//! - Vade tick'inde principal + faiz Banka'ya geri döner (auto_settle
+//! - Vade tick'inde principal + faiz Banka'ya geri döner (`auto_settle`
 //!   loans.rs'te `lender` set'ine göre Banka'ya kredilendirilir).
 //!
 //! Faiz oranı sabit `BANK_INTEREST_PCT` (v4 için %15, v5'te dinamik).

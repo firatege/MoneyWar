@@ -4,7 +4,7 @@
 //!   --seed <N>          Default: 42
 //!   --ticks <N>         Default: 90
 //!   --difficulty <X>    easy|medium|hard  Default: hard
-//!   --scenario <NAME>   passive | active_sanayici | active_tuccar
+//!   --scenario <NAME>   passive | `active_sanayici` | `active_tuccar`
 //!   --report-out <P>    Markdown rapor dosyaya yaz (yoksa stdout)
 //!   --multi-seed        10 seed paralel: 1,7,42,100,256,512,1024,2048,4096,8192
 //!   --serial            Multi-seed'i sıralı koştur (debug için)
@@ -152,7 +152,7 @@ fn main() {
                 let path = dir_path.join(format!("seed_{}.md", r.seed));
                 fs::write(&path, render_markdown(r)).expect("write per-seed");
             }
-            eprintln!("Per-seed raporları: {}/seed_*.md", dir);
+            eprintln!("Per-seed raporları: {dir}/seed_*.md");
         }
     }
 
@@ -221,7 +221,7 @@ fn main() {
     }
 }
 
-/// 10 seed'i paralel iş parçacıklarında koştur. Her thread bir SimRunner çalıştırır.
+/// 10 seed'i paralel iş parçacıklarında koştur. Her thread bir `SimRunner` çalıştırır.
 fn run_parallel(
     seeds: &[u64],
     scenario: &'static Scenario,

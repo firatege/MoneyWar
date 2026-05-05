@@ -52,7 +52,7 @@ fn product_name(id: u8) -> &'static str {
     }
 }
 
-/// Timestamp'lı run klasörü oluştur (root/run_YYYYMMDD_HHMMSS).
+/// Timestamp'lı run klasörü oluştur (`root/run_YYYYMMDD_HHMMSS`).
 #[must_use]
 pub fn create_run_dir(root: &Path) -> PathBuf {
     let ts = format_timestamp();
@@ -63,7 +63,7 @@ pub fn create_run_dir(root: &Path) -> PathBuf {
 }
 
 /// Tek run için: bucket × tick aktivite matrisi.
-/// (city_id, product_id) → (clearing_count, total_matched_qty, prices)
+/// (`city_id`, `product_id`) → (`clearing_count`, `total_matched_qty`, prices)
 struct BucketStats {
     clearing_count: u32,
     matched_qty: u64,
@@ -146,8 +146,8 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
         let mut row = format!("| **{}** |", city_name(city_id));
         for product_id in 0..6u8 {
             let bs = agg.get(&(city_id, product_id));
-            let count = bs.map(|b| b.clearing_count).unwrap_or(0);
-            let avg = count as f64 / n_seeds;
+            let count = bs.map_or(0, |b| b.clearing_count);
+            let avg = f64::from(count) / n_seeds;
             let icon = if avg < 1.0 {
                 "💀"
             } else if avg < 10.0 {
@@ -168,12 +168,11 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
     );
     let _ = writeln!(out);
 
-    let avg_empty = empty_buckets_per_seed.iter().sum::<u32>() as f64 / n_seeds;
+    let avg_empty = f64::from(empty_buckets_per_seed.iter().sum::<u32>()) / n_seeds;
     let max_empty = empty_buckets_per_seed.iter().copied().max().unwrap_or(0);
     let _ = writeln!(
         out,
-        "**Ölü bucket:** sezon başına ortalama {:.1}/18 (max {} seed'de)",
-        avg_empty, max_empty
+        "**Ölü bucket:** sezon başına ortalama {avg_empty:.1}/18 (max {max_empty} seed'de)"
     );
     let _ = writeln!(out);
 
@@ -198,7 +197,7 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
             out,
             "| {} | {:.0} | {:.0} | {:.0} | {:.0} |",
             city_name(city_id),
-            total_clearing as f64 / n_seeds,
+            f64::from(total_clearing) / n_seeds,
             total_qty as f64 / n_seeds,
             total_buy as f64 / n_seeds,
             total_sell as f64 / n_seeds
@@ -233,7 +232,7 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
             out,
             "| {} | {:.0} | {:.0} | {}—{}₺ |",
             product_name(product_id),
-            total_clearing as f64 / n_seeds,
+            f64::from(total_clearing) / n_seeds,
             total_qty as f64 / n_seeds,
             pmin,
             pmax
@@ -481,7 +480,7 @@ fn extract_tuning_issues(
     let n_seeds = runs.len() as u32;
     for c in contracts {
         let mix = total_mix.get(c.kind).cloned().unwrap_or_default();
-        let pnl = stats.pnl_by_role.get(c.kind).map(|s| s.mean).unwrap_or(0.0);
+        let pnl = stats.pnl_by_role.get(c.kind).map_or(0.0, |s| s.mean);
         let n = *npc_count_per_kind.get(c.kind).unwrap_or(&0);
         let checks = audit_role(c, &mix, pnl, n, n_seeds);
         let fails: Vec<_> = checks.iter().filter(|x| !x.passed).collect();
@@ -502,7 +501,7 @@ fn write_actions_jsonl(path: &Path, run: &SimResult) -> std::io::Result<()> {
     for tick_trace in &run.traces {
         // Her tick için tek satır JSON (tick + npc kararları array)
         let line = serde_json::to_string(tick_trace).unwrap_or_default();
-        writeln!(f, "{}", line)?;
+        writeln!(f, "{line}")?;
     }
     Ok(())
 }
@@ -544,7 +543,7 @@ fn build_manifest(
     let timestamp = format_timestamp();
     let seeds_json = seeds
         .iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
         .join(",");
     format!(

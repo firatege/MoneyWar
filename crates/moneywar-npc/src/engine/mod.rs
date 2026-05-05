@@ -1,7 +1,7 @@
 //! NPC karar motoru (fuzzy/DSS hibrit) — Faz 2-7 inşa edilen ortak yapı.
 //!
-//! - `inputs`: GameState'ten normalize fuzzy girdileri hesaplar.
-//! - (Faz 3) `vars`: paylaşılan LinguisticVar set.
+//! - `inputs`: `GameState`'ten normalize fuzzy girdileri hesaplar.
+//! - (Faz 3) `vars`: paylaşılan `LinguisticVar` set.
 //! - (Faz 4) `rules/{role}`: rol başına fuzzy rule base.
 //! - (Faz 5) `decide`: tüm orchestrator (inputs → fuzzy → action emit).
 

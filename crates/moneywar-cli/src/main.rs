@@ -1921,12 +1921,12 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 text.lines.push(Line::from(vec![
                     Span::styled("Σ", dim),
                     Span::styled(
-                        format!("{}", qty_label_with_fog(sell_qty, tier)),
+                        qty_label_with_fog(sell_qty, tier).clone(),
                         Style::default().fg(supply_color),
                     ),
                     Span::styled("/", dim),
                     Span::styled(
-                        format!("{}", qty_label_with_fog(buy_qty, tier)),
+                        qty_label_with_fog(buy_qty, tier).clone(),
                         Style::default().fg(demand_color),
                     ),
                 ]));
@@ -5881,7 +5881,7 @@ fn season_progress_bar(done: u32, total: u32, width: usize) -> String {
     if total == 0 || width == 0 {
         return String::new();
     }
-    let pct = (done as f64 / total as f64).clamp(0.0, 1.0);
+    let pct = (f64::from(done) / f64::from(total)).clamp(0.0, 1.0);
     let filled = (pct * width as f64).round() as usize;
     let filled = filled.min(width);
     let mut s = String::with_capacity(width * 3);

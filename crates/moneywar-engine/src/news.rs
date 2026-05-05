@@ -10,7 +10,7 @@
 //! - **Gold**: tam veri + 2-tick lead. Tüccar indirimli.
 //!
 //! `process_subscribe_news` bir tier'a geçişi kaydeder ve **ilk tick** ücretini
-//! hemen düşer. Sonraki her tick'te `charge_news_subscriptions` (advance_tick
+//! hemen düşer. Sonraki her tick'te `charge_news_subscriptions` (`advance_tick`
 //! içinden çağrılır) recurring fee'yi keser. Cash yetmezse 1 tick uyarı, ertesi
 //! tick yine yetmezse `NewsTier::Free`'ye düşürülür.
 

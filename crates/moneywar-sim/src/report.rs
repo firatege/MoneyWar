@@ -4,10 +4,10 @@
 //! 1. Kim battı? (cash < bankrupt eşiği)
 //! 2. Doygunluk eğrisi — toplam talep tick'e göre
 //! 3. Piyasa altı emirler — uzun süredir bekleyen, market×0.85 altı
-//! 4. NPC PnL evolution
+//! 4. NPC `PnL` evolution
 //! 5. Match/reject oranı
 //! 6. Fiyat trend per (city, product)
-//! 7. NPC × action_kind dağılımı
+//! 7. NPC × `action_kind` dağılımı
 
 use std::fmt::Write;
 
@@ -46,7 +46,7 @@ fn section_summary(out: &mut String, r: &SimResult) {
         let total_cash: i64 = s.players.iter().map(|p| p.cash_cents).sum();
         let total_stock: u64 = s.players.iter().map(|p| p.inventory_total).sum();
         let _ = writeln!(out, "- Toplam nakit: {}₺", total_cash / 100);
-        let _ = writeln!(out, "- Toplam stok birim: {}", total_stock);
+        let _ = writeln!(out, "- Toplam stok birim: {total_stock}");
     }
     let total_accepted: u32 = r.snapshots.iter().map(|s| s.commands_accepted).sum();
     let total_rejected: u32 = r.snapshots.iter().map(|s| s.commands_rejected).sum();
@@ -56,7 +56,7 @@ fn section_summary(out: &mut String, r: &SimResult) {
 }
 
 fn section_bankruptcies(out: &mut String, r: &SimResult) {
-    let _ = writeln!(out, "## 🪦 Battı (cash < {}₺)", BANKRUPT_THRESHOLD_LIRA);
+    let _ = writeln!(out, "## 🪦 Battı (cash < {BANKRUPT_THRESHOLD_LIRA}₺)");
     let last = match r.snapshots.last() {
         Some(s) => s,
         None => return,
@@ -91,7 +91,7 @@ fn section_demand_curve(out: &mut String, r: &SimResult) {
     let _ = writeln!(out, "| Tick aralığı | Toplam BUY | Toplam SELL | Spread |");
     let _ = writeln!(out, "|---|---|---|---|");
     let bucket_size = 10u32;
-    let total_buckets = (r.ticks + bucket_size - 1) / bucket_size;
+    let total_buckets = r.ticks.div_ceil(bucket_size);
     for b in 0..total_buckets {
         let lo = b * bucket_size + 1;
         let hi = (lo + bucket_size - 1).min(r.ticks);
@@ -124,8 +124,7 @@ fn section_demand_curve(out: &mut String, r: &SimResult) {
 fn section_stale_orders(out: &mut String, r: &SimResult) {
     let _ = writeln!(
         out,
-        "## ⏰ Bekleyen Emirler ({}+ tick stale)",
-        STALE_ORDER_AGE
+        "## ⏰ Bekleyen Emirler ({STALE_ORDER_AGE}+ tick stale)"
     );
     let last = match r.snapshots.last() {
         Some(s) => s,
@@ -137,7 +136,7 @@ fn section_stale_orders(out: &mut String, r: &SimResult) {
         .filter(|ob| ob.oldest_order_age >= STALE_ORDER_AGE)
         .collect();
     if stale.is_empty() {
-        let _ = writeln!(out, "- Hiç stale emir yok ({}+ tick).", STALE_ORDER_AGE);
+        let _ = writeln!(out, "- Hiç stale emir yok ({STALE_ORDER_AGE}+ tick).");
     } else {
         let _ = writeln!(
             out,
@@ -219,7 +218,7 @@ fn section_clearing_metrics(out: &mut String, r: &SimResult) {
     if total_submitted_buy + total_submitted_sell > 0 {
         let efficiency =
             (total_matched as f64) * 100.0 / (total_submitted_buy + total_submitted_sell) as f64;
-        let _ = writeln!(out, "- Match verimliliği: {:.1}%", efficiency);
+        let _ = writeln!(out, "- Match verimliliği: {efficiency:.1}%");
     }
     let _ = writeln!(out);
 }

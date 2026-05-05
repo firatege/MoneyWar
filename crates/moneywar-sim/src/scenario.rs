@@ -1,8 +1,8 @@
 //! İnsan oyuncu davranışını **deterministik script** olarak modeller. NPC
 //! tarafı `decide_all_npcs` üstünden gelir; insan tarafı için ad-hoc kurallar.
 //!
-//! Standart senaryolar: PassivePlayer (hiç aksiyon yok), ActiveSanayici
-//! (fabrika kur + agresif al/sat), ActiveTuccar (arbitraj kervan).
+//! Standart senaryolar: `PassivePlayer` (hiç aksiyon yok), `ActiveSanayici`
+//! (fabrika kur + agresif al/sat), `ActiveTuccar` (arbitraj kervan).
 //!
 //! Yeni senaryo eklemek için `Scenario::script` field'ına closure yaz.
 
@@ -71,7 +71,7 @@ fn active_sanayici_script(
     };
 
     // t10..=30 arası: her 5 tickte bir Pamuk al (her şehirde)
-    if t >= 10 && t <= 30 && t % 5 == 0 {
+    if (10..=30).contains(&t) && t % 5 == 0 {
         for (idx, city) in CityId::ALL.iter().enumerate() {
             // Bid market×0.95 ile dene — piyasa altı; eşleşme zorlanmalı
             let avg = state
@@ -139,7 +139,7 @@ fn active_tuccar_script(
     let mut cmds = Vec::new();
 
     // t5-40 arası: en ucuz şehirde Pamuk al
-    if t >= 5 && t <= 40 && t % 4 == 0 {
+    if (5..=40).contains(&t) && t % 4 == 0 {
         let mut cheapest: Option<(CityId, i64)> = None;
         for city in CityId::ALL {
             if let Some(p) = state
@@ -147,7 +147,7 @@ fn active_tuccar_script(
                 .or_else(|| state.effective_baseline(city, ProductKind::Pamuk))
             {
                 let cents = p.as_cents();
-                if cheapest.map_or(true, |(_, c)| cents < c) {
+                if cheapest.is_none_or(|(_, c)| cents < c) {
                     cheapest = Some((city, cents));
                 }
             }

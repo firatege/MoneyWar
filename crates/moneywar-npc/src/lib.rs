@@ -801,7 +801,7 @@ pub fn decide_all_npcs(
 
 /// Eski `kind` lookup'ı removed — fuzzy decide'a geçti. Eski DSS path için
 /// bir tur deprecated tutuluyoruz, helper bunlara erişim sağlar.
-fn kind_legacy_unused(_state: &GameState, _pid: PlayerId) -> () {}
+fn kind_legacy_unused(_state: &GameState, _pid: PlayerId) {}
 
 // =============================================================================
 // Helpers
