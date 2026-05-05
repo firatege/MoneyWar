@@ -21,11 +21,10 @@ pub fn for_kind_personality(kind: Option<NpcKind>, _personality: Option<Personal
         Some(NpcKind::Alici) => alici_default(),
         Some(NpcKind::Sanayici) => sanayici_default(),
         Some(NpcKind::Esnaf) => esnaf_default(),
-        // Faz C+'da doldurulacak roller:
-        Some(NpcKind::Tuccar)
-        | Some(NpcKind::Spekulator)
-        | Some(NpcKind::Banka)
-        | None => Weights::ZERO,
+        Some(NpcKind::Spekulator) => spekulator_default(),
+        Some(NpcKind::Tuccar) => tuccar_default(),
+        // Banka behavior'da yok — `engine::tick_banks` özel akışı.
+        Some(NpcKind::Banka) | None => Weights::ZERO,
     }
 }
 
@@ -63,6 +62,40 @@ const fn sanayici_default() -> Weights {
         arbitrage: 0.3,
         price_rel_avg: 0.2,
         local_raw_advantage: 0.2,
+        competition: -0.2,
+        ..Weights::ZERO
+    }
+}
+
+/// Spekülatör default ağırlıkları — market maker, sabit spread.
+/// - `arbitrage +0.4`: şehir farkı fırsat
+/// - `cash +0.3`: cash varsa BID
+/// - `event +0.3`: aktif şok pozisyon fırsatı
+/// - `momentum +0.2`: trend yönü
+/// - `competition -0.1`: rakip baskı (pasif geri çekil)
+const fn spekulator_default() -> Weights {
+    Weights {
+        arbitrage: 0.4,
+        cash: 0.3,
+        event: 0.3,
+        momentum: 0.2,
+        competition: -0.1,
+        ..Weights::ZERO
+    }
+}
+
+/// Tüccar default ağırlıkları — şehirler arası arbitraj.
+/// - `arbitrage +0.6`: ana sürücü
+/// - `cash +0.3`: cash varsa al
+/// - `urgency +0.2`: sezon basıncı
+/// - `competition -0.2`: rakip baskı
+/// - `momentum +0.1`: trend yönü
+const fn tuccar_default() -> Weights {
+    Weights {
+        arbitrage: 0.6,
+        cash: 0.3,
+        urgency: 0.2,
+        momentum: 0.1,
         competition: -0.2,
         ..Weights::ZERO
     }
@@ -117,18 +150,26 @@ mod tests {
     }
 
     #[test]
-    fn unmigrated_roles_return_zero() {
-        // Tüccar / Spekülatör / Banka henüz göç etmedi.
+    fn banka_returns_zero() {
+        // Banka behavior'da yok (özel akış engine::tick_banks).
+        assert_eq!(
+            for_kind_personality(Some(NpcKind::Banka), None),
+            Weights::ZERO
+        );
+    }
+
+    #[test]
+    fn all_migrated_roles_have_nonzero_weights() {
         for kind in [
-            NpcKind::Tuccar,
+            NpcKind::Ciftci,
+            NpcKind::Alici,
+            NpcKind::Sanayici,
+            NpcKind::Esnaf,
             NpcKind::Spekulator,
-            NpcKind::Banka,
+            NpcKind::Tuccar,
         ] {
-            assert_eq!(
-                for_kind_personality(Some(kind), None),
-                Weights::ZERO,
-                "{kind:?} henüz behavior'da yok"
-            );
+            let w = for_kind_personality(Some(kind), None);
+            assert_ne!(w, Weights::ZERO, "{kind:?} göç etti, weights tanımlı olmalı");
         }
     }
 

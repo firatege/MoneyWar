@@ -5,9 +5,12 @@
 //! utility skor verir, top-K'yı seçer.
 //!
 //! Faz B: Çiftçi pilot (sell-only).
-//! Faz C: Alıcı, Sanayici, Esnaf. Sıradaki: Spekülatör → Tüccar → Banka.
+//! Faz C: Alıcı, Sanayici, Esnaf, Spekülatör, Tüccar (DONE).
+//! Banka skip — özel akış (`engine::tick_banks`), behavior'da boş.
 
 pub mod alici;
 pub mod ciftci;
 pub mod esnaf;
 pub mod sanayici;
+pub mod spekulator;
+pub mod tuccar;

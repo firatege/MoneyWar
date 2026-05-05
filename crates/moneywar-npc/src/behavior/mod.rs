@@ -121,11 +121,10 @@ fn enumerate_for_kind(
         Some(NpcKind::Alici) => roles::alici::enumerate(state, player),
         Some(NpcKind::Sanayici) => roles::sanayici::enumerate(state, player),
         Some(NpcKind::Esnaf) => roles::esnaf::enumerate(state, player),
-        // Faz C+ sırası — şu an boş (eski motor bu rolleri hâlâ çalıştırıyor):
-        Some(NpcKind::Tuccar)
-        | Some(NpcKind::Spekulator)
-        | Some(NpcKind::Banka)
-        | None => Vec::new(),
+        Some(NpcKind::Spekulator) => roles::spekulator::enumerate(state, player),
+        Some(NpcKind::Tuccar) => roles::tuccar::enumerate(state, player),
+        // Banka behavior'da yok — özel akış (`engine::tick_banks`).
+        Some(NpcKind::Banka) | None => Vec::new(),
     }
 }
 
