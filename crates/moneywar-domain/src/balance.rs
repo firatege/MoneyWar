@@ -222,6 +222,13 @@ pub const PERISH_ZEYTINYAGI_LOSS_PCT: u32 = 10;
 // Çiftçi maliyeti
 // =============================================================================
 
+/// NPC emirlerinin varsayılan TTL'i — kaç tick boyunca kitapta yaşar.
+/// Pay-as-bid + tick-shuffle borsa motorunda continuous matching tek tick'te
+/// fill yapamayan emirleri kitapta tutmak gerek (ikinci/üçüncü tick'teki
+/// yeni emirlere karşı eşleşsinler). TTL=1 → tek tick yaşam, çoğu emir
+/// boşa düşer; TTL=3 → match verim 3× artar (yeni borsa modeline uygun).
+pub const NPC_DEFAULT_ORDER_TTL: u32 = 3;
+
 /// Çiftçi'nin her birim mahsul için ödediği tohum/işçilik maliyeti (lira).
 /// Vic3 ilhamı: subsistence farms bile gübre/tohum tüketir.
 /// `MoneyWar`'da Çiftçi sıfır maliyetle mahsul basıyor → açık faucet.

@@ -34,7 +34,10 @@ pub mod signals;
 
 use std::cmp::Ordering;
 
-use moneywar_domain::{Command, GameState, MarketOrder, NpcKind, OrderId, PlayerId, Tick};
+use moneywar_domain::{
+    Command, GameState, MarketOrder, NpcKind, OrderId, PlayerId, Tick,
+    balance::NPC_DEFAULT_ORDER_TTL,
+};
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
@@ -145,7 +148,7 @@ fn candidate_to_command(
             if quantity == 0 || unit_price.as_cents() <= 0 {
                 return None;
             }
-            let order = MarketOrder::new(
+            let order = MarketOrder::new_with_ttl(
                 OrderId::new(npc_order_id(pid, tick, seq)),
                 pid,
                 city,
@@ -154,6 +157,7 @@ fn candidate_to_command(
                 quantity,
                 unit_price,
                 tick,
+                NPC_DEFAULT_ORDER_TTL,
             )
             .ok()?;
             Some(Command::SubmitOrder(order))
@@ -273,6 +277,36 @@ mod tests {
         let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD);
         // Faz B: Tüccar henüz göç etmedi, behavior boş döner.
         assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn emitted_order_uses_npc_default_ttl() {
+        let mut s = fresh_state();
+        let pid = PlayerId::new(100);
+        let mut p = Player::new(
+            pid,
+            "c",
+            Role::Tuccar,
+            Money::from_lira(8_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Ciftci);
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 200)
+            .unwrap();
+        s.players.insert(pid, p);
+        let mut rng = ChaCha8Rng::from_seed([42u8; 32]);
+        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD);
+        let Command::SubmitOrder(o) = &cmds[0] else {
+            panic!()
+        };
+        assert_eq!(
+            o.ttl_ticks,
+            moneywar_domain::balance::NPC_DEFAULT_ORDER_TTL,
+            "behavior emirleri NPC_DEFAULT_ORDER_TTL ile yazılmalı"
+        );
+        assert_eq!(o.remaining_ticks, o.ttl_ticks);
     }
 
     #[test]

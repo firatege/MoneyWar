@@ -21,7 +21,8 @@
 
 use moneywar_domain::{
     CityId, Command, MarketOrder, Money, NpcKind, OrderId, OrderSide, Player, PlayerId,
-    ProductKind, Tick, balance::TRANSACTION_TAX_PCT,
+    ProductKind, Tick,
+    balance::{NPC_DEFAULT_ORDER_TTL, TRANSACTION_TAX_PCT},
 };
 
 use crate::npc_order_id;
@@ -92,7 +93,7 @@ fn submit(
     if qty == 0 || unit_price.as_cents() <= 0 {
         return None;
     }
-    let order = MarketOrder::new(
+    let order = MarketOrder::new_with_ttl(
         OrderId::new(npc_order_id(pid, tick, seq)),
         pid,
         city,
@@ -101,6 +102,7 @@ fn submit(
         qty,
         unit_price,
         tick,
+        NPC_DEFAULT_ORDER_TTL,
     )
     .ok()?;
     Some(Command::SubmitOrder(order))
@@ -404,6 +406,27 @@ mod tests {
             assert_eq!(o.side, OrderSide::Buy);
             assert!(o.product.is_finished(), "Alıcı sadece mamul AL");
         }
+    }
+
+    #[test]
+    fn synthetic_order_uses_npc_default_ttl() {
+        let mut s = fresh_state();
+        let pid = add(&mut s, 100, NpcKind::Ciftci, 5_000);
+        s.players
+            .get_mut(&pid)
+            .unwrap()
+            .inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 200)
+            .unwrap();
+        let cmds = decide_synthetic(&s, pid, Tick::new(1));
+        let Command::SubmitOrder(o) = &cmds[0] else {
+            panic!()
+        };
+        assert_eq!(
+            o.ttl_ticks,
+            moneywar_domain::balance::NPC_DEFAULT_ORDER_TTL,
+            "synthetic emirleri NPC_DEFAULT_ORDER_TTL ile yazılmalı"
+        );
     }
 
     #[test]
