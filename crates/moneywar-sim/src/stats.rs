@@ -39,7 +39,7 @@ impl Summary {
         let mut sorted: Vec<f64> = values.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median = if n % 2 == 0 {
-            (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+            f64::midpoint(sorted[n / 2 - 1], sorted[n / 2])
         } else {
             sorted[n / 2]
         };
@@ -67,7 +67,7 @@ pub struct PerRunMetrics {
     pub bankrupt_npcs: u32,
     pub stale_orders_max_age: u32,
     pub human_pnl_lira: i64,
-    /// Rol başına ortalama PnL (lira).
+    /// Rol başına ortalama `PnL` (lira).
     pub pnl_by_role: BTreeMap<String, f64>,
 }
 
@@ -97,13 +97,12 @@ impl PerRunMetrics {
         }
 
         let bankrupt_npcs = last
-            .map(|s| {
+            .map_or(0, |s| {
                 s.players
                     .iter()
                     .filter(|p| p.is_npc && p.cash_cents < 100 * 100)
                     .count() as u32
-            })
-            .unwrap_or(0);
+            });
 
         let human_pnl_lira = match (first, last) {
             (Some(f), Some(l)) => {
@@ -117,7 +116,11 @@ impl PerRunMetrics {
             _ => 0,
         };
 
-        // Rol başına ortalama PnL
+        // Rol başına ortalama PnL — gerçek varlık (cash + stok değeri + fab
+        // sermayesi) farkı. Eski sadece cash farkı, Sanayici'nin fab+stok
+        // yatırımını hesaba katmıyordu.
+        // fab_value = factory_count × ortalama maliyet (~7K ortalama 3 fab için).
+        let avg_fab_value_cents: i64 = 700_000; // 7K lira ortalama
         let mut pnl_by_role: BTreeMap<String, Vec<i64>> = BTreeMap::new();
         if let (Some(f), Some(l)) = (first, last) {
             for p_first in &f.players {
@@ -129,7 +132,13 @@ impl PerRunMetrics {
                         .npc_kind
                         .clone()
                         .unwrap_or_else(|| p_first.role.clone());
-                    let pnl = (p_last.cash_cents - p_first.cash_cents) / 100;
+                    let total_first = p_first.cash_cents
+                        + p_first.inventory_value_cents
+                        + i64::from(p_first.factory_count) * avg_fab_value_cents;
+                    let total_last = p_last.cash_cents
+                        + p_last.inventory_value_cents
+                        + i64::from(p_last.factory_count) * avg_fab_value_cents;
+                    let pnl = (total_last - total_first) / 100;
                     pnl_by_role.entry(role_label).or_default().push(pnl);
                 }
             }
@@ -167,7 +176,7 @@ pub struct Stats {
     pub bankrupt_npcs: Summary,
     pub stale_orders_max: Summary,
     pub human_pnl: Summary,
-    /// Rol başına PnL `Summary` (her rol için ayrı).
+    /// Rol başına `PnL` `Summary` (her rol için ayrı).
     pub pnl_by_role: BTreeMap<String, Summary>,
 }
 
@@ -238,23 +247,19 @@ impl QualityScore {
         let spek_pnl = stats
             .pnl_by_role
             .get("Spekulator")
-            .map(|s| s.mean)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.mean);
         let alici_pnl = stats
             .pnl_by_role
             .get("Alici")
-            .map(|s| s.mean)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.mean);
         let san_pnl = stats
             .pnl_by_role
             .get("Sanayici")
-            .map(|s| s.mean)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.mean);
         let tuc_pnl = stats
             .pnl_by_role
             .get("Tuccar")
-            .map(|s| s.mean)
-            .unwrap_or(0.0);
+            .map_or(0.0, |s| s.mean);
 
         // Threshold'lar v12 sim sonuçlarına göre gerçekçi:
         // - Easy: salak NPC tasarımı → düşük verim normal
@@ -289,13 +294,13 @@ impl QualityScore {
         details.push((
             "Hiç NPC iflas etmedi".into(),
             bankrupt_avg < 0.5,
-            format!("avg {:.1} bankrupt", bankrupt_avg),
+            format!("avg {bankrupt_avg:.1} bankrupt"),
         ));
         // 2. Match verimliliği eşiği
         details.push((
             format!("Match verimliliği ≥ {:.1}%", e_eff_min.1),
             efficiency >= e_eff_min.1,
-            format!("{:.2}%", efficiency),
+            format!("{efficiency:.2}%"),
         ));
         // 3. Spekülatör pozitif (Hard) veya break-even (Medium/Easy)
         let spek_threshold = match stats.difficulty {
@@ -306,19 +311,19 @@ impl QualityScore {
         details.push((
             format!("Spekülatör PnL ≥ {}₺", spek_threshold as i64),
             spek_pnl >= spek_threshold,
-            format!("{:.0}₺", spek_pnl),
+            format!("{spek_pnl:.0}₺"),
         ));
         // 4. Alıcı hayatta (PnL not too low)
         details.push((
             format!("Alıcı kayıp ≤ {}₺", -e_alici_min.3 as i64),
             alici_pnl >= e_alici_min.3,
-            format!("{:.0}₺", alici_pnl),
+            format!("{alici_pnl:.0}₺"),
         ));
         // 5. Stale order
         details.push((
             "Stale order yaşı ≤ 10".into(),
             stale_avg <= 10.0,
-            format!("{:.1} tick max", stale_avg),
+            format!("{stale_avg:.1} tick max"),
         ));
         // 6. Sanayici / Tüccar gradient (PnL > 0)
         let span_ok = match stats.difficulty {
@@ -329,7 +334,7 @@ impl QualityScore {
         details.push((
             "Sanayici + Tüccar PnL hedefte".into(),
             span_ok,
-            format!("S={:.0} T={:.0}", san_pnl, tuc_pnl),
+            format!("S={san_pnl:.0} T={tuc_pnl:.0}"),
         ));
 
         let passed = details.iter().filter(|(_, ok, _)| *ok).count() as u8;

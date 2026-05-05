@@ -24,6 +24,13 @@ pub struct PlayerSnapshot {
     pub inventory: Vec<((u8, u8), u32)>,
     /// Toplam birim stok (tüm `(city, product)` üzerinden).
     pub inventory_total: u64,
+    /// Inventory'nin baseline fiyat × qty toplamı (cents). `PnL` hesabında stok
+    /// varlığını hesaba katmak için.
+    #[serde(default)]
+    pub inventory_value_cents: i64,
+    /// NPC'ye ait fabrika sayısı. `PnL`'de fab sermaye yatırımını hesaba katmak için.
+    #[serde(default)]
+    pub factory_count: u32,
 }
 
 /// `(city, product)` bucket için aktif emir özeti.
@@ -75,20 +82,40 @@ impl TickSnapshot {
         let players = state
             .players
             .iter()
-            .map(|(id, p)| PlayerSnapshot {
-                id: id.value(),
-                name: p.name.clone(),
-                is_npc: p.is_npc,
-                role: format!("{}", p.role),
-                npc_kind: p.npc_kind.map(|k| format!("{k:?}")),
-                personality: p.personality.map(|p| format!("{p:?}")),
-                cash_cents: p.cash.as_cents(),
-                inventory: p
+            .map(|(id, p)| {
+                // Inventory varlık değeri: qty × effective_baseline (cents).
+                // PnL hesabında stok değeri sayılsın diye.
+                let inventory_value_cents: i64 = p
                     .inventory
                     .entries()
-                    .map(|(c, prod, qty)| ((c as u8, prod as u8), qty))
-                    .collect(),
-                inventory_total: p.inventory.total_units(),
+                    .map(|(c, prod, qty)| {
+                        let price = state
+                            .effective_baseline(c, prod)
+                            .map_or(0, moneywar_domain::Money::as_cents);
+                        price.saturating_mul(i64::from(qty))
+                    })
+                    .sum();
+                let factory_count = u32::try_from(
+                    state.factories.values().filter(|f| f.owner == *id).count(),
+                )
+                .unwrap_or(0);
+                PlayerSnapshot {
+                    id: id.value(),
+                    name: p.name.clone(),
+                    is_npc: p.is_npc,
+                    role: format!("{}", p.role),
+                    npc_kind: p.npc_kind.map(|k| format!("{k:?}")),
+                    personality: p.personality.map(|p| format!("{p:?}")),
+                    cash_cents: p.cash.as_cents(),
+                    inventory: p
+                        .inventory
+                        .entries()
+                        .map(|(c, prod, qty)| ((c as u8, prod as u8), qty))
+                        .collect(),
+                    inventory_total: p.inventory.total_units(),
+                    inventory_value_cents,
+                    factory_count,
+                }
             })
             .collect();
 
@@ -155,7 +182,7 @@ impl TickSnapshot {
                 clearings.push(ClearingSnapshot {
                     city: *city as u8,
                     product: *product as u8,
-                    clearing_price_cents: clearing_price.map(|m| m.as_cents()),
+                    clearing_price_cents: clearing_price.map(moneywar_domain::Money::as_cents),
                     matched_qty: *matched_qty,
                     submitted_buy_qty: *submitted_buy_qty,
                     submitted_sell_qty: *submitted_sell_qty,

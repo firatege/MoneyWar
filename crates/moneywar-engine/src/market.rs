@@ -31,7 +31,10 @@
 //!      `OrderExpired` event'iyle düşer; TTL'si kalan emir kitapta yeni qty
 //!      ile kalır (persistent order book).
 
-use moneywar_domain::{CityId, GameState, MarketOrder, Money, OrderSide, ProductKind, Tick};
+use moneywar_domain::{
+    CityId, GameState, MarketOrder, Money, OrderSide, ProductKind, Tick,
+    balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT, TRANSACTION_TAX_PCT},
+};
 
 use crate::report::{LogEntry, TickReport};
 
@@ -91,7 +94,23 @@ fn clear_bucket(
     let submitted_buy_qty: u32 = buys.iter().map(|o| o.quantity).sum();
     let submitted_sell_qty: u32 = sells.iter().map(|o| o.quantity).sum();
 
-    let (fills, clearing_price, matched_qty) = match_orders(&buys, &sells);
+    let (fills, raw_clearing_price, matched_qty) = match_orders(&buys, &sells);
+
+    // Vic3 ilhamlı fiyat clamp: clearing fiyat baseline'ın
+    // [LOW_PCT%, HIGH_PCT%] aralığında olmak zorunda. Aşırı arz/talep
+    // durumunda fiyat tabana çakılmaz veya tavana fırlamaz. Baseline yoksa
+    // clamp atlanır (eski davranış). Şok zaten effective_baseline'a dahil,
+    // clamp şokun üstüne ek hareket alanı bırakır.
+    let clearing_price = raw_clearing_price.map(|p| {
+        let Some(base) = state.effective_baseline(city, product) else {
+            return p;
+        };
+        let base_cents = base.as_cents();
+        let low_cents = base_cents.saturating_mul(PRICE_CLAMP_LOW_PCT) / 100;
+        let high_cents = base_cents.saturating_mul(PRICE_CLAMP_HIGH_PCT) / 100;
+        let clamped = p.as_cents().clamp(low_cents.max(1), high_cents.max(1));
+        Money::from_cents(clamped)
+    });
 
     // Settlement: clearing_price varsa her fill'i (saturation split + cash/stock
     // transfer). Başarılı transfer sayısı raporun değil, `matched_qty` zaten
@@ -289,11 +308,30 @@ fn settle_segment(
         return;
     };
 
+    // İşlem vergisi: alıcıdan **ek** kesilir, sistem dışına atılır (hard sink).
+    // EVE Online "broker fee + sales tax" karşılığı. Self-trade'de de uygulanır
+    // (yıkama satışlarını cezalandırır).
+    let tax_cents = total.as_cents().saturating_mul(TRANSACTION_TAX_PCT) / 100;
+    let tax = Money::from_cents(tax_cents.max(0));
+    let Ok(total_with_tax) = total.checked_add(tax) else {
+        report.push(LogEntry::fill_rejected(
+            tick,
+            city,
+            product,
+            fill.buyer,
+            fill.seller,
+            qty,
+            "tax overflow",
+        ));
+        return;
+    };
+
     // Pre-flight: buyer/seller var mı, cash/stok yeterli mi?
+    // Buyer artık total + tax karşılamalı.
     let buyer_ok = state
         .players
         .get(&fill.buyer)
-        .is_some_and(|p| p.cash >= total);
+        .is_some_and(|p| p.cash >= total_with_tax);
     let seller_ok = state
         .players
         .get(&fill.seller)
@@ -328,6 +366,7 @@ fn settle_segment(
     // İki ayrı mutable borrow — farklı BTreeMap anahtarları ama aynı self.
     // get_mut'u sırayla çağırmak güvenli. Self-trade (same id) edge: iki
     // sıralı mutasyon net sıfır sonuç verir.
+    // Tax buyer'dan ek kesinti, hiçbir yere kredi edilmez = sistem sink.
     if let Some(seller) = state.players.get_mut(&fill.seller) {
         seller
             .inventory
@@ -336,7 +375,9 @@ fn settle_segment(
         seller.credit(total).expect("cash overflow on credit");
     }
     if let Some(buyer) = state.players.get_mut(&fill.buyer) {
-        buyer.debit(total).expect("pre-flight validated");
+        buyer
+            .debit(total_with_tax)
+            .expect("pre-flight validated");
         buyer
             .inventory
             .add(city, product, qty)
@@ -809,10 +850,13 @@ mod tests {
         clear_markets(&mut s, &mut r, Tick::new(1));
 
         // Clearing price = 9₺ (midpoint). Toplam = 10 × 9 = 90₺.
+        // Buyer ek olarak %TRANSACTION_TAX_PCT vergi öder (sistem sink).
         let total = Money::from_lira(90).unwrap();
+        let tax_cents = total.as_cents().saturating_mul(TRANSACTION_TAX_PCT) / 100;
+        let total_with_tax = Money::from_cents(total.as_cents() + tax_cents);
         assert_eq!(
             s.players[&PlayerId::new(1)].cash,
-            buyer_cash_before.checked_sub(total).unwrap()
+            buyer_cash_before.checked_sub(total_with_tax).unwrap()
         );
         assert_eq!(
             s.players[&PlayerId::new(2)].cash,
@@ -855,13 +899,16 @@ mod tests {
         let total_cash_after: i64 = s.players.values().map(|p| p.cash.as_cents()).sum();
         let total_stock_after: u64 = s.players.values().map(|p| p.inventory.total_units()).sum();
 
-        assert_eq!(
-            total_cash_before, total_cash_after,
-            "cash must be conserved"
+        // İşlem vergisi sistem dışına atılır → cash korunum sıfır değil, vergi farkıdır.
+        // total_cash_before - total_cash_after == toplam silinen vergi olmalı.
+        let cash_delta = total_cash_before - total_cash_after;
+        assert!(
+            cash_delta >= 0,
+            "cash can only leave system via tax, never increase: delta={cash_delta}"
         );
         assert_eq!(
             total_stock_before, total_stock_after,
-            "stock must be conserved"
+            "stock must be conserved (vergi sadece cash sink, stok değil)"
         );
     }
 

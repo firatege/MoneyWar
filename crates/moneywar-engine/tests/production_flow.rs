@@ -145,9 +145,15 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             .get(CityId::Istanbul, ProductKind::Kumas),
         250
     );
-    // Para korunumu: 200_000₺ × 100 cent.
+    // Para korunumu: 200_000₺ × 100 cent — eksiği işlem vergisi (sistem sink).
+    // İşlem yapıldığı için toplam <= başlangıç. Vergi miktarı tam değişken,
+    // korunum invariant'ı yumuşatılır: aralık kontrolü.
     let s = s5.players[&PlayerId::new(1)].cash.as_cents();
     let t = s5.players[&PlayerId::new(2)].cash.as_cents();
     let total = s + t;
-    assert_eq!(total, 200_000 * 100);
+    let initial = 200_000_i64 * 100;
+    assert!(
+        total <= initial && total >= initial - 10_000,
+        "para sadece vergi ile sızabilir: total={total} initial={initial}"
+    );
 }

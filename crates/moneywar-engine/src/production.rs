@@ -142,20 +142,27 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         return;
     };
     let have_raw = player.inventory.get(city, raw);
-    if have_raw < Factory::BATCH_SIZE {
+    // Shortage soft penalty (Vic3 inspiration): tam batch yoksa, yarı batch
+    // üret. Eski "100 yoksa idle" katı kuralı kâr akışını koparıyordu.
+    // Min threshold = BATCH_SIZE/2. Altında idle.
+    let partial_min = Factory::BATCH_SIZE / 2;
+    let batch_size = if have_raw >= Factory::BATCH_SIZE {
+        Factory::BATCH_SIZE
+    } else if have_raw >= partial_min {
+        have_raw
+    } else {
         report.push(LogEntry::factory_idle(
             tick,
             owner,
             fid,
             city,
             format!(
-                "raw {raw} shortage at {city}: have={have_raw}, need={}",
-                Factory::BATCH_SIZE
+                "raw {raw} shortage at {city}: have={have_raw}, need={partial_min}"
             ),
         ));
         return;
-    }
-    if let Err(e) = player.inventory.remove(city, raw, Factory::BATCH_SIZE) {
+    };
+    if let Err(e) = player.inventory.remove(city, raw, batch_size) {
         report.push(LogEntry::factory_idle(
             tick,
             owner,
@@ -173,7 +180,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
     factory.batches.push(FactoryBatch {
         started_tick: tick,
         completion_tick: completion,
-        units: Factory::BATCH_SIZE,
+        units: batch_size,
     });
     report.push(LogEntry::production_started(
         tick,
@@ -181,7 +188,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         fid,
         city,
         product,
-        Factory::BATCH_SIZE,
+        batch_size,
         completion,
     ));
 }
@@ -269,11 +276,11 @@ mod tests {
     }
 
     #[test]
-    fn second_factory_costs_15k_and_debits_cash() {
+    fn second_factory_costs_4k_and_debits_cash() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, Role::Sanayici, 50_000);
-        // İlk fabrika bedava.
+        // İlk fabrika bedava (FACTORY_BUILD_COSTS_LIRA[0]=0).
         process_build_factory(
             &mut s,
             &mut r,
@@ -283,7 +290,7 @@ mod tests {
             ProductKind::Kumas,
         )
         .unwrap();
-        // İkinci 15k.
+        // İkinci 4k (FACTORY_BUILD_COSTS_LIRA[1]=4000).
         process_build_factory(
             &mut s,
             &mut r,
@@ -296,7 +303,7 @@ mod tests {
         assert_eq!(s.factories.len(), 2);
         assert_eq!(
             s.players[&PlayerId::new(1)].cash,
-            Money::from_lira(35_000).unwrap()
+            Money::from_lira(46_000).unwrap()
         );
     }
 

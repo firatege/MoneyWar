@@ -453,7 +453,7 @@ mod tests {
         }
         let inbox = s.news_inbox.get(&PlayerId::new(1));
         assert!(
-            inbox.map_or(true, |i| i.is_empty()),
+            inbox.is_none_or(std::vec::Vec::is_empty),
             "Explicit Free subscriber should not receive event news"
         );
     }

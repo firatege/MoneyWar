@@ -59,7 +59,7 @@ pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 
 /// Kurulum maliyet tablosu — `existing_count` index'i ile oku.
 /// İlk fabrika bedava, sonra artan maliyet.
-/// Sanayici PnL -28K — fab kuruluş 23K cash sink + ham maliyet > kâr.
+/// Sanayici `PnL` -28K — fab kuruluş 23K cash sink + ham maliyet > kâr.
 /// Tablo [8K,15K,25K,40K] → [4K,10K,18K,30K]: 3 fab kuruluş 14K (eski 23K),
 /// kalan 9K cash ham bütçesinde değerlendirilir, Sanayici kârlı işletme yapar.
 pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 4_000, 10_000, 18_000, 30_000];
@@ -99,6 +99,23 @@ pub const SATURATION_BASE: u32 = 250;
 pub const SATURATION_PER_PLAYER: u32 = 50;
 /// Doygunluk formülünün alt sınırı (bu sayının altında formül devreye girmez).
 pub const SATURATION_MIN_PLAYERS: u8 = 2;
+
+/// İşlem vergisi (yüzde) — her settle'da alıcıdan **ek** olarak kesilir,
+/// sistem dışına atılır (hard sink). EVE Online "broker fee + sales tax"
+/// karşılığı. Closed-loop ekonomide tek gerçek para imha kanalı.
+/// Kapatmak için 0 yap.
+pub const TRANSACTION_TAX_PCT: i64 = 2;
+
+/// Clearing fiyat clamp alt sınırı — taban fiyatın yüzdesi (Vic3 §market).
+/// Fiyat tabanın %25'inin altına inemez. Ani arz patlamasında dipler kaybolur,
+/// üreticiyi koruyan zemin.
+pub const PRICE_CLAMP_LOW_PCT: i64 = 25;
+
+/// Clearing fiyat clamp üst sınırı — taban fiyatın yüzdesi (Vic3 §market).
+/// Fiyat tabanın %175'inin üstüne çıkamaz. Talep patlamasında tavanlar kaybolur,
+/// alıcıyı koruyan tavan. NOT: aktif şok zaten `effective_baseline`'a uygulanır,
+/// clamp şokun üstüne ek serbest hareket alanı bırakır.
+pub const PRICE_CLAMP_HIGH_PCT: i64 = 175;
 
 // =============================================================================
 // Haber (4-tier abonelik, recurring tick fee)
@@ -202,6 +219,19 @@ pub const PERISH_ZEYTINYAGI_TICKS: u32 = 5;
 pub const PERISH_ZEYTINYAGI_LOSS_PCT: u32 = 10;
 
 // =============================================================================
+// Çiftçi maliyeti
+// =============================================================================
+
+/// Çiftçi'nin her birim mahsul için ödediği tohum/işçilik maliyeti (lira).
+/// Vic3 ilhamı: subsistence farms bile gübre/tohum tüketir.
+/// `MoneyWar`'da Çiftçi sıfır maliyetle mahsul basıyor → açık faucet.
+/// Bu sabit ile her `HARVEST_PERIOD` tick'te `qty × SEED_COST_PER_RAW_LIRA`
+/// Çiftçi cebinden çıkar. Para yetmezse mahsul orantılı azalır.
+/// Hedef: ham fiyatın ~%30'u → tipik mahsul fiyatı 4₺ ise 1₺ tohum maliyeti.
+/// Çiftçi başlangıç cash 8K → ~50 tick yetecek runway.
+pub const SEED_COST_PER_RAW_LIRA: i64 = 1;
+
+// =============================================================================
 // NPC likidite
 // =============================================================================
 
@@ -266,7 +296,12 @@ mod tests {
     #[test]
     fn news_leads_are_monotonic() {
         assert_eq!(NEWS_LEAD_FREE, 0);
-        assert!(NEWS_LEAD_BRONZE <= NEWS_LEAD_SILVER);
+        // BRONZE şu an 0 (Free ile aynı tier ücreti farklı, lead aynı). Mono
+        // invariant ileride Bronze>0 olursa bozulmasın diye kontrol et.
+        #[allow(clippy::absurd_extreme_comparisons)]
+        {
+            assert!(NEWS_LEAD_BRONZE <= NEWS_LEAD_SILVER);
+        }
         assert!(NEWS_LEAD_SILVER < NEWS_LEAD_GOLD);
     }
 

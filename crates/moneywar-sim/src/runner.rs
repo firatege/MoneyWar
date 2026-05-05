@@ -17,9 +17,9 @@ use crate::{
     trace::{NpcDecisionTrace, TickTrace},
 };
 
-/// NpcKind başına aksiyon dağılımı + ihlal sayacı (audit için).
+/// `NpcKind` başına aksiyon dağılımı + ihlal sayacı (audit için).
 ///
-/// Her NpcKind kendi şeridinde kalmalı (Plan v4 Faz 2 gate). Bu metrikler
+/// Her `NpcKind` kendi şeridinde kalmalı (Plan v4 Faz 2 gate). Bu metrikler
 /// gate sonrası emit edilen komutları sayar — gate çalışmıyorsa
 /// `forbidden_action_count` artar.
 #[derive(Debug, Default, Clone)]
@@ -35,7 +35,7 @@ pub struct RoleActionMix {
     pub accept_contract: u32,
     pub take_loan: u32,
     pub repay_loan: u32,
-    /// Bu NpcKind için yasak aksiyon (Plan v4 gate ihlal sayacı).
+    /// Bu `NpcKind` için yasak aksiyon (Plan v4 gate ihlal sayacı).
     pub forbidden_action_count: u32,
     /// Toplam emit edilen komut.
     pub total_commands: u32,
@@ -50,13 +50,13 @@ pub struct SimResult {
     pub difficulty: Difficulty,
     pub snapshots: Vec<TickSnapshot>,
     pub traces: Vec<TickTrace>,
-    /// Plan v4 davranış audit — NpcKind başına aksiyon dağılımı.
+    /// Plan v4 davranış audit — `NpcKind` başına aksiyon dağılımı.
     pub action_mix_by_kind: std::collections::BTreeMap<String, RoleActionMix>,
     /// Banka NPC'lerinin toplam kredi açma sayısı.
     pub bank_loans_issued: u32,
 }
 
-/// Sim koşturucu — config + scenario alır, run() ile sonuç verir.
+/// Sim koşturucu — config + scenario alır, `run()` ile sonuç verir.
 #[derive(Debug)]
 pub struct SimRunner {
     pub seed: u64,
@@ -169,9 +169,7 @@ impl SimRunner {
                 let actor = match cmd {
                     Command::DispatchCaravan { caravan_id, .. } => state
                         .caravans
-                        .get(caravan_id)
-                        .map(|c| c.owner)
-                        .unwrap_or_else(|| cmd.requester()),
+                        .get(caravan_id).map_or_else(|| cmd.requester(), |c| c.owner),
                     _ => cmd.requester(),
                 };
                 let player = state.players.get(&actor);
@@ -231,7 +229,7 @@ impl SimRunner {
     }
 }
 
-/// Plan v4 audit — komutu NpcKind şeritine göre kategorize et + ihlalleri say.
+/// Plan v4 audit — komutu `NpcKind` şeritine göre kategorize et + ihlalleri say.
 ///
 /// `kind_label` `Debug` çıktısı (`"Ciftci"`, `"Sanayici"` …). Yasak aksiyon
 /// emit edildiyse `forbidden_action_count` artar — gate ihlali demek.
@@ -316,9 +314,9 @@ fn describe_command(cmd: &Command) -> String {
         Command::BuyCaravan { starting_city, .. } => format!("BuyCaravan {starting_city:?}"),
         Command::DispatchCaravan { from, to, .. } => format!("Dispatch {from:?}→{to:?}"),
         Command::SubscribeNews { tier, .. } => format!("SubscribeNews {tier:?}"),
-        Command::TakeLoan { amount, .. } => format!("TakeLoan {}", amount),
+        Command::TakeLoan { amount, .. } => format!("TakeLoan {amount}"),
         Command::RepayLoan { loan_id, .. } => format!("RepayLoan #{}", loan_id.value()),
-        Command::CreditNpcCash { amount, .. } => format!("CreditNpcCash {}", amount),
+        Command::CreditNpcCash { amount, .. } => format!("CreditNpcCash {amount}"),
     }
 }
 
@@ -339,12 +337,11 @@ fn build_state(runner: &SimRunner) -> GameState {
     for city in CityId::ALL {
         let cheap = city.cheap_raw();
         for product in ProductKind::ALL {
-            // Mamul 14 → 16: Sanayici PnL -28K idi (üretici negatif).
-            // Mamul fiyatı +%14 → Sanayici ASK gelirini artırır, üretim katma
-            // değerini hak ettiği seviyeye çıkarır. Alıcı'nın mamule ödemesi
-            // de artar → Alıcı PnL daha gerçekçi azalır.
+            // Mamul 24 → 28: Sanayici hâlâ -30K. Çiftçi çok ham satıyor (+18K),
+            // Sanayici ham gideri yüksek. Mamul/ham marj 4×: gerçek hayat
+            // imalat üretim katma değer benzeri (örn. tekstilde ham/mamul ~3-5×).
             let lira = if product.is_finished() {
-                16
+                28
             } else if product == cheap {
                 4
             } else {

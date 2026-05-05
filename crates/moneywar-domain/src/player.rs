@@ -138,7 +138,7 @@ impl Inventory {
 pub enum NpcKind {
     /// Akıllı tüccar — arbitraj + kervan dispatch (sıkı: BUY ucuz şehir, SELL pahalı).
     Tuccar,
-    /// Akıllı sanayici — fabrika kurar, sadece kendi raw_input'unu alır,
+    /// Akıllı sanayici — fabrika kurar, sadece kendi `raw_input`'unu alır,
     /// sadece kendi mamulü üretip satar (sıkı role gate).
     Sanayici,
     /// Tüketici (talep sink) — mamul alır, periyodik maaş gelir akışı.
