@@ -61,12 +61,16 @@ pub fn score_player(state: &GameState, player_id: PlayerId) -> PlayerScore {
     let factory_value = compute_factory_value(state, player_id, state.current_tick);
     let escrow_value = compute_escrow_value(state, player_id);
 
-    // Toplam — saturating (overflow edge case'i skoru "sonsuz" yapmasın).
-    let total_cents = cash
+    // PnL skor: mevcut varlık - başlangıç sermayesi.
+    // Pasif oyuncu (hiçbir şey yapmayan) PnL=0 → leaderboard dibinde.
+    // Aktif kâr eden NPC/oyuncu pozitif skor → üstte. Bu sayede skor
+    // **performans**'ı ölçer, yalnızca sahip olunan sermayeyi değil.
+    let current_total_cents = cash
         .as_cents()
         .saturating_add(stock_value.as_cents())
         .saturating_add(factory_value.as_cents())
         .saturating_add(escrow_value.as_cents());
+    let pnl_cents = current_total_cents.saturating_sub(player.starting_cash.as_cents());
 
     PlayerScore {
         player_id,
@@ -74,7 +78,7 @@ pub fn score_player(state: &GameState, player_id: PlayerId) -> PlayerScore {
         stock_value,
         factory_value,
         escrow_value,
-        total: Money::from_cents(total_cents),
+        total: Money::from_cents(pnl_cents),
     }
 }
 
@@ -204,15 +208,23 @@ mod tests {
     }
 
     #[test]
-    fn cash_only_scores_as_cash() {
+    fn cash_unchanged_yields_zero_pnl() {
+        // PnL skor: pasif oyuncu (cash başlangıçtan değişmedi) → 0 skor.
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Tuccar, 1_000);
         let sc = score_player(&s, pid);
         assert_eq!(sc.cash, Money::from_lira(1_000).unwrap());
         assert_eq!(sc.stock_value, Money::ZERO);
-        assert_eq!(sc.factory_value, Money::ZERO);
-        assert_eq!(sc.escrow_value, Money::ZERO);
-        assert_eq!(sc.total, Money::from_lira(1_000).unwrap());
+        assert_eq!(sc.total, Money::ZERO, "pasif oyuncu PnL=0");
+    }
+
+    #[test]
+    fn cash_increase_yields_positive_pnl() {
+        let mut s = state();
+        let pid = add_player(&mut s, 1, Role::Tuccar, 1_000);
+        s.players.get_mut(&pid).unwrap().cash = Money::from_lira(1_500).unwrap();
+        let sc = score_player(&s, pid);
+        assert_eq!(sc.total, Money::from_lira(500).unwrap(), "PnL = 500");
     }
 
     #[test]
@@ -338,18 +350,22 @@ mod tests {
     }
 
     #[test]
-    fn leaderboard_sorts_desc_by_total_with_player_id_tiebreak() {
+    fn leaderboard_sorts_desc_by_pnl_with_player_id_tiebreak() {
+        // PnL skorda: cash artışı, ne kadar çok kâr ettiyse o kadar üst.
         let mut s = state();
         add_player(&mut s, 1, Role::Tuccar, 500);
-        add_player(&mut s, 2, Role::Tuccar, 1_000);
-        add_player(&mut s, 3, Role::Tuccar, 500); // tie with player 1
+        add_player(&mut s, 2, Role::Tuccar, 500);
+        add_player(&mut s, 3, Role::Tuccar, 500);
+        // P1 cash 600 → PnL 100, P2 cash 700 → PnL 200, P3 cash 600 → PnL 100 (tie)
+        s.players.get_mut(&PlayerId::new(1)).unwrap().cash = Money::from_lira(600).unwrap();
+        s.players.get_mut(&PlayerId::new(2)).unwrap().cash = Money::from_lira(700).unwrap();
+        s.players.get_mut(&PlayerId::new(3)).unwrap().cash = Money::from_lira(600).unwrap();
 
         let board = leaderboard(&s);
         assert_eq!(board.len(), 3);
-        // Total sıralaması: 1000, 500, 500 (tie → smaller player_id first)
-        assert_eq!(board[0].player_id, PlayerId::new(2));
-        assert_eq!(board[1].player_id, PlayerId::new(1));
-        assert_eq!(board[2].player_id, PlayerId::new(3));
+        assert_eq!(board[0].player_id, PlayerId::new(2)); // PnL 200
+        assert_eq!(board[1].player_id, PlayerId::new(1)); // PnL 100, tie tie-break
+        assert_eq!(board[2].player_id, PlayerId::new(3)); // PnL 100
     }
 
     #[test]
@@ -368,10 +384,13 @@ mod tests {
             .push((Tick::new(1), Money::from_lira(5).unwrap()));
 
         let sc = score_player(&s, pid);
+        // PnL formülü: total = (cash + stock + fab + escrow) - starting_cash
+        let starting = s.players[&pid].starting_cash.as_cents();
         let expected = sc.cash.as_cents()
             + sc.stock_value.as_cents()
             + sc.factory_value.as_cents()
-            + sc.escrow_value.as_cents();
+            + sc.escrow_value.as_cents()
+            - starting;
         assert_eq!(sc.total.as_cents(), expected);
     }
 

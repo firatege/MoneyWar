@@ -191,6 +191,12 @@ pub struct Player {
     /// Sezon başında seed RNG ile atanır, sezon boyu sabit.
     #[serde(default)]
     pub personality: Option<Personality>,
+    /// Sezon başında verilen başlangıç sermayesi. Skor PnL hesabında
+    /// referans olarak kullanılır: `pnl_score = current_total - starting_cash`.
+    /// Pasif oyuncu (hiçbir şey yapmayan) PnL=0 olur, aktif kâr edenler
+    /// pozitif skor alır.
+    #[serde(default)]
+    pub starting_cash: Money,
 }
 
 impl Player {
@@ -220,6 +226,7 @@ impl Player {
             is_npc,
             npc_kind: None,
             personality: None,
+            starting_cash,
         })
     }
 
