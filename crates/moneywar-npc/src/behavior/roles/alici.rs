@@ -33,12 +33,16 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
     for city in moneywar_domain::CityId::ALL {
         for product in ProductKind::FINISHED_GOODS {
-            let unit_price = state.effective_baseline(city, product).unwrap_or_else(|| {
+            let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
                 Money::from_lira(default_finished_price()).unwrap_or(Money::ZERO)
             });
-            if unit_price.as_cents() <= 0 {
+            if baseline.as_cents() <= 0 {
                 continue;
             }
+            // Dinamik rezerv fiyatı (Vic3 pop needs urgency).
+            // Stoğu boşsa 110% verir, doluysa 100%. Sanayici 105% asking
+            // → stok ortadayken (urgency 0.5) 105% Alıcı bid ile eşleşir.
+            let unit_price = bid_with_urgency(baseline, player, city, product);
             let quantity = affordable_qty(bucket_cash, unit_price, 30);
             if quantity == 0 {
                 continue;
@@ -60,6 +64,30 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 fn bucket_budget(player: &Player) -> Money {
     let cents = player.cash.as_cents() / 9;
     Money::from_cents(cents.max(0))
+}
+
+/// Stoğa-bağımlı rezerv fiyat. Vic3 pop needs urgency mantığı:
+/// - Stok dolu (≥30 birim): baseline × 1.00 — acelesi yok, tutumlu
+/// - Stok orta (15 birim) : baseline × 1.05 — orta urgency, Sanayici karşılar
+/// - Stok boş (0 birim)   : baseline × 1.10 — kıtlık, max prim öder
+///
+/// Bu **rezerv tavan**: Alıcı baseline'ın %110'undan fazlasını ödemez.
+/// Sanayici 200₺ asking yazsa hiç eşleşmez, başka Sanayici 105'i kapar →
+/// rekabet doğal şekilde fiyat dengeler.
+const URGENCY_REFERENCE_STOCK: f64 = 30.0;
+const MAX_URGENCY_PREMIUM_PCT: i64 = 10;
+
+fn bid_with_urgency(
+    baseline: Money,
+    player: &Player,
+    city: moneywar_domain::CityId,
+    product: ProductKind,
+) -> Money {
+    let stock = f64::from(player.inventory.get(city, product));
+    let urgency = (1.0 - (stock / URGENCY_REFERENCE_STOCK).min(1.0)).clamp(0.0, 1.0);
+    let premium_pct = (urgency * MAX_URGENCY_PREMIUM_PCT as f64) as i64;
+    let multiplier = 100 + premium_pct;
+    Money::from_cents(baseline.as_cents().saturating_mul(multiplier) / 100)
 }
 
 /// Tax-aware satın alma miktarı: alıcı `qty × price × (100+TAX)/100 ≤ cash`
@@ -162,6 +190,62 @@ mod tests {
         let a = enumerate(&s, &p);
         let b = enumerate(&s, &p);
         assert_eq!(a, b);
+    }
+
+    fn alici_with_stock(stock: u32) -> Player {
+        let mut p = Player::new(
+            PlayerId::new(116),
+            "alici",
+            Role::Tuccar,
+            Money::from_lira(100_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Alici);
+        if stock > 0 {
+            p.inventory
+                .add(CityId::Istanbul, ProductKind::Kumas, stock)
+                .unwrap();
+        }
+        p
+    }
+
+    #[test]
+    fn empty_stock_yields_max_premium_bid() {
+        let p = alici_with_stock(0);
+        let bid = bid_with_urgency(
+            Money::from_lira(36).unwrap(),
+            &p,
+            CityId::Istanbul,
+            ProductKind::Kumas,
+        );
+        // Stok 0 → urgency 1.0 → 110% × 36 = 39.6 → 3960 cents
+        assert_eq!(bid.as_cents(), 36 * 100 * 110 / 100);
+    }
+
+    #[test]
+    fn full_stock_yields_baseline_bid() {
+        let p = alici_with_stock(30);
+        let bid = bid_with_urgency(
+            Money::from_lira(36).unwrap(),
+            &p,
+            CityId::Istanbul,
+            ProductKind::Kumas,
+        );
+        assert_eq!(bid, Money::from_lira(36).unwrap());
+    }
+
+    #[test]
+    fn half_stock_yields_mid_premium() {
+        let p = alici_with_stock(15);
+        let bid = bid_with_urgency(
+            Money::from_lira(36).unwrap(),
+            &p,
+            CityId::Istanbul,
+            ProductKind::Kumas,
+        );
+        // 15/30 = 0.5 stock → urgency 0.5 → 105% × 36 = 3780 cents
+        assert_eq!(bid.as_cents(), 36 * 100 * 105 / 100);
     }
 
     #[test]
