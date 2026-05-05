@@ -30,10 +30,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     let bucket_cash = bucket_buy_budget(player);
 
-    // 0. Multi-caravan filo: hedef 3 kervan (3 şehir × 1 başlangıç).
-    //    Her ek kervan farklı şehirde başlar → coğrafi dağıtım. Tek kervan
-    //    bottleneck oluyordu, 3 ile şehirler arası dağıtım hızlanır.
-    const TARGET_CARAVANS: usize = 3;
+    // 0. Multi-caravan filo: hedef 4 kervan (3 şehir + 1 fazlalık).
+    //    F5 buff: Sanayici tekeli karşı Tüccar'ı güçlendir. 4 caravan/Tüccar
+    //    × 4 NPC = 16 kervan filosu → daha çok şehirler arası dağıtım.
+    const TARGET_CARAVANS: usize = 4;
     let owned_caravans = state
         .caravans
         .values()

@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn capacity_matches_role() {
         assert_eq!(Caravan::capacity_for(Role::Sanayici), 200);
-        assert_eq!(Caravan::capacity_for(Role::Tuccar), 800);
+        assert_eq!(Caravan::capacity_for(Role::Tuccar), 1200);
     }
 
     #[test]
@@ -418,23 +418,24 @@ mod tests {
 
     #[test]
     fn buy_cost_tuccar_schedule() {
+        // F5 buff: [0, 3K, 6K, 10K]
         assert_eq!(Caravan::buy_cost(Role::Tuccar, 0), Money::ZERO);
         assert_eq!(
             Caravan::buy_cost(Role::Tuccar, 1),
-            Money::from_lira(6_000).unwrap()
+            Money::from_lira(3_000).unwrap()
         );
         assert_eq!(
             Caravan::buy_cost(Role::Tuccar, 2),
-            Money::from_lira(10_000).unwrap()
+            Money::from_lira(6_000).unwrap()
         );
         assert_eq!(
             Caravan::buy_cost(Role::Tuccar, 3),
-            Money::from_lira(15_000).unwrap()
+            Money::from_lira(10_000).unwrap()
         );
-        // 4+ sabit 15k
+        // 4+ sabit 10K
         assert_eq!(
             Caravan::buy_cost(Role::Tuccar, 10),
-            Money::from_lira(15_000).unwrap()
+            Money::from_lira(10_000).unwrap()
         );
     }
 

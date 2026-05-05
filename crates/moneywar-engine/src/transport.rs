@@ -228,14 +228,14 @@ mod tests {
     }
 
     #[test]
-    fn buy_caravan_tuccar_starter_zero_cost_capacity_800() {
+    fn buy_caravan_tuccar_starter_zero_cost_capacity_1200() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Tuccar, 0);
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         assert_eq!(s.caravans.len(), 1);
         let c = s.caravans.values().next().unwrap();
-        assert_eq!(c.capacity, 800);
+        assert_eq!(c.capacity, 1200);
         assert_eq!(c.state.current_city(), Some(CityId::Istanbul));
     }
 
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn buy_second_caravan_tuccar_costs_6000() {
+    fn buy_second_caravan_tuccar_costs_3000() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Tuccar, 50_000);
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(s.caravans.len(), 2);
         assert_eq!(
             s.players[&pid].cash,
-            Money::from_lira(50_000 - 6_000).unwrap()
+            Money::from_lira(50_000 - 3_000).unwrap()
         );
     }
 
@@ -327,7 +327,7 @@ mod tests {
             .get_mut(&pid)
             .unwrap()
             .inventory
-            .add(CityId::Istanbul, ProductKind::Pamuk, 1000)
+            .add(CityId::Istanbul, ProductKind::Pamuk, 1500)
             .unwrap();
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         let cid = *s.caravans.keys().next().unwrap();
@@ -339,7 +339,7 @@ mod tests {
             cid,
             CityId::Istanbul,
             CityId::Ankara,
-            &cargo(ProductKind::Pamuk, 801), // capacity 800
+            &cargo(ProductKind::Pamuk, 1201), // capacity 1200
         )
         .unwrap_err();
         assert!(err.to_string().contains("capacity"));
@@ -348,7 +348,7 @@ mod tests {
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            1000
+            1500
         );
     }
 

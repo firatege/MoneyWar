@@ -114,20 +114,21 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
     }
 
-    // 3) Mamul SAT — toptan baseline'da (Esnaf'a satıyor). Yeni tedarik
-    //    zincirinde Sanayici doğrudan Alıcı'ya satmaz, Esnaf perakendeci
-    //    araya girer. Markdown/markup yok — toptan fiyat = baseline.
+    // 3) Mamul SAT — toptan iskonto: baseline × 0.95 (Esnaf'a hızlı satış).
+    //    Sanayici tekeli kırılır → Esnaf perakende marjı (%5 → %10) artar.
+    //    Sanayici PnL düşer ama hâlâ kârlı (4× ham → mamul katma değer).
     for (city, product, qty) in player.inventory.entries() {
         if !product.is_finished() || qty == 0 {
             continue;
         }
         let quantity = (qty / 2).max(1).min(50);
-        let unit_price = state
+        let baseline = state
             .effective_baseline(city, product)
             .unwrap_or_else(|| {
                 Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                     .unwrap_or(Money::ZERO)
             });
+        let unit_price = scale_pct(baseline, 95);
         if unit_price.as_cents() <= 0 {
             continue;
         }

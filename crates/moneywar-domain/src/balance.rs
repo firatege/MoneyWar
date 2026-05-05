@@ -77,13 +77,16 @@ pub const CARAVAN_CAPACITY_SANAYICI: u32 = 200;
 /// Faz F4: 500 → 800. Yeni tedarik zincirinde Tüccar şehirler arası mal
 /// taşıyor (off-specialty bucket'ları besler). 4 Tüccar × 3 caravan ×
 /// 800 = 9600 birim/dispatch, ölü bucket'lara daha çok arz akışı.
-pub const CARAVAN_CAPACITY_TUCCAR: u32 = 800;
+/// Faz F5: 800 → 1200 (Tüccar buff — Sanayici tekeli karşı denge).
+pub const CARAVAN_CAPACITY_TUCCAR: u32 = 1200;
 
 /// Sanayici kervan maliyet tablosu (§10).
 pub const CARAVAN_COSTS_SANAYICI_LIRA: [i64; 3] = [0, 5_000, 10_000];
 
 /// Tüccar kervan maliyet tablosu (§10). Tüccar 4'e kadar alır, ucuz.
-pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 4] = [0, 6_000, 10_000, 15_000];
+/// Faz F5: [0, 6K, 10K, 15K] → [0, 3K, 6K, 10K]. Daha ucuz filo →
+/// Tüccar daha hızlı 3 caravan kurar, daha çok dağıtım = daha çok kâr.
+pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 4] = [0, 3_000, 6_000, 10_000];
 
 // =============================================================================
 // Piyasa

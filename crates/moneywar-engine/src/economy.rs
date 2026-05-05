@@ -36,8 +36,10 @@ const MAINTENANCE_PERIOD: u32 = 10;
 /// Fabrika başına maintenance ücreti — Sanayici'den çekilir, sistem dışına
 /// atılır (amortisman). Aktif/atıl fark etmez → boş fab kuran cezalı.
 /// Anno 1800 inspiration: building maintenance.
-/// 250 → 100: wages ile birleşip Sanayici'yi batırıyordu.
-const MAINTENANCE_PER_FACTORY_LIRA: i64 = 100;
+/// F4 tuning: 100 → 250 (Sanayici tekel kıs). Çoklu fab pasif gider artar
+/// → 3 fab × 250 × 9 sefer = 6.75K maintenance/sezon. Sanayici PnL +46K
+/// → ~+15K hedef (Tüccar/Esnaf'la dengeli).
+const MAINTENANCE_PER_FACTORY_LIRA: i64 = 250;
 
 /// Alıcı tüketim periyodu — her N tick'te Alıcı mamul stoğunun bir kısmını
 /// tüketir (envanterden silinir). Vic3 pop needs inspiration.
