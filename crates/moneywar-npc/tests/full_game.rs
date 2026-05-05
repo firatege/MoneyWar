@@ -236,11 +236,10 @@ fn seed_with_composition() -> GameState {
 
 // 20-tick smoke: ekonomi yapısal değişiklikleri (vergi/clamp/Çiftçi maliyet)
 // likiditeyi kısa zaman penceresinde kırıyor. Audit (90 tick) geçiyor — uzun
-// vadeli closed-loop akışı (wages/harvest) ısınma süresini kapsıyor.
-// AI rewrite (fuzzy → utility) sonrası synthetic baseline üzerinden yeni
-// smoke yazılacak; o zaman threshold ekonomiye uyumlu kalibre edilecek.
+// vadeli closed-loop akışı (wages/harvest) ısınma süresini kapsıyor. Yeni
+// behavior motoru üzerinden yenilenmesi gerekiyor; şu an sadece smoke.
 #[test]
-#[ignore = "ekonomi yapısal değişiklikleri sonrası 20-tick fragile, AI rewrite + synthetic baseline ile yenilenecek"]
+#[ignore = "20-tick fragile — synthetic baseline ile yeniden yazılacak"]
 fn liquidity_smoke_twenty_ticks_produces_matches() {
     use moneywar_engine::LogEvent;
     let mut state = seed_with_composition();
@@ -289,13 +288,13 @@ fn liquidity_smoke_twenty_ticks_produces_matches() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// FuzzyExpert smoke — DSS NPC'leri 30 tick crash etmiyor ve emir üretiyor.
+// Behavior smoke — 30 tick crash etmiyor, kişilikli NPC'ler komut üretir.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fuzzy_expert_runs_without_crash_and_produces_commands() {
+fn behavior_runs_without_crash_and_produces_commands() {
     let mut state = seed_with_composition();
-    // 4 NPC'ye DSS personality'si ata
+    // 4 NPC'ye personality ata (yeni motor da `Personality`'i okur).
     let archetypes = [
         Personality::Aggressive,
         Personality::Arbitrageur,
@@ -315,20 +314,18 @@ fn fuzzy_expert_runs_without_crash_and_produces_commands() {
         }
     }
 
-    let mut total_dss_commands = 0;
+    let mut total_commands = 0;
     for t in 1..=30u32 {
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
         let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Hard);
-        total_dss_commands += cmds.len();
+        total_commands += cmds.len();
         let (new_state, _report) = advance_tick(&state, &cmds).expect("advance");
         state = new_state;
     }
-    // 30 tick'te DSS NPC'leri en az birkaç komut üretmeli.
     assert!(
-        total_dss_commands > 10,
-        "FuzzyExpert NPC'leri sessiz: {total_dss_commands} komut"
+        total_commands > 10,
+        "Behavior NPC'leri sessiz: {total_commands} komut"
     );
-    // State sağlam.
     assert_eq!(state.current_tick, Tick::new(30));
 }
 

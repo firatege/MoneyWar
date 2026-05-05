@@ -295,14 +295,6 @@ impl QualityScore {
                 ("Synthetic human pnl", 1.0, 0.0, 0.0),
                 ("Synthetic alıcı", 1.0, 0.0, -100_000.0),
             ),
-            // Behavioral: yeni motor, Faz A'da iskelet. Faz B+'da rol göçü
-            // tamamlanınca synthetic'e yakın hedeflere taşınacak.
-            Difficulty::Behavioral => (
-                ("Behavioral", 1.0, 0.0, -100_000.0),
-                ("Behavioral verim", 1.0, 0.0, 0.0),
-                ("Behavioral human pnl", 1.0, 0.0, 0.0),
-                ("Behavioral alıcı", 1.0, 0.0, -100_000.0),
-            ),
         };
         let _ = matches;
 
@@ -326,8 +318,6 @@ impl QualityScore {
             // Synthetic'te Spekülatör sabit %5 spread — break-even hedefi
             // gevşek tutuldu çünkü sabit kuralda volatilite avantajı yok.
             Difficulty::Synthetic => -15_000.0,
-            // Behavioral Faz A'da NPC aksiyon yok — Spekülatör default 0 PnL.
-            Difficulty::Behavioral => -15_000.0,
         };
         details.push((
             format!("Spekülatör PnL ≥ {}₺", spek_threshold as i64),
@@ -354,9 +344,6 @@ impl QualityScore {
             // Synthetic: ekonomi sağlıklıysa Sanayici break-even üstünde,
             // Tüccar arbitraj fırsatı bulduğu için pozitif.
             Difficulty::Synthetic => san_pnl > -25_000.0 && tuc_pnl > -5_000.0,
-            // Behavioral Faz A: NPC aksiyon yok, gradient anlamsız.
-            // Faz B+ ile birlikte synthetic'e yakın hedef alınacak.
-            Difficulty::Behavioral => san_pnl > -50_000.0 && tuc_pnl > -50_000.0,
         };
         details.push((
             "Sanayici + Tüccar PnL hedefte".into(),
