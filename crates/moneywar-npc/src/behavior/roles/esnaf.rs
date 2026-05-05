@@ -28,33 +28,37 @@ use crate::behavior::candidates::ActionCandidate;
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
 
-    // 1) Ham AL — base × 0.95 markdown (rekabet alanı korunur, insan oyuncu
-    //    %96 yazıp Esnaf'ı geçebilir). Sadece şehrin specialty raw'ı için
-    //    emit (3 emir/tick). Önceki "9 bucket" hepsini kıyıyordu, artık 3.
-    let bucket_cash = bucket_buy_budget(player);
+    // 1) Ham AL — gerçek toptancı: 3 şehir × 3 ham = 9 BUY.
+    //    Tüm raw için %95 (toptan markdown). Tüccar SAT @ baseline (100%)
+    //    yapıyor → Esnaf 95%'te alıyor → spread %5, pay-as-bid'de BUY price
+    //    Tüccar fiyatını karşılayamaz ama yakın → bazı eşleşme olur.
+    //    Specialty/off-specialty fiyat farkı yok — Esnaf "her ham mal eşit
+    //    değerli" diye yaklaşıyor, gerçek perakendeci.
+    let bucket_cash = Money::from_cents((player.cash.as_cents() / 9).max(0));
     for city in CityId::ALL {
-        let product = city.cheap_raw();
-        let baseline = state
-            .effective_baseline(city, product)
-            .unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                    .unwrap_or(Money::ZERO)
+        for product in moneywar_domain::ProductKind::RAW_MATERIALS {
+            let baseline = state
+                .effective_baseline(city, product)
+                .unwrap_or_else(|| {
+                    Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                        .unwrap_or(Money::ZERO)
+                });
+            let unit_price = scale_pct(baseline, 95);
+            if unit_price.as_cents() <= 0 {
+                continue;
+            }
+            let quantity = affordable_qty(bucket_cash, unit_price, 20);
+            if quantity == 0 {
+                continue;
+            }
+            out.push(ActionCandidate::SubmitOrder {
+                side: OrderSide::Buy,
+                city,
+                product,
+                quantity,
+                unit_price,
             });
-        let unit_price = scale_pct(baseline, 95);
-        if unit_price.as_cents() <= 0 {
-            continue;
         }
-        let quantity = affordable_qty(bucket_cash, unit_price, 30);
-        if quantity == 0 {
-            continue;
-        }
-        out.push(ActionCandidate::SubmitOrder {
-            side: OrderSide::Buy,
-            city,
-            product,
-            quantity,
-            unit_price,
-        });
     }
 
     // 2) Mamul AL — Sanayici'den toptan, baseline'da. 9 BUY (3 şehir × 3 mamul).
@@ -122,11 +126,6 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     out
 }
 
-fn bucket_buy_budget(player: &Player) -> Money {
-    // 3 BUY bucket (3 şehir × specialty raw). Cash bütçesi 3'e böl.
-    Money::from_cents((player.cash.as_cents() / 3).max(0))
-}
-
 fn scale_pct(price: Money, pct: i64) -> Money {
     Money::from_cents(price.as_cents().saturating_mul(pct) / 100)
 }
@@ -166,9 +165,9 @@ mod tests {
     }
 
     #[test]
-    fn rich_esnaf_emits_three_specialty_buy_candidates() {
-        // Esnaf sadece şehrin specialty raw'ı için BUY emit eder (3 şehir
-        // × 1 specialty = 3 BUY). Kitabı kaynatmama amaçlı.
+    fn rich_esnaf_emits_nine_raw_buy_candidates() {
+        // Esnaf gerçek toptancı: 3 şehir × 3 ham = 9 BUY raw.
+        // Off-specialty bucket'larda da BUY → Tüccar getirdi mal alıcı bulur.
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
@@ -176,21 +175,22 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, .. } if product.is_raw()))
             .count();
-        assert_eq!(buy_count, 3);
+        assert_eq!(buy_count, 9, "3 şehir × 3 ham = 9 BUY raw");
     }
 
     #[test]
-    fn esnaf_buys_specialty_raw_per_city() {
-        // Esnaf raw BUY sadece şehir specialty (3 emir). Mamul BUY ayrı (9 emir).
+    fn esnaf_raw_buy_at_95_pct_uniform() {
+        // Tüm raw BUY %95 markdown — Tüccar SAT 95%'i karşılayacak şekilde
+        // ayarlandı. Specialty/off-specialty fiyat farkı yok (gerçek toptancı).
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
+        let baseline_cents = moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA * 100;
+        let expected = baseline_cents * 95 / 100;
         for c in &cands {
-            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, city, product, .. } = c {
-                if product.is_raw() {
-                    assert_eq!(*product, city.cheap_raw(),
-                        "Esnaf raw BUY: {city:?}'in specialty'si dışında ham almamalı");
-                }
+            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
+                if !product.is_raw() { continue; }
+                assert_eq!(unit_price.as_cents(), expected, "Esnaf raw BUY %95");
             }
         }
     }

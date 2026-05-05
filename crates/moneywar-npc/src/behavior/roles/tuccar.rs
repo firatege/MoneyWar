@@ -54,8 +54,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let CaravanState::Idle { location: cur_city } = caravan.state else {
             continue;
         };
-        // En kârlı dispatch: stoktaki ürün + en yüksek fiyatlı hedef şehir.
-        let mut best: Option<(ProductKind, CityId, u32, i64)> = None;
+        // Tüm pozitif-profit (product, to_city) çiftlerini topla, kâr azalan
+        // sırada sırala. Caravan_id ile rotation: 1. caravan en kârlıyı, 2.
+        // caravan ikinciyi, vs. → farklı kervanlar farklı yönlere → off-
+        // specialty bucket'ların hepsi (Ank-Pamuk dahil) Tüccar SAT'a kavuşur.
+        let mut targets: Vec<(ProductKind, CityId, u32, i64)> = Vec::new();
         for product in ProductKind::ALL {
             let stock = player.inventory.get(cur_city, product);
             if stock == 0 {
@@ -77,22 +80,30 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 if profit_per_unit <= 0 {
                     continue;
                 }
-                if best.is_none_or(|(_, _, _, p)| profit_per_unit > p) {
-                    let qty = stock.min(caravan.capacity);
-                    best = Some((product, to_city, qty, profit_per_unit));
-                }
+                let qty = stock.min(caravan.capacity);
+                targets.push((product, to_city, qty, profit_per_unit));
             }
         }
-        if let Some((product, to_city, qty, _)) = best {
-            let mut cargo = Cargo::new();
-            if cargo.add(product, qty).is_ok() {
-                out.push(ActionCandidate::DispatchCaravan {
-                    caravan_id: caravan.id,
-                    from: cur_city,
-                    to: to_city,
-                    cargo,
-                });
-            }
+        if targets.is_empty() {
+            continue;
+        }
+        // Kâr azalan + tie-break (city, product) ASC
+        targets.sort_by(|a, b| {
+            b.3.cmp(&a.3)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        // Caravan_id rotation: aynı NPC'nin farklı caravan'ları farklı target.
+        let idx = (caravan.id.value() as usize) % targets.len();
+        let (product, to_city, qty, _) = targets[idx];
+        let mut cargo = Cargo::new();
+        if cargo.add(product, qty).is_ok() {
+            out.push(ActionCandidate::DispatchCaravan {
+                caravan_id: caravan.id,
+                from: cur_city,
+                to: to_city,
+                cargo,
+            });
         }
     }
 
@@ -124,16 +135,19 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             });
         }
 
-        // SAT pahalıda (stoğu varsa)
+        // SAT pahalıda (stoğu varsa). Fiyat: rich_baseline × 0.95.
+        // Esnaf 95% BUY'u yakalar → eşleşme. Tüccar profiti = 0.95 × (rich -
+        // cheap) → arbitraj marjı korundu, sadece müşteri fiyatı düştü.
         let stock = player.inventory.get(rich_city, product);
         if stock > 0 {
             let sell_qty = stock.min(25);
+            let sell_price = Money::from_cents(rich_price.as_cents().saturating_mul(95) / 100);
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,
                 city: rich_city,
                 product,
                 quantity: sell_qty,
-                unit_price: rich_price,
+                unit_price: sell_price,
             });
         }
     }
