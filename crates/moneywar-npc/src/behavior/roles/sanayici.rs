@@ -49,31 +49,69 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
     }
 
-    // 2) Ham madde AL — base × 0.95 markdown (rekabet alanı korunur, insan
-    //    oyuncu %96 yazıp Sanayici'yi geçebilir). Sadece şehir specialty
-    //    raw'ı (3 emir/tick) — önceki 9 bucket kitabı kaynatıyordu.
-    let bucket_cash = Money::from_cents((player.cash.as_cents() / 6).max(0));
-    for city in CityId::ALL {
-        let product = city.cheap_raw();
-        let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
-            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                .unwrap_or(Money::ZERO)
-        });
-        let unit_price = scale_pct(baseline, 95);
-        if unit_price.as_cents() <= 0 {
-            continue;
+    // 2) Ham madde AL — fab-bazlı talep (gerçek tedarik zinciri).
+    //    Her fab'ın raw_input'unu hesapla. Sanayici Ist'te Kumaş fab kurmuşsa
+    //    Pamuk her 3 şehirde de arar (Tüccar Ist'ten Ank'a getirebilir).
+    //    Fab yoksa fallback: şehir specialty raw'ı.
+    let needed_raws: std::collections::BTreeSet<ProductKind> = state
+        .factories
+        .values()
+        .filter(|f| f.owner == player.id)
+        .filter_map(|f| f.product.raw_input())
+        .collect();
+    if needed_raws.is_empty() {
+        // Fab yok → fallback: her şehir kendi specialty raw'ı (3 BUY).
+        let bucket_cash = Money::from_cents((player.cash.as_cents() / 6).max(0));
+        for city in CityId::ALL {
+            let product = city.cheap_raw();
+            let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                    .unwrap_or(Money::ZERO)
+            });
+            let unit_price = scale_pct(baseline, 95);
+            if unit_price.as_cents() <= 0 {
+                continue;
+            }
+            let quantity = affordable_qty(bucket_cash, unit_price, 30);
+            if quantity > 0 {
+                out.push(ActionCandidate::SubmitOrder {
+                    side: OrderSide::Buy,
+                    city,
+                    product,
+                    quantity,
+                    unit_price,
+                });
+            }
         }
-        let quantity = affordable_qty(bucket_cash, unit_price, 30);
-        if quantity == 0 {
-            continue;
+    } else {
+        // Fab var → fab-bazlı, her şehirde her ihtiyaç (gerçek tedarik zinciri).
+        // 3 şehir × N fab raw_input = 3N BUY. Tüccar mal taşıyabilir → her
+        // şehirde Pamuk talebi varsa Sanayici Ist'ten Ank'a getirilen Pamuk'u
+        // da yakalar.
+        let bucket_count = (needed_raws.len() * CityId::ALL.len()).max(1) as i64;
+        let bucket_cash = Money::from_cents(player.cash.as_cents() / 2 / bucket_count);
+        for city in CityId::ALL {
+            for &product in &needed_raws {
+                let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+                    Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                        .unwrap_or(Money::ZERO)
+                });
+                let unit_price = scale_pct(baseline, 95);
+                if unit_price.as_cents() <= 0 {
+                    continue;
+                }
+                let quantity = affordable_qty(bucket_cash, unit_price, 30);
+                if quantity > 0 {
+                    out.push(ActionCandidate::SubmitOrder {
+                        side: OrderSide::Buy,
+                        city,
+                        product,
+                        quantity,
+                        unit_price,
+                    });
+                }
+            }
         }
-        out.push(ActionCandidate::SubmitOrder {
-            side: OrderSide::Buy,
-            city,
-            product,
-            quantity,
-            unit_price,
-        });
     }
 
     // 3) Mamul SAT — toptan baseline'da (Esnaf'a satıyor). Yeni tedarik
@@ -192,8 +230,8 @@ mod tests {
     }
 
     #[test]
-    fn rich_sanayici_emits_three_specialty_buy_candidates() {
-        // Sanayici sadece şehrin specialty raw'ı için BUY emit eder (3 BUY).
+    fn no_factory_falls_back_to_specialty_raw() {
+        // Fab yoksa fallback: her şehirin specialty raw'ı (3 BUY).
         let s = fresh();
         let p = sanayici(50_000);
         let cands = enumerate(&s, &p);
@@ -201,20 +239,40 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, .. } if product.is_raw()))
             .count();
-        assert_eq!(buy_count, 3, "3 şehir × specialty = 3 BUY adayı");
-    }
-
-    #[test]
-    fn sanayici_buys_only_city_specialty_raw() {
-        let s = fresh();
-        let p = sanayici(50_000);
-        let cands = enumerate(&s, &p);
+        assert_eq!(buy_count, 3, "fab yok → fallback specialty (3 BUY)");
         for c in &cands {
             if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, city, product, .. } = c {
                 assert_eq!(*product, city.cheap_raw(),
-                    "Sanayici BUY {city:?}'in specialty'si dışında ürün almamalı");
+                    "fab yok → BUY {city:?}'in specialty'si");
             }
         }
+    }
+
+    #[test]
+    fn factory_drives_raw_demand_in_all_cities() {
+        // Fab varsa: o fab'ın raw_input'unu **3 şehirde de** arar.
+        // Ist'te Kumaş fab → Pamuk her şehirde BUY (Ank/Izm'den de gelebilir).
+        let mut s = fresh();
+        let p = sanayici(50_000);
+        let fid = FactoryId::new(1);
+        let f = Factory::new(fid, p.id, CityId::Istanbul, ProductKind::Kumas).unwrap();
+        s.factories.insert(fid, f);
+        s.players.insert(p.id, p.clone());
+        let cands = enumerate(&s, &p);
+        let pamuk_buys: Vec<_> = cands
+            .iter()
+            .filter_map(|c| match c {
+                ActionCandidate::SubmitOrder {
+                    side: OrderSide::Buy,
+                    city,
+                    product: ProductKind::Pamuk,
+                    ..
+                } => Some(*city),
+                _ => None,
+            })
+            .collect();
+        // Fab Kumaş üretiyor → raw_input Pamuk → 3 şehirde BUY emit
+        assert_eq!(pamuk_buys.len(), 3, "Kumaş fab → Pamuk talebi her şehirde");
     }
 
     #[test]

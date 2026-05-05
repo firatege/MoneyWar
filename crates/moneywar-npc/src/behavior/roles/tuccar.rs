@@ -30,16 +30,18 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     let bucket_cash = bucket_buy_budget(player);
 
-    // 0. Caravan yoksa satın al — gerçek arbitraj için mal taşıma şart.
+    // 0. Multi-caravan filo: hedef 3 kervan (3 şehir × 1 başlangıç).
+    //    Her ek kervan farklı şehirde başlar → coğrafi dağıtım. Tek kervan
+    //    bottleneck oluyordu, 3 ile şehirler arası dağıtım hızlanır.
+    const TARGET_CARAVANS: usize = 3;
     let owned_caravans = state
         .caravans
         .values()
         .filter(|c| c.owner == player.id)
         .count();
-    if owned_caravans == 0 {
-        out.push(ActionCandidate::BuyCaravan {
-            starting_city: CityId::Istanbul,
-        });
+    if owned_caravans < TARGET_CARAVANS {
+        let starting_city = CityId::ALL[owned_caravans % CityId::ALL.len()];
+        out.push(ActionCandidate::BuyCaravan { starting_city });
     }
 
     // 0b. Idle caravan + bulunduğu şehirde stok varsa → pahalı şehre dispatch.

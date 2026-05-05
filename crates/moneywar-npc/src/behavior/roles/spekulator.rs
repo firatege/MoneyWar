@@ -30,7 +30,6 @@ const SPREAD_OPPORTUNITY_PCT: i64 = 10;
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
 
-    // Hangi ürünler için arbitraj fırsatı var?
     let opportunity_products: Vec<ProductKind> = ProductKind::ALL
         .iter()
         .copied()
@@ -40,17 +39,50 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         return out;
     }
 
-    // Her fırsatlı ürün için 3 şehirde de BID/ASK koy (likidite zerk).
-    // Bucket sayısı: opportunity_count × 3 şehir = max 18 (6 ürünün hepsi).
-    let bucket_count = (opportunity_products.len() as i64) * 3;
+    // Akıllı market maker: her fırsatlı ürün için **ucuz şehirde BID + pahalı
+    // şehirde ASK** (1 BID + 1 ASK/ürün). Önceki "3 şehirde BID + 3 ASK"
+    // ölü bucket'lara emir basıyordu (Ank-Pamuk gibi specialty olmayan
+    // yerlerde Çiftçi yok → BID boşa düşer). Akıllı strateji likidite verir
+    // sadece arbitraj çiftine.
     let bid_cash = Money::from_cents(
-        player.cash.as_cents().saturating_div(bucket_count.max(1)).max(0),
+        player
+            .cash
+            .as_cents()
+            .saturating_div(opportunity_products.len() as i64)
+            .max(0),
     );
 
     for product in &opportunity_products {
-        for city in CityId::ALL {
-            let baseline = state
-                .effective_baseline(city, *product)
+        let cheap = cheapest_city_for(state, *product);
+        let rich = richest_city_for(state, *product);
+        let (Some((cheap_city, cheap_price)), Some((rich_city, _rich_price))) = (cheap, rich)
+        else {
+            continue;
+        };
+        if cheap_city == rich_city {
+            continue;
+        }
+
+        // BID: ucuz şehirde, ucuz fiyatın %95'inde (alt al)
+        let bid_price = scale_pct(cheap_price, 95);
+        if bid_price.as_cents() > 0 {
+            let qty = affordable_qty(bid_cash, bid_price, 15);
+            if qty > 0 {
+                out.push(ActionCandidate::SubmitOrder {
+                    side: OrderSide::Buy,
+                    city: cheap_city,
+                    product: *product,
+                    quantity: qty,
+                    unit_price: bid_price,
+                });
+            }
+        }
+
+        // ASK: pahalı şehirde, pahalı baseline × 105 (üstte sat). Stok varsa.
+        let stock = player.inventory.get(rich_city, *product);
+        if stock > 0 {
+            let rich_baseline = state
+                .effective_baseline(rich_city, *product)
                 .unwrap_or_else(|| {
                     let lira = if product.is_finished() {
                         moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
@@ -59,28 +91,12 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     };
                     Money::from_lira(lira).unwrap_or(Money::ZERO)
                 });
-            let bid_price = scale_pct(baseline, 95);
-            let ask_price = scale_pct(baseline, 105);
-
-            if bid_price.as_cents() > 0 {
-                let qty = affordable_qty(bid_cash, bid_price, 15);
-                if qty > 0 {
-                    out.push(ActionCandidate::SubmitOrder {
-                        side: OrderSide::Buy,
-                        city,
-                        product: *product,
-                        quantity: qty,
-                        unit_price: bid_price,
-                    });
-                }
-            }
-
-            let stock = player.inventory.get(city, *product);
-            if stock > 0 && ask_price.as_cents() > 0 {
-                let qty = (stock / 2).max(1).min(15);
+            let ask_price = scale_pct(rich_baseline, 105);
+            let qty = (stock / 2).max(1).min(15);
+            if ask_price.as_cents() > 0 {
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Sell,
-                    city,
+                    city: rich_city,
                     product: *product,
                     quantity: qty,
                     unit_price: ask_price,
@@ -89,6 +105,22 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
     }
     out
+}
+
+fn cheapest_city_for(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {
+    CityId::ALL
+        .iter()
+        .copied()
+        .filter_map(|city| state.effective_baseline(city, product).map(|p| (city, p)))
+        .min_by_key(|(_, p)| p.as_cents())
+}
+
+fn richest_city_for(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {
+    CityId::ALL
+        .iter()
+        .copied()
+        .filter_map(|city| state.effective_baseline(city, product).map(|p| (city, p)))
+        .max_by_key(|(_, p)| p.as_cents())
 }
 
 /// Bu ürün için şehirler arası max-min fiyat farkı `SPREAD_OPPORTUNITY_PCT`
@@ -172,18 +204,25 @@ mod tests {
     }
 
     #[test]
-    fn arbitrage_opportunity_yields_bids() {
+    fn arbitrage_opportunity_yields_bid_in_cheap_city() {
         // Pamuk: İst 4₺, Ank 6₺, Izm 8₺ → spread %100 → fırsat.
+        // Yeni: ucuz şehirde tek BID (Ist), ölü bucket'lara emir basmaz.
         let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
         let p = spek(40_000);
         let cands = enumerate(&s, &p);
-        let bids = cands
+        let bid_cities: Vec<_> = cands
             .iter()
-            .filter(|c| matches!(c, ActionCandidate::SubmitOrder {
-                side: OrderSide::Buy, product: ProductKind::Pamuk, ..
-            }))
-            .count();
-        assert_eq!(bids, 3, "fırsatlı ürün için 3 şehirde BID");
+            .filter_map(|c| match c {
+                ActionCandidate::SubmitOrder {
+                    side: OrderSide::Buy,
+                    city,
+                    product: ProductKind::Pamuk,
+                    ..
+                } => Some(*city),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bid_cities, vec![CityId::Istanbul], "BID sadece ucuz şehirde");
     }
 
     #[test]
@@ -199,34 +238,39 @@ mod tests {
     }
 
     #[test]
-    fn stock_in_arbitrage_product_yields_ask() {
+    fn stock_in_rich_city_yields_ask() {
+        // Pamuk: İst 4₺, Izm 8₺ → en pahalı Izm. Spek stok Izm'de varsa ASK.
         let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
         let mut p = spek(40_000);
         p.inventory
-            .add(CityId::Istanbul, ProductKind::Pamuk, 30)
+            .add(CityId::Izmir, ProductKind::Pamuk, 30)
             .unwrap();
         let cands = enumerate(&s, &p);
-        let has_ask = cands.iter().any(|c| matches!(c,
-            ActionCandidate::SubmitOrder {
-                side: OrderSide::Sell,
-                city: CityId::Istanbul,
-                product: ProductKind::Pamuk,
-                ..
-            }
-        ));
-        assert!(has_ask, "fırsatlı ürün stoğu varsa ASK emit");
+        let ask_cities: Vec<_> = cands
+            .iter()
+            .filter_map(|c| match c {
+                ActionCandidate::SubmitOrder {
+                    side: OrderSide::Sell,
+                    city,
+                    product: ProductKind::Pamuk,
+                    ..
+                } => Some(*city),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ask_cities, vec![CityId::Izmir], "ASK sadece pahalı şehirde");
     }
 
     #[test]
     fn bid_below_ask() {
+        // BID ucuz şehirde (Ist 4×0.95), ASK pahalı şehirde (Izm 8×1.05).
         let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
         let mut p = spek(40_000);
-        p.inventory.add(CityId::Istanbul, ProductKind::Pamuk, 10).unwrap();
+        p.inventory.add(CityId::Izmir, ProductKind::Pamuk, 10).unwrap();
         let cands = enumerate(&s, &p);
         let bid = cands.iter().find_map(|c| match c {
             ActionCandidate::SubmitOrder {
                 side: OrderSide::Buy,
-                city: CityId::Istanbul,
                 product: ProductKind::Pamuk,
                 unit_price,
                 ..
@@ -236,7 +280,6 @@ mod tests {
         let ask = cands.iter().find_map(|c| match c {
             ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,
-                city: CityId::Istanbul,
                 product: ProductKind::Pamuk,
                 unit_price,
                 ..

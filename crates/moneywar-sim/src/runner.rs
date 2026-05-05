@@ -89,7 +89,7 @@ impl Default for NpcComposition {
         Self {
             tuccar: 4,
             sanayici: 5,
-            esnaf: 4,
+            esnaf: 6,
             spekulator: 3,
             alici: 8,
             ciftci: 6,
