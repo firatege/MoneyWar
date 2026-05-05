@@ -19,9 +19,9 @@ pub fn for_kind_personality(kind: Option<NpcKind>, _personality: Option<Personal
     match kind {
         Some(NpcKind::Ciftci) => ciftci_default(),
         Some(NpcKind::Alici) => alici_default(),
+        Some(NpcKind::Sanayici) => sanayici_default(),
         // Faz C+'da doldurulacak roller:
         Some(NpcKind::Esnaf)
-        | Some(NpcKind::Sanayici)
         | Some(NpcKind::Tuccar)
         | Some(NpcKind::Spekulator)
         | Some(NpcKind::Banka)
@@ -44,6 +44,26 @@ const fn ciftci_default() -> Weights {
         price_rel_avg: 0.3,
         competition: -0.2,
         cash: -0.3,
+        ..Weights::ZERO
+    }
+}
+
+/// Sanayici default ağırlıkları — multi-aksiyon (Build + BUY raw + SELL mamul).
+/// Aday tipini `enumerate` filtreliyor; weights "iş yapma motivasyonu":
+/// - `cash +0.4`: cash varsa hareket (build/buy)
+/// - `urgency +0.3`: sezon ilerledikçe agresifleş
+/// - `arbitrage +0.3`: şehirler arası fırsat
+/// - `price_rel_avg +0.2`: fiyat fırsatlarını yakala
+/// - `competition -0.2`: rakip baskı varsa bekle
+/// - `local_raw_advantage +0.2`: uzmanlık şehrini önceliklendir
+const fn sanayici_default() -> Weights {
+    Weights {
+        cash: 0.4,
+        urgency: 0.3,
+        arbitrage: 0.3,
+        price_rel_avg: 0.2,
+        local_raw_advantage: 0.2,
+        competition: -0.2,
         ..Weights::ZERO
     }
 }
@@ -81,8 +101,27 @@ mod tests {
 
     #[test]
     fn unmigrated_roles_return_zero() {
+        // Esnaf / Tüccar / Spekülatör / Banka henüz Faz C-2+'da göç etmedi.
+        for kind in [
+            NpcKind::Esnaf,
+            NpcKind::Tuccar,
+            NpcKind::Spekulator,
+            NpcKind::Banka,
+        ] {
+            assert_eq!(
+                for_kind_personality(Some(kind), None),
+                Weights::ZERO,
+                "{kind:?} henüz behavior'da yok"
+            );
+        }
+    }
+
+    #[test]
+    fn sanayici_weights_emphasize_cash_and_arbitrage() {
         let w = for_kind_personality(Some(NpcKind::Sanayici), None);
-        assert_eq!(w, Weights::ZERO);
+        assert!(w.cash > 0.0);
+        assert!(w.arbitrage > 0.0);
+        assert!(w.competition < 0.0);
     }
 
     #[test]

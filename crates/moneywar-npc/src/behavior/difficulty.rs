@@ -18,25 +18,26 @@ pub struct BehaviorDifficulty {
 }
 
 impl BehaviorDifficulty {
-    /// Hard — agresif, sessizlik az, eşik düşük.
+    /// Hard — tüm aday seti (synthetic baseline'a yakın aktivite).
+    /// Sanayici 10+, Spekülatör 18 aday üretebiliyor; Hard agresif emit.
     pub const HARD: Self = Self {
-        top_k: 5,
+        top_k: 32,
         silence_per_10: 0,
         noise: 0.05,
         min_score: 0.0,
     };
 
-    /// Medium — dengeli rekabet.
+    /// Medium — yarısı kadar aksiyon, hafif sessizlik.
     pub const MEDIUM: Self = Self {
-        top_k: 3,
+        top_k: 8,
         silence_per_10: 1,
         noise: 0.10,
         min_score: 0.10,
     };
 
-    /// Easy — yavaş, seçici, eşik yüksek.
+    /// Easy — sadece en iyi aksiyon, çoğu tick sessiz.
     pub const EASY: Self = Self {
-        top_k: 1,
+        top_k: 2,
         silence_per_10: 3,
         noise: 0.20,
         min_score: 0.20,
