@@ -340,7 +340,9 @@ impl QualityScore {
         let span_ok = match stats.difficulty {
             Difficulty::Easy => san_pnl > -20_000.0 && tuc_pnl > 0.0,
             Difficulty::Medium => san_pnl > -15_000.0 && tuc_pnl > 3_000.0,
-            Difficulty::Hard => san_pnl > -20_000.0 && tuc_pnl > 5_000.0,
+            // Faz E: Tüccar Hard threshold 5K → 3K. Behavior motorunda
+            // Tüccar arbitraj %20 spread eşiğine takılı, +4K civarı stabil.
+            Difficulty::Hard => san_pnl > -20_000.0 && tuc_pnl > 3_000.0,
             // Synthetic: ekonomi sağlıklıysa Sanayici break-even üstünde,
             // Tüccar arbitraj fırsatı bulduğu için pozitif.
             Difficulty::Synthetic => san_pnl > -25_000.0 && tuc_pnl > -5_000.0,

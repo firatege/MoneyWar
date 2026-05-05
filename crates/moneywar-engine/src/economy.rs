@@ -22,9 +22,10 @@ use crate::report::{LogEntry, TickReport};
 const WAGE_PERIOD: u32 = 10;
 /// Sanayici fabrikası başına ücret (lira) — her wage period'da Sanayici'den
 /// çıkar, Alıcı'lara eşit dağıtılır. Closed-loop ekonomi.
-/// 500→200→100: Sanayici `PnL` -27K, ham gideri yüksek + üretim sınırlı.
-/// 100/fab × 9 sefer × 3 fab = 2.7K wage/NPC — Alıcı'ya 13.5K toplam akış.
-const WAGE_PER_FACTORY_LIRA: i64 = 100;
+/// Faz E tuning: 100 → 250. Behavior motorda Sanayici +27K, Alıcı -60K idi.
+/// 2.5× pompa: 250 × 9 sefer × ~3 fab = 6.75K transfer/Sanayici, 8 Alıcı'ya
+/// ~22.5K toplam akış → Sanayici dengelenir, Alıcı kaybı azalır.
+const WAGE_PER_FACTORY_LIRA: i64 = 250;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
@@ -40,7 +41,10 @@ const MAINTENANCE_PER_FACTORY_LIRA: i64 = 100;
 /// Tüketici negatif `PnL` için consume mekaniği şart.
 const CONSUME_PERIOD: u32 = 5;
 /// Alıcı'nın stoğundan her cycle ne yüzdesi tüketilsin.
-const CONSUME_PCT: u32 = 50;
+/// Faz E tuning: 50 → 25. Behavior'da Alıcı çok agresif alım, %50/5tick
+/// tüketim cash'i hızla erittirdi. %25 ile mamul daha uzun kalır, alım
+/// baskısı azalır → Alıcı PnL kaybı yumuşar.
+const CONSUME_PCT: u32 = 25;
 
 /// Mahsul refill periyodu — her N tick'te Çiftçi'lere stok inject.
 const HARVEST_PERIOD: u32 = 8;

@@ -15,8 +15,8 @@ use moneywar_domain::{NpcKind, Personality};
 /// Faz B: Çiftçi default tanımlı. Diğer roller `Weights::ZERO` (henüz göç olmadı).
 /// `personality` `None` ise neutral default. Personality bias Faz E'de eklenecek.
 #[must_use]
-pub fn for_kind_personality(kind: Option<NpcKind>, _personality: Option<Personality>) -> Weights {
-    match kind {
+pub fn for_kind_personality(kind: Option<NpcKind>, personality: Option<Personality>) -> Weights {
+    let base = match kind {
         Some(NpcKind::Ciftci) => ciftci_default(),
         Some(NpcKind::Alici) => alici_default(),
         Some(NpcKind::Sanayici) => sanayici_default(),
@@ -24,8 +24,61 @@ pub fn for_kind_personality(kind: Option<NpcKind>, _personality: Option<Personal
         Some(NpcKind::Spekulator) => spekulator_default(),
         Some(NpcKind::Tuccar) => tuccar_default(),
         // Banka behavior'da yok — `engine::tick_banks` özel akışı.
-        Some(NpcKind::Banka) | None => Weights::ZERO,
+        Some(NpcKind::Banka) | None => return Weights::ZERO,
+    };
+    apply_personality(base, personality)
+}
+
+/// Kişilik etkilerini base ağırlıklara uygula.
+///
+/// Eski fuzzy motorda kişilik output multiplier'ıydı — yeni motorda **sinyal
+/// ağırlıklarını** ölçekler. Aynı sinyal farklı kişilik için farklı önem
+/// taşır:
+/// - **Aggressive**: cash + arbitrage agresif (al/sat hızlı), competition zayıf
+/// - **Hoarder**: stock pozitifse satışı bastır (depola), urgency düşük
+/// - **Arbitrageur**: arbitrage + event ana sürücü (fırsat avcısı)
+/// - **EventTrader**: event + momentum (haber-driven hızlı reaksiyon)
+/// - **TrendFollower**: momentum amplify
+/// - **MeanReverter**: momentum tersine (yükselen → satar)
+/// - **Cartel**: competition negatif amplify (rekabet yerine plan)
+fn apply_personality(mut w: Weights, personality: Option<Personality>) -> Weights {
+    let Some(p) = personality else {
+        return w;
+    };
+    match p {
+        Personality::Aggressive => {
+            w.cash *= 1.5;
+            w.arbitrage *= 1.5;
+            w.competition *= 0.5;
+        }
+        Personality::Hoarder => {
+            // Stoğu satmak yerine biriktir → stock weight'i ters çevirilir
+            // (pozitifse negatif olur), urgency'yi azalt.
+            w.stock = -w.stock.abs() * 0.5;
+            w.urgency *= 0.5;
+        }
+        Personality::Arbitrageur => {
+            w.arbitrage *= 2.0;
+            w.event *= 1.5;
+        }
+        Personality::EventTrader => {
+            w.event *= 2.0;
+            w.momentum *= 1.5;
+        }
+        Personality::TrendFollower => {
+            w.momentum *= 2.0;
+        }
+        Personality::MeanReverter => {
+            // Trend tersine — momentum sinyalini ters yönde kullan
+            w.momentum *= -1.0;
+        }
+        Personality::Cartel => {
+            // Rekabetten kaçın (negatif amplify), uzun vadeli planlama
+            w.competition *= 2.0;
+            w.urgency *= 0.7;
+        }
     }
+    w
 }
 
 /// Çiftçi default ağırlıkları — sell-only mantığı.
@@ -171,6 +224,42 @@ mod tests {
             let w = for_kind_personality(Some(kind), None);
             assert_ne!(w, Weights::ZERO, "{kind:?} göç etti, weights tanımlı olmalı");
         }
+    }
+
+    #[test]
+    fn aggressive_amplifies_cash_and_arbitrage() {
+        let base = for_kind_personality(Some(NpcKind::Sanayici), None);
+        let aggro = for_kind_personality(Some(NpcKind::Sanayici), Some(Personality::Aggressive));
+        assert!(aggro.cash > base.cash);
+        assert!(aggro.arbitrage > base.arbitrage);
+        // Competition zayıflar (mutlak değer azalır)
+        assert!(aggro.competition.abs() < base.competition.abs());
+    }
+
+    #[test]
+    fn hoarder_inverts_stock_signal() {
+        let base = for_kind_personality(Some(NpcKind::Ciftci), None);
+        let hoarder = for_kind_personality(Some(NpcKind::Ciftci), Some(Personality::Hoarder));
+        // Çiftçi base stock=+1.0 (sat), Hoarder negatif (sakla)
+        assert!(base.stock > 0.0);
+        assert!(hoarder.stock < 0.0);
+    }
+
+    #[test]
+    fn mean_reverter_flips_momentum() {
+        let base = Weights {
+            momentum: 0.5,
+            ..Weights::ZERO
+        };
+        let flipped = apply_personality(base, Some(Personality::MeanReverter));
+        assert_eq!(flipped.momentum, -0.5);
+    }
+
+    #[test]
+    fn no_personality_keeps_base_weights() {
+        let base = ciftci_default();
+        let kept = apply_personality(base, None);
+        assert_eq!(kept, base);
     }
 
     #[test]
