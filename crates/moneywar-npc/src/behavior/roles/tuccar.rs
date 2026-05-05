@@ -135,21 +135,37 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             });
         }
 
-        // SAT pahalıda (stoğu varsa). Fiyat: rich_baseline × 0.95.
-        // Esnaf 95% BUY'u yakalar → eşleşme. Tüccar profiti = 0.95 × (rich -
-        // cheap) → arbitraj marjı korundu, sadece müşteri fiyatı düştü.
-        let stock = player.inventory.get(rich_city, product);
-        if stock > 0 {
+        // SAT — stoğu olan **her** off-cheap şehirde SAT (sadece rich_city
+        // değil). Caravan dispatch rotation Ist veya Izm'e mal götürdüğünde
+        // o şehirde de SAT yaz → ölü ham bucket'lar canlanır.
+        // Fiyat: o şehirin baseline × 95 (Esnaf 95% BUY'u yakalar).
+        for to_city in CityId::ALL {
+            if to_city == cheap_city {
+                continue;
+            }
+            let stock = player.inventory.get(to_city, product);
+            if stock == 0 {
+                continue;
+            }
+            let to_baseline = state
+                .effective_baseline(to_city, product)
+                .map(|m| m.as_cents())
+                .unwrap_or(0);
+            if to_baseline <= cheap_price.as_cents() {
+                continue;
+            }
+            let sell_price = Money::from_cents(to_baseline.saturating_mul(95) / 100);
             let sell_qty = stock.min(25);
-            let sell_price = Money::from_cents(rich_price.as_cents().saturating_mul(95) / 100);
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,
-                city: rich_city,
+                city: to_city,
                 product,
                 quantity: sell_qty,
                 unit_price: sell_price,
             });
         }
+        // rich_price kullanılmadı artık ama scope için referansta tut.
+        let _ = rich_price;
     }
     out
 }
