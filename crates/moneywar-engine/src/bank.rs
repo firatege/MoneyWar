@@ -17,10 +17,13 @@ use crate::report::{LogEntry, TickReport};
 
 /// Banka kredi tarama periyodu (her N tick'te bir).
 const BANK_LEND_PERIOD: u32 = 12;
+// Banka tuning (Faz F3): NPC'lerin çoğu sezon boyu 3K altına iniyordu →
+// Banka her cycle 2 kredi açıyor → sezon boyu 30+ kredi → Banka batıyordu.
+// DISTRESS 3000 → 1000 (sadece gerçek iflas riski), MAX_LOANS 2 → 1.
 /// Borçlu cash eşiği (lira) — bu altına düşen NPC'ye kredi açılır.
-const DISTRESS_THRESHOLD_LIRA: i64 = 3_000;
+const DISTRESS_THRESHOLD_LIRA: i64 = 1_000;
 /// Bir Banka tek tick'te en fazla kaç kredi açar (panik önler).
-const MAX_LOANS_PER_BANK_PER_TICK: usize = 2;
+const MAX_LOANS_PER_BANK_PER_TICK: usize = 1;
 /// Standart kredi miktarı (lira).
 const LOAN_PRINCIPAL_LIRA: i64 = 8_000;
 /// Vade (tick).

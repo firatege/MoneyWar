@@ -72,7 +72,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if unit_price.as_cents() <= 0 {
                 continue;
             }
-            let quantity = affordable_qty(bucket_cash, unit_price, 30);
+            let quantity = affordable_qty(bucket_cash, unit_price, 15);
             if quantity > 0 {
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Buy,
@@ -87,7 +87,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         // Fab var → fab-bazlı, her şehirde her ihtiyaç (gerçek tedarik zinciri).
         // 3 şehir × N fab raw_input = 3N BUY. Tüccar mal taşıyabilir → her
         // şehirde Pamuk talebi varsa Sanayici Ist'ten Ank'a getirilen Pamuk'u
-        // da yakalar.
+        // da yakalar. Faz F3: qty 30 → 15 — kitap az kaynar, match verim ↑.
         let bucket_count = (needed_raws.len() * CityId::ALL.len()).max(1) as i64;
         let bucket_cash = Money::from_cents(player.cash.as_cents() / 2 / bucket_count);
         for city in CityId::ALL {
@@ -100,7 +100,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 if unit_price.as_cents() <= 0 {
                     continue;
                 }
-                let quantity = affordable_qty(bucket_cash, unit_price, 30);
+                let quantity = affordable_qty(bucket_cash, unit_price, 15);
                 if quantity > 0 {
                     out.push(ActionCandidate::SubmitOrder {
                         side: OrderSide::Buy,

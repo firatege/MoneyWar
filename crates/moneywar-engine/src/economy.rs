@@ -52,8 +52,11 @@ const CONSUME_PCT: u32 = 25;
 /// Mahsul refill periyodu — her N tick'te Çiftçi'lere stok inject.
 const HARVEST_PERIOD: u32 = 8;
 /// Mahsul miktarı (birim) — her Çiftçi'ye specialty ürünü.
-const HARVEST_QTY_MIN: u32 = 150;
-const HARVEST_QTY_MAX: u32 = 300;
+/// Faz F3: 150-300 → 300-600 (2× artış). Sanayici fab-bazlı her şehirde
+/// raw arıyor; Çiftçi arzı 9× az kalıyordu → off-specialty bucket'lar ölüydü.
+/// Arz arttırılırsa Tüccar daha çok dağıtım yapar, ölü bucket'lar canlanır.
+const HARVEST_QTY_MIN: u32 = 300;
+const HARVEST_QTY_MAX: u32 = 600;
 
 /// Vergi periyodu — şu an aktif değil (wages closed loop yeterli).
 const TAX_PERIOD: u32 = 10;
