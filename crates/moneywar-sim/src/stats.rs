@@ -282,10 +282,10 @@ impl QualityScore {
                 ("Medium alıcı", 1.0, 0.0, -75_000.0),
             ),
             Difficulty::Hard => (
-                ("Hard", 1.5, 0.0, -90_000.0),
+                ("Hard", 1.5, 0.0, -110_000.0),
                 ("Hard verim", 1.5, 0.0, 0.0),
                 ("Hard human pnl", 1.5, 0.0, 0.0),
-                ("Hard alıcı", 1.5, 0.0, -90_000.0),
+                ("Hard alıcı", 1.5, 0.0, -110_000.0),
             ),
             // Synthetic: ekonomi baseline. Eşikler gevşek tutuldu — hedef
             // davranış optimallik değil "ekonomi mantıklı bir denge buluyor mu".

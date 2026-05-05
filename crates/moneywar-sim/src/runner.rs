@@ -250,7 +250,7 @@ fn record_action(cmd: &Command, kind_label: &str, mix: &mut RoleActionMix, _stat
                 "Ciftci" => is_buy || !is_raw, // Çiftçi sadece SELL raw
                 "Banka" => true,                // Banka komut emit etmemeli
                 "Alici" => is_buy && is_raw,    // Alıcı raw almasın
-                "Esnaf" => is_buy && !is_raw,   // Toptancı mamul almasın
+                "Esnaf" => false,               // Yeni tasarım: Esnaf perakendeci, mamul de alır
                 _ => false,
             };
             if forbidden {

@@ -1,11 +1,13 @@
-//! Esnaf rol davranışı — toptancı, ham mal aracısı.
+//! Esnaf rol davranışı — perakendeci + ham toptancı.
 //!
-//! Esnaf'ın iki taraflı işi:
-//! - **AL ham**: Çiftçi'den toptan ham mal alımı (`base × 0.95` markdown)
-//! - **SAT ham**: Sanayici/Alıcı'ya markup'lı satış (`base × 1.05`)
+//! Yeni tasarım (gerçek tedarik zinciri):
+//! - **Mamul BUY** (toptan): Sanayici'den baseline'da mamul alır → her şehirde
+//! - **Mamul SAT** (perakende): stoktaki mamulu Alıcı'ya `base × 1.05` markup
+//! - **Ham BUY**: Çiftçi'den specialty raw toptan (`base × 0.95`)
+//! - **Ham SAT**: stoktaki raw'u Sanayici'ye markup (`base × 1.05`)
 //!
-//! Mamul almaz (Sanayici'nin tekeli); mamul satmaz (üretim yok). Aday üretimi
-//! tipini doğal olarak filtreliyor.
+//! Esnaf artık **gerçek perakendeci** rolü oynuyor — Sanayici → Esnaf → Alıcı
+//! zincirinin orta halkası. Mamul üretmez (fab yok), sadece dağıtım.
 //!
 //! # `Weights` mantığı (`personality.rs`'te)
 //!
@@ -15,7 +17,7 @@
 //! - `competition -0.2` — rakip baskı varsa bekle
 
 use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, Player,
+    CityId, GameState, Money, OrderSide, Player, ProductKind,
     balance::TRANSACTION_TAX_PCT,
 };
 
@@ -55,16 +57,53 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
-    // 2) Ham SAT — base × 1.05 markup, stoktaki ham mallar.
+    // 2) Mamul AL — Sanayici'den toptan, baseline'da. 9 BUY (3 şehir × 3 mamul).
+    //    Esnaf'ın yeni perakendeci rolü: Sanayici → Esnaf → Alıcı zinciri.
+    let mamul_bucket_cash =
+        Money::from_cents((player.cash.as_cents() / 9).max(0));
+    for city in CityId::ALL {
+        for product in ProductKind::FINISHED_GOODS {
+            let baseline = state
+                .effective_baseline(city, product)
+                .unwrap_or_else(|| {
+                    Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
+                        .unwrap_or(Money::ZERO)
+                });
+            // Toptan fiyat = baseline (Sanayici'nin SAT fiyatı). Markdown yok
+            // → Esnaf kâr marjını perakende SAT'tan kazanır.
+            let unit_price = baseline;
+            if unit_price.as_cents() <= 0 {
+                continue;
+            }
+            let quantity = affordable_qty(mamul_bucket_cash, unit_price, 25);
+            if quantity == 0 {
+                continue;
+            }
+            out.push(ActionCandidate::SubmitOrder {
+                side: OrderSide::Buy,
+                city,
+                product,
+                quantity,
+                unit_price,
+            });
+        }
+    }
+
+    // 3) SAT — stoktaki her şey baseline × 1.05 markup
+    //    (raw → Sanayici toptan, mamul → Alıcı perakende).
     for (city, product, qty) in player.inventory.entries() {
-        if !product.is_raw() || qty == 0 {
+        if qty == 0 {
             continue;
         }
         let baseline = state
             .effective_baseline(city, product)
             .unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                    .unwrap_or(Money::ZERO)
+                let lira = if product.is_finished() {
+                    moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+                } else {
+                    moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+                };
+                Money::from_lira(lira).unwrap_or(Money::ZERO)
             });
         let unit_price = scale_pct(baseline, 105);
         if unit_price.as_cents() <= 0 {
@@ -141,26 +180,33 @@ mod tests {
     }
 
     #[test]
-    fn esnaf_buys_only_city_specialty_raw() {
+    fn esnaf_buys_specialty_raw_per_city() {
+        // Esnaf raw BUY sadece şehir specialty (3 emir). Mamul BUY ayrı (9 emir).
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
         for c in &cands {
             if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, city, product, .. } = c {
-                assert_eq!(*product, city.cheap_raw(),
-                    "Esnaf BUY {city:?}'in specialty'si dışında ürün almamalı");
+                if product.is_raw() {
+                    assert_eq!(*product, city.cheap_raw(),
+                        "Esnaf raw BUY: {city:?}'in specialty'si dışında ham almamalı");
+                }
             }
         }
     }
 
     #[test]
-    fn finished_stock_does_not_yield_candidates() {
-        // Esnaf elinde mamul olamaz normalde, ama gelirse SELL etmemeli.
+    fn finished_stock_yields_sell_candidate() {
+        // Yeni tasarım: Esnaf perakendeci, mamul stoğunu Alıcı'ya markup'la satar.
         let s = fresh();
         let mut p = esnaf(0);
         p.inventory.add(CityId::Istanbul, ProductKind::Kumas, 100).unwrap();
         let cands = enumerate(&s, &p);
-        assert!(cands.is_empty(), "Esnaf mamul satmaz, cash yok BUY da yok");
+        let sell_finished_count = cands
+            .iter()
+            .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Sell, product, .. } if product.is_finished()))
+            .count();
+        assert_eq!(sell_finished_count, 1, "mamul stoğu varsa SELL emit");
     }
 
     #[test]
@@ -177,17 +223,41 @@ mod tests {
     }
 
     #[test]
-    fn buy_price_below_baseline() {
+    fn raw_buy_price_below_baseline() {
+        // Ham BUY hâlâ %95 markdown (toptan kâr için).
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
-        let baseline = Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA).unwrap();
+        let raw_baseline = Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA).unwrap();
         for c in &cands {
-            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, unit_price, .. } = c {
-                assert!(unit_price.as_cents() < baseline.as_cents(),
-                    "Esnaf BUY < baseline (%95 markdown)");
+            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
+                if product.is_raw() {
+                    assert!(unit_price.as_cents() < raw_baseline.as_cents(),
+                        "Esnaf raw BUY < baseline (%95 markdown)");
+                }
             }
         }
+    }
+
+    #[test]
+    fn finished_buy_at_baseline() {
+        // Mamul BUY toptan baseline'da (Sanayici'den) — markdown yok, kâr
+        // perakende SAT'tan gelir.
+        let s = fresh();
+        let p = esnaf(50_000);
+        let cands = enumerate(&s, &p);
+        let finished_baseline = Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA).unwrap();
+        let mut found = false;
+        for c in &cands {
+            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
+                if product.is_finished() {
+                    assert_eq!(*unit_price, finished_baseline,
+                        "Esnaf mamul BUY = baseline (toptan)");
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "Esnaf mamul BUY adayları olmalı");
     }
 
     #[test]

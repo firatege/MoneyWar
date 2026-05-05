@@ -105,12 +105,12 @@ pub fn default_contracts() -> Vec<RoleContract> {
         },
         RoleContract {
             kind: "Esnaf",
-            mandate: "Toptancı — Çiftçi'den ham al, Sanayici/Alıcı'ya markup'la sat.",
+            mandate: "Perakendeci — Sanayici'den mamul al toptan, Alıcı'ya markup'la sat. Ham toptancılık ek görev.",
             required_actions: &[
                 RequiredAction {
-                    label: "BUY raw",
+                    label: "BUY mamul (toptan, Sanayici'den)",
                     min_count: 3,
-                    field: ActionField::BuyRaw,
+                    field: ActionField::BuyFinished,
                 },
                 RequiredAction {
                     label: "SELL toplam (raw+finished)",
@@ -118,9 +118,9 @@ pub fn default_contracts() -> Vec<RoleContract> {
                     field: ActionField::SellAny,
                 },
             ],
-            forbidden_label: "BUY mamul (Sanayici işi)",
-            // PnL bandı: vergi (closed loop %5) + haber tier maliyetini absorbe eder.
-            // Trading marjı ~ -1500₺ ile +5K arası gerçekçi.
+            // Yeni tasarım: Esnaf mamul perakendecisi → BUY mamul artık beklenen
+            // davranış. Forbidden değişti (eski threshold'a karşı).
+            forbidden_label: "yok (Esnaf serbestçe ham + mamul ticareti yapabilir)",
             min_pnl_lira: -6_500.0,
             max_pnl_lira: 60_000.0,
             min_dominant_action_share: 0.0,

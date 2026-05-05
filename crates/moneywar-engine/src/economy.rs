@@ -25,7 +25,10 @@ const WAGE_PERIOD: u32 = 10;
 /// Faz E tuning: 100 → 250. Behavior motorda Sanayici +27K, Alıcı -60K idi.
 /// 2.5× pompa: 250 × 9 sefer × ~3 fab = 6.75K transfer/Sanayici, 8 Alıcı'ya
 /// ~22.5K toplam akış → Sanayici dengelenir, Alıcı kaybı azalır.
-const WAGE_PER_FACTORY_LIRA: i64 = 250;
+/// Faz F2 tuning: 250 → 400. Esnaf perakendeci (yeni tedarik zinciri)
+/// Alıcı'dan daha fazla para çekiyor (+21K Esnaf kârı), Alıcı -92K → eşik
+/// aşıyor. Wages 1.6× ile Alıcı'ya ek pompa, kayıp ~-65K civarına iner.
+const WAGE_PER_FACTORY_LIRA: i64 = 400;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
