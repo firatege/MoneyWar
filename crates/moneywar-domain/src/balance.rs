@@ -74,7 +74,10 @@ pub const CARAVAN_CAPACITY_SANAYICI: u32 = 200;
 
 /// Tüccar kervanı kapasitesi — daha büyük (§10).
 /// 50 → 500: hacim 10× ölçek revizyonu.
-pub const CARAVAN_CAPACITY_TUCCAR: u32 = 500;
+/// Faz F4: 500 → 800. Yeni tedarik zincirinde Tüccar şehirler arası mal
+/// taşıyor (off-specialty bucket'ları besler). 4 Tüccar × 3 caravan ×
+/// 800 = 9600 birim/dispatch, ölü bucket'lara daha çok arz akışı.
+pub const CARAVAN_CAPACITY_TUCCAR: u32 = 800;
 
 /// Sanayici kervan maliyet tablosu (§10).
 pub const CARAVAN_COSTS_SANAYICI_LIRA: [i64; 3] = [0, 5_000, 10_000];

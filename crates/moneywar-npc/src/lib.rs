@@ -91,14 +91,32 @@ pub fn decide_all_npcs(
         .iter()
         .filter_map(|(id, p)| if p.is_npc { Some(*id) } else { None })
         .collect();
+    // Shadow state: NPC'ler sıralı işlenir, her birinin kararı bir sonrakine
+    // görünür. Tick içi state immutable problemi çözülür → 5 Sanayici aynı
+    // anda "Ist-Kumas boş" diyemez, ikinci NPC ilkini görür.
+    let mut shadow = state.clone();
     let mut cmds = Vec::new();
     for pid in npc_ids {
         let next = match difficulty {
-            Difficulty::Synthetic => synthetic::decide_synthetic(state, pid, tick),
+            Difficulty::Synthetic => synthetic::decide_synthetic(&shadow, pid, tick),
             Difficulty::Easy | Difficulty::Medium | Difficulty::Hard => {
-                behavior::decide_behavior(state, pid, rng, tick, difficulty.behavior())
+                behavior::decide_behavior(&shadow, pid, rng, tick, difficulty.behavior())
             }
         };
+        // BuildFactory komutlarını shadow'a yansıt — sonraki NPC görür.
+        for cmd in &next {
+            if let moneywar_domain::Command::BuildFactory {
+                owner, city, product,
+            } = cmd
+            {
+                let next_id = shadow.counters.next_factory_id;
+                shadow.counters.next_factory_id = shadow.counters.next_factory_id.saturating_add(1);
+                let fid = moneywar_domain::FactoryId::new(next_id);
+                if let Ok(f) = moneywar_domain::Factory::new(fid, *owner, *city, *product) {
+                    shadow.factories.insert(fid, f);
+                }
+            }
+        }
         cmds.extend(next);
     }
     cmds

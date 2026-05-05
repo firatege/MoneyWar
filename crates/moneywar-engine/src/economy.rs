@@ -26,9 +26,10 @@ const WAGE_PERIOD: u32 = 10;
 /// 2.5× pompa: 250 × 9 sefer × ~3 fab = 6.75K transfer/Sanayici, 8 Alıcı'ya
 /// ~22.5K toplam akış → Sanayici dengelenir, Alıcı kaybı azalır.
 /// Faz F2 tuning: 250 → 400. Esnaf perakendeci (yeni tedarik zinciri)
-/// Alıcı'dan daha fazla para çekiyor (+21K Esnaf kârı), Alıcı -92K → eşik
-/// aşıyor. Wages 1.6× ile Alıcı'ya ek pompa, kayıp ~-65K civarına iner.
-const WAGE_PER_FACTORY_LIRA: i64 = 400;
+/// Alıcı'dan daha fazla para çekiyor (+21K Esnaf kârı).
+/// Faz F4: 400 → 500. Alıcı hâlâ -92K eşiğe yakın, wages 25% ek pompa
+/// ile -75K civarına iner.
+const WAGE_PER_FACTORY_LIRA: i64 = 500;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
