@@ -30,6 +30,7 @@ pub mod dss;
 pub mod engine;
 mod error;
 pub mod fuzzy;
+pub mod synthetic;
 
 pub use error::NpcError;
 
@@ -41,7 +42,7 @@ use moneywar_domain::{
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
-/// NPC zorluk seviyesi (3 kademe — Easy/Medium/Hard).
+/// NPC zorluk seviyesi (4 kademe — Easy/Medium/Hard/Synthetic).
 /// Oyun başlangıcında seçilir, tüm NPC'lere uygulanır.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Difficulty {
@@ -54,6 +55,10 @@ pub enum Difficulty {
     /// DSS NPC — kişilik arketipi + utility AI ile gerçek strateji.
     /// 7 archetype seed ile atanır. Faz 4+ sonrası fuzzy motora taşınacak.
     Hard,
+    /// Synthetic NPC — sade, deterministic, AI'sız. Ekonomi mekaniğini AI
+    /// varyansından bağımsız test etmek için. Her rol sabit kuralla çalışır
+    /// (`crate::synthetic`). Tuning baseline'ı + regresyon kapısı olarak kullanılır.
+    Synthetic,
 }
 
 impl Difficulty {
@@ -63,6 +68,7 @@ impl Difficulty {
             Self::Easy => "Easy (kişilikli ama yavaş ve seçici)",
             Self::Medium => "Medium (kişilikli, dengeli rekabet)",
             Self::Hard => "Hard (kişilikli, agresif ve hızlı)",
+            Self::Synthetic => "Synthetic (sade kurallar — ekonomi testi)",
         }
     }
     #[must_use]
@@ -70,7 +76,8 @@ impl Difficulty {
         match self {
             Self::Easy => Self::Medium,
             Self::Medium => Self::Hard,
-            Self::Hard => Self::Easy,
+            Self::Hard => Self::Synthetic,
+            Self::Synthetic => Self::Easy,
         }
     }
 
@@ -99,6 +106,14 @@ impl Difficulty {
                 silence_ratio_per10: 1,
                 aggressiveness: 1.3,
                 min_score_threshold: -0.5, // negatif skoru bile dene (riskli aksiyon)
+            },
+            // Synthetic fuzzy motoru kullanmaz, ama trait/API uyumu için
+            // makul varsayılanlar — `decide_all_npcs` bu kolu görmez.
+            Self::Synthetic => DifficultyModulator {
+                max_actions_per_tick: 99,
+                silence_ratio_per10: 0,
+                aggressiveness: 1.0,
+                min_score_threshold: 0.0,
             },
         }
     }
@@ -788,12 +803,15 @@ pub fn decide_all_npcs(
         .collect();
     let mut cmds = Vec::new();
     for pid in npc_ids {
-        // Dispatch v3 — TÜM NPC kindleri tek fuzzy motoru kullanır.
-        // engine::decide_npc_fuzzy player'ın role + npc_kind'ına göre uygun
-        // rule base'i seçer; difficulty modulator parametreleri filtreler.
-        let _ = (kind_legacy_unused(state, pid), tick); // tick parametresi NextTick state'inde implicit
-        let modulator = difficulty.modulator();
-        let next = crate::engine::decide_npc_fuzzy(state, pid, modulator, rng);
+        let _ = kind_legacy_unused(state, pid);
+        let next = match difficulty {
+            // Synthetic: AI'sız sade kurallar (ekonomi testi baseline'ı).
+            Difficulty::Synthetic => crate::synthetic::decide_synthetic(state, pid, tick),
+            // Diğer 3 difficulty: fuzzy motoru, modulator parametreleriyle filtre.
+            Difficulty::Easy | Difficulty::Medium | Difficulty::Hard => {
+                crate::engine::decide_npc_fuzzy(state, pid, difficulty.modulator(), rng)
+            }
+        };
         cmds.extend(next);
     }
     cmds

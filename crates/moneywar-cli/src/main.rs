@@ -2468,6 +2468,7 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                         Difficulty::Easy => Color::Green,
                         Difficulty::Medium => Color::Yellow,
                         Difficulty::Hard => Color::Red,
+                        Difficulty::Synthetic => Color::Gray,
                     })
                     .add_modifier(Modifier::BOLD),
             ),

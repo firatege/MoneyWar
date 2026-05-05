@@ -287,6 +287,14 @@ impl QualityScore {
                 ("Hard human pnl", 1.5, 0.0, 0.0),
                 ("Hard alıcı", 1.5, 0.0, -90_000.0),
             ),
+            // Synthetic: ekonomi baseline. Eşikler gevşek tutuldu — hedef
+            // davranış optimallik değil "ekonomi mantıklı bir denge buluyor mu".
+            Difficulty::Synthetic => (
+                ("Synthetic", 1.0, 0.0, -100_000.0),
+                ("Synthetic verim", 1.0, 0.0, 0.0),
+                ("Synthetic human pnl", 1.0, 0.0, 0.0),
+                ("Synthetic alıcı", 1.0, 0.0, -100_000.0),
+            ),
         };
         let _ = matches;
 
@@ -307,6 +315,9 @@ impl QualityScore {
             Difficulty::Easy => -10_000.0,
             Difficulty::Medium => -8_000.0,
             Difficulty::Hard => 0.0,
+            // Synthetic'te Spekülatör sabit %5 spread — break-even hedefi
+            // gevşek tutuldu çünkü sabit kuralda volatilite avantajı yok.
+            Difficulty::Synthetic => -15_000.0,
         };
         details.push((
             format!("Spekülatör PnL ≥ {}₺", spek_threshold as i64),
@@ -330,6 +341,9 @@ impl QualityScore {
             Difficulty::Easy => san_pnl > -20_000.0 && tuc_pnl > 0.0,
             Difficulty::Medium => san_pnl > -15_000.0 && tuc_pnl > 3_000.0,
             Difficulty::Hard => san_pnl > -20_000.0 && tuc_pnl > 5_000.0,
+            // Synthetic: ekonomi sağlıklıysa Sanayici break-even üstünde,
+            // Tüccar arbitraj fırsatı bulduğu için pozitif.
+            Difficulty::Synthetic => san_pnl > -25_000.0 && tuc_pnl > -5_000.0,
         };
         details.push((
             "Sanayici + Tüccar PnL hedefte".into(),
