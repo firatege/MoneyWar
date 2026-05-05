@@ -49,46 +49,46 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
     }
 
-    // 2) Ham madde AL — her şehir × her ham mal.
-    //    cash bucket = (cash - rezerv) / 9 bucket × tax-aware affordable_qty.
-    let bucket_cash = bucket_buy_budget(player);
+    // 2) Ham madde AL — base × 0.95 markdown (rekabet alanı korunur, insan
+    //    oyuncu %96 yazıp Sanayici'yi geçebilir). Sadece şehir specialty
+    //    raw'ı (3 emir/tick) — önceki 9 bucket kitabı kaynatıyordu.
+    let bucket_cash = Money::from_cents((player.cash.as_cents() / 6).max(0));
     for city in CityId::ALL {
-        for product in ProductKind::RAW_MATERIALS {
-            let unit_price = state.effective_baseline(city, product).unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                    .unwrap_or(Money::ZERO)
-            });
-            if unit_price.as_cents() <= 0 {
-                continue;
-            }
-            let quantity = affordable_qty(bucket_cash, unit_price, 30);
-            if quantity == 0 {
-                continue;
-            }
-            out.push(ActionCandidate::SubmitOrder {
-                side: OrderSide::Buy,
-                city,
-                product,
-                quantity,
-                unit_price,
-            });
+        let product = city.cheap_raw();
+        let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                .unwrap_or(Money::ZERO)
+        });
+        let unit_price = scale_pct(baseline, 95);
+        if unit_price.as_cents() <= 0 {
+            continue;
         }
+        let quantity = affordable_qty(bucket_cash, unit_price, 30);
+        if quantity == 0 {
+            continue;
+        }
+        out.push(ActionCandidate::SubmitOrder {
+            side: OrderSide::Buy,
+            city,
+            product,
+            quantity,
+            unit_price,
+        });
     }
 
-    // 3) Mamul SAT — fabrikadan çıkan stoğu pazara at.
+    // 3) Mamul SAT — base × 1.05 markup, stoktaki mamul.
     for (city, product, qty) in player.inventory.entries() {
         if !product.is_finished() || qty == 0 {
             continue;
         }
         let quantity = (qty / 2).max(1).min(50);
-        // Mamul satış fiyatı baseline'ın hafif üstü (markup), clamp zaten
-        // motor tarafında uygulanıyor — burada baseline yeterli.
-        let unit_price = state
+        let baseline = state
             .effective_baseline(city, product)
             .unwrap_or_else(|| {
                 Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                     .unwrap_or(Money::ZERO)
             });
+        let unit_price = scale_pct(baseline, 105);
         if unit_price.as_cents() <= 0 {
             continue;
         }
@@ -102,6 +102,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     }
 
     out
+}
+
+fn scale_pct(price: Money, pct: i64) -> Money {
+    Money::from_cents(price.as_cents().saturating_mul(pct) / 100)
 }
 
 /// Kuracak fab hedefini seç: Sanayici'nin henüz kuramadığı (city, mamul)
@@ -123,12 +127,6 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
     None
 }
 
-/// Sanayici cash'inin BUY için ayırdığı bucket — 9 bucket (3 şehir × 3 ham).
-/// Cash'in 1/2'si BUY için, kalan 1/2 fab + reserve.
-fn bucket_buy_budget(player: &Player) -> Money {
-    let cents = player.cash.as_cents() / 2 / 9;
-    Money::from_cents(cents.max(0))
-}
 
 /// Tax-aware satın alma qty.
 fn affordable_qty(cash: Money, unit_price: Money, want: u32) -> u32 {
@@ -193,7 +191,8 @@ mod tests {
     }
 
     #[test]
-    fn rich_sanayici_emits_raw_buy_candidates() {
+    fn rich_sanayici_emits_three_specialty_buy_candidates() {
+        // Sanayici sadece şehrin specialty raw'ı için BUY emit eder (3 BUY).
         let s = fresh();
         let p = sanayici(50_000);
         let cands = enumerate(&s, &p);
@@ -201,7 +200,20 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, .. } if product.is_raw()))
             .count();
-        assert_eq!(buy_count, 9, "3 şehir × 3 ham = 9 BUY adayı");
+        assert_eq!(buy_count, 3, "3 şehir × specialty = 3 BUY adayı");
+    }
+
+    #[test]
+    fn sanayici_buys_only_city_specialty_raw() {
+        let s = fresh();
+        let p = sanayici(50_000);
+        let cands = enumerate(&s, &p);
+        for c in &cands {
+            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, city, product, .. } = c {
+                assert_eq!(*product, city.cheap_raw(),
+                    "Sanayici BUY {city:?}'in specialty'si dışında ürün almamalı");
+            }
+        }
     }
 
     #[test]

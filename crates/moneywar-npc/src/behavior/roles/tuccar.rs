@@ -21,7 +21,9 @@ use moneywar_domain::{
 use crate::behavior::candidates::ActionCandidate;
 
 /// Arbitraj eşiği — bu yüzdeden az spread varsa arbitraj kârsız.
-const ARBITRAGE_SPREAD_PCT: i64 = 20;
+/// Faz F tuning: 20 → 15. Demand_for matrisi mamul baseline farkını
+/// %25-28 yaratıyor; ham specialty farkı %14-75 (çoğunlukla yeterli).
+const ARBITRAGE_SPREAD_PCT: i64 = 15;
 
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {

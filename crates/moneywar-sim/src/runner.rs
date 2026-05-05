@@ -5,8 +5,8 @@
 //! insan tarafı senaryo scripti ile.
 
 use moneywar_domain::{
-    CityId, Command, GameState, Money, NewsTier, Personality, Player, PlayerId, ProductKind,
-    Role, RoomConfig, RoomId, Tick,
+    CityId, Command, DemandLevel, GameState, Money, NewsTier, Personality, Player, PlayerId,
+    ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{TickReport, advance_tick, rng_for};
 use moneywar_npc::{Difficulty, decide_all_npcs};
@@ -332,16 +332,22 @@ fn build_state(runner: &SimRunner) -> GameState {
     // price_baseline'ı doldur — domain'de hiç insert yok, BTreeMap boş başlıyor.
     // Sonuç: effective_baseline() hep None → arbitrage_price_cents fallback'i
     // sezon başında çalışmıyor → dead bucket'lar self-reinforcing oluyor.
-    // Şema: lokal cheap_raw 4₺, off-cheap raw 7₺, mamul her şehirde 14₺.
-    // %75 spread Tüccar arbitraj gate'i (≥%3) için fazlasıyla yeterli.
-    for city in CityId::ALL {
+    // Şema:
+    // - Ham: lokal specialty 4₺, off-specialty 7₺ (şehir-uzmanlık spread'i)
+    // - Mamul: şehir talebine göre farklılaştırılmış (gerçek hayat tedarik
+    //   zinciri — lüks/popüler şehirde mamul pahalı, taşrada ucuz):
+    //     * High talep (örn. İst-Kumas, Ank-Un) → 36₺
+    //     * Normal talep                       → 28₺ (default)
+    // Bu farklılaştırma Tüccar mamul arbitrajı için %25-30 spread yaratır.
+        for city in CityId::ALL {
         let cheap = city.cheap_raw();
         for product in ProductKind::ALL {
-            // Mamul 24 → 28: Sanayici hâlâ -30K. Çiftçi çok ham satıyor (+18K),
-            // Sanayici ham gideri yüksek. Mamul/ham marj 4×: gerçek hayat
-            // imalat üretim katma değer benzeri (örn. tekstilde ham/mamul ~3-5×).
             let lira = if product.is_finished() {
-                28
+                match city.demand_for(product) {
+                    DemandLevel::High => 36,
+                    DemandLevel::Normal => 28,
+                    DemandLevel::Low => 22,
+                }
             } else if product == cheap {
                 4
             } else {
