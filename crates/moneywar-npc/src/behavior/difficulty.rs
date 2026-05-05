@@ -18,10 +18,13 @@ pub struct BehaviorDifficulty {
 }
 
 impl BehaviorDifficulty {
-    /// Hard — tüm aday seti (synthetic baseline'a yakın aktivite).
-    /// Sanayici 10+, Spekülatör 18 aday üretebiliyor; Hard agresif emit.
+    /// Hard — odaklı emit. NPC'ler en iyi K aksiyona indirgenir; daha az ama
+    /// daha doğru emir → kitap dolar gürültü düşer, match verim artar.
+    /// Önceki 32 ile Spekülatör 36 aday geliyordu, kitap kaynatıyordu;
+    /// 12 ile en kıymetli 12 aksiyon (Sanayici Build/BUY/SAT seti, Tüccar
+    /// arbitraj çiftleri, vs.) emit edilir.
     pub const HARD: Self = Self {
-        top_k: 32,
+        top_k: 12,
         silence_per_10: 0,
         noise: 0.05,
         min_score: 0.0,
@@ -29,7 +32,7 @@ impl BehaviorDifficulty {
 
     /// Medium — yarısı kadar aksiyon, hafif sessizlik.
     pub const MEDIUM: Self = Self {
-        top_k: 8,
+        top_k: 6,
         silence_per_10: 1,
         noise: 0.10,
         min_score: 0.10,
@@ -47,5 +50,34 @@ impl BehaviorDifficulty {
 impl Default for BehaviorDifficulty {
     fn default() -> Self {
         Self::MEDIUM
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presets_are_monotonic_by_top_k() {
+        // Easy < Medium < Hard
+        assert!(BehaviorDifficulty::EASY.top_k < BehaviorDifficulty::MEDIUM.top_k);
+        assert!(BehaviorDifficulty::MEDIUM.top_k < BehaviorDifficulty::HARD.top_k);
+    }
+
+    #[test]
+    fn easy_silences_more_than_hard() {
+        assert!(BehaviorDifficulty::EASY.silence_per_10 > BehaviorDifficulty::HARD.silence_per_10);
+    }
+
+    #[test]
+    fn min_score_threshold_descends_with_difficulty() {
+        // Easy seçici (yüksek eşik), Hard hep emit (düşük eşik)
+        assert!(BehaviorDifficulty::EASY.min_score > BehaviorDifficulty::MEDIUM.min_score);
+        assert!(BehaviorDifficulty::MEDIUM.min_score > BehaviorDifficulty::HARD.min_score);
+    }
+
+    #[test]
+    fn default_is_medium() {
+        assert_eq!(BehaviorDifficulty::default(), BehaviorDifficulty::MEDIUM);
     }
 }
