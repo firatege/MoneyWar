@@ -113,7 +113,7 @@ fn tuccar_istanbul_to_ankara_arbitrage_full_cycle() {
     );
     let (s6, _) = advance_tick(&s5, &[sell, buy_ord]).unwrap();
 
-    // Midpoint 8₺, 10 × 8 = 80₺.
+    // Pay-as-bid: trade fiyatı = BUY emrindeki limit (9₺), 10 × 9 = 90₺.
     assert_eq!(
         s6.players[&PlayerId::new(2)]
             .inventory
@@ -131,6 +131,6 @@ fn tuccar_istanbul_to_ankara_arbitrage_full_cycle() {
             .last()
             .unwrap()
             .1,
-        Money::from_lira(8).unwrap()
+        Money::from_lira(9).unwrap()
     );
 }

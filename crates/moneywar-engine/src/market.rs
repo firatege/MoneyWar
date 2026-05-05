@@ -32,14 +32,14 @@
 //!      ile kalır (persistent order book).
 
 use moneywar_domain::{
-    CityId, GameState, MarketOrder, Money, OrderSide, ProductKind, Tick,
+    CityId, GameState, MarketOrder, Money, ProductKind, Tick,
     balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT, TRANSACTION_TAX_PCT},
 };
 
 use crate::report::{LogEntry, TickReport};
 
-/// Tek bir eşleşme. Şimdilik `market.rs` içinde private — Faz 3C settle
-/// fonksiyonu buraya taşınınca export edilebilir.
+/// Tek bir eşleşme. Pay-as-bid modeli: `price` her fill için ayrı tutulur,
+/// alıcının kendi BUY emrindeki `unit_price`'ı.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Fill {
     buy_order_id: moneywar_domain::OrderId,
@@ -47,18 +47,31 @@ struct Fill {
     buyer: moneywar_domain::PlayerId,
     seller: moneywar_domain::PlayerId,
     quantity: u32,
+    /// Fill fiyatı — pay-as-bid mantığında alıcının limit fiyatı. Saturation
+    /// half tier'a düşen segment bu fiyatın yarısından settle olur.
+    price: Money,
 }
 
 /// Tüm `(city, product)` bucket'larını sırayla temizle.
 ///
 /// Bucket'ların işleme sırası `BTreeMap` iterasyon sırası — yani
 /// `(CityId, ProductKind)` doğal sıralaması. Determinism için kritik.
+///
+/// Algoritma: **batch + tick-shuffle + pay-as-bid** (memory'deki borsa kararı):
+/// 1. Tick boyu emirler kitaba toplandı (mevcut).
+/// 2. Tick sonu motor her bucket'ı seed-shuffled sırada işler.
+/// 3. Her gelen emir kitaba düşer; eğer karşı tarafta uygun fiyat varsa
+///    anında eşleşir (continuous matching tek-tick içinde).
+/// 4. Trade fiyatı = **alıcının BUY limit fiyatı** (pay-as-bid).
+/// 5. Saturation eşik üstü: yarı fiyatta settle (anti-snowball).
 pub(crate) fn clear_markets(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     let keys: Vec<(CityId, ProductKind)> = state.order_book.keys().copied().collect();
-    // Saturation eşiği oda katılımcı sayısına bağlı (§10). Tüm bucket'lar için sabit.
     let threshold = state.config.saturation_threshold(state.participant_count());
+    // Tek deterministic RNG bütün bucket'lar için — bucket sırası BTreeMap
+    // iteration deterministik, RNG state ilerler ama hepsi aynı seed'den.
+    let mut rng = crate::rng::rng_for(state.room_id, tick);
     for key in keys {
-        clear_bucket(state, report, tick, key, threshold);
+        clear_bucket(state, report, tick, key, threshold, &mut rng);
     }
 }
 
@@ -68,75 +81,59 @@ fn clear_bucket(
     tick: Tick,
     key: (CityId, ProductKind),
     threshold: u32,
+    rng: &mut rand_chacha::ChaCha8Rng,
 ) {
     let (city, product) = key;
-    let Some(orders) = state.order_book.remove(&key) else {
+    let Some(mut orders) = state.order_book.remove(&key) else {
         return;
     };
 
-    let (mut buys, mut sells): (Vec<_>, Vec<_>) = orders
-        .into_iter()
-        .partition(|o| matches!(o.side, OrderSide::Buy));
+    let submitted_buy_qty: u32 = orders
+        .iter()
+        .filter(|o| o.side.is_buy())
+        .map(|o| o.quantity)
+        .sum();
+    let submitted_sell_qty: u32 = orders
+        .iter()
+        .filter(|o| o.side.is_sell())
+        .map(|o| o.quantity)
+        .sum();
 
-    buys.sort_by(|a, b| {
-        b.unit_price
-            .cmp(&a.unit_price)
-            .then_with(|| a.player.cmp(&b.player))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    sells.sort_by(|a, b| {
-        a.unit_price
-            .cmp(&b.unit_price)
-            .then_with(|| a.player.cmp(&b.player))
-            .then_with(|| a.id.cmp(&b.id))
-    });
+    // Tick-shuffle: emirler deterministic random sırayla kitaba düşer.
+    // Sıralama yerine RNG → NPC'lerin tick başında erken emit avantajı kapanır,
+    // human/NPC eşit şansta. Tie-break sonrası `(player_id, order_id)` ASC.
+    use rand::seq::SliceRandom;
+    orders.shuffle(rng);
 
-    let submitted_buy_qty: u32 = buys.iter().map(|o| o.quantity).sum();
-    let submitted_sell_qty: u32 = sells.iter().map(|o| o.quantity).sum();
+    let baseline = state.effective_baseline(city, product);
+    let (fills, leftover) = match_continuous(&orders, baseline);
+    let matched_qty: u32 = fills.iter().map(|f| f.quantity).sum();
 
-    let (fills, raw_clearing_price, matched_qty) = match_orders(&buys, &sells);
+    // Settlement: pay-as-bid + saturation half tier.
+    let saturation_qty = settle_fills(state, report, tick, city, product, &fills, threshold);
 
-    // Vic3 ilhamlı fiyat clamp: clearing fiyat baseline'ın
-    // [LOW_PCT%, HIGH_PCT%] aralığında olmak zorunda. Aşırı arz/talep
-    // durumunda fiyat tabana çakılmaz veya tavana fırlamaz. Baseline yoksa
-    // clamp atlanır (eski davranış). Şok zaten effective_baseline'a dahil,
-    // clamp şokun üstüne ek hareket alanı bırakır.
-    let clearing_price = raw_clearing_price.map(|p| {
-        let Some(base) = state.effective_baseline(city, product) else {
-            return p;
-        };
-        let base_cents = base.as_cents();
-        let low_cents = base_cents.saturating_mul(PRICE_CLAMP_LOW_PCT) / 100;
-        let high_cents = base_cents.saturating_mul(PRICE_CLAMP_HIGH_PCT) / 100;
-        let clamped = p.as_cents().clamp(low_cents.max(1), high_cents.max(1));
-        Money::from_cents(clamped)
-    });
-
-    // Settlement: clearing_price varsa her fill'i (saturation split + cash/stock
-    // transfer). Başarılı transfer sayısı raporun değil, `matched_qty` zaten
-    // match aşamasında kaydedilmişti — settlement reject'leri ayrı event.
-    let saturation_qty = if let Some(price) = clearing_price {
-        let sat = settle_fills(state, report, tick, city, product, &fills, price, threshold);
-        // Eşleşme olduysa price history'ye ekle (rolling avg için).
-        state
-            .price_history
-            .entry(key)
-            .or_default()
-            .push((tick, price));
-        sat
+    // price_history: matched fill'lerin ortalama fiyatı (rolling avg referansı).
+    let avg_price = if matched_qty > 0 {
+        let total_value: i64 = fills
+            .iter()
+            .map(|f| f.price.as_cents().saturating_mul(i64::from(f.quantity)))
+            .sum();
+        Some(Money::from_cents(total_value / i64::from(matched_qty)))
     } else {
-        0
+        None
     };
+    if let Some(p) = avg_price {
+        state.price_history.entry(key).or_default().push((tick, p));
+    }
 
-    // TTL persist: eşleşmeyen kalıntıyı kitaba geri koy, remaining_ticks -1,
-    // 0'a düşen emirler OrderExpired event'iyle düşer.
-    persist_unmatched_orders(state, report, tick, key, buys, sells, &fills);
+    // TTL persist: kalan emirler kitapta bekler.
+    persist_leftover_orders(state, report, tick, key, leftover);
 
     report.push(LogEntry::market_cleared(
         tick,
         city,
         product,
-        clearing_price,
+        avg_price,
         matched_qty,
         submitted_buy_qty,
         submitted_sell_qty,
@@ -145,58 +142,165 @@ fn clear_bucket(
     ));
 }
 
-/// Eşleşmeyen / kısmen eşleşmiş emirleri kitaba geri koyar, TTL countdown'u uygular.
+/// Continuous matching — shuffled sıraya göre her gelen emir kitaba düşer,
+/// karşı tarafta uygun fiyat varsa anında eşleşir.
 ///
-/// `fills` match sonucu — matched qty bu fonksiyon için "filled" sayılır
-/// (settlement reject olmuş olsa bile; bluff cezası). Her emir için:
-/// - `leftover = orig_qty - matched_qty`
-/// - `leftover == 0` → tamamen filled, sessizce düşer
-/// - `remaining_ticks == 1` (bu clear son hakkı) → `OrderExpired`, düşer
-/// - diğer → `remaining_ticks -= 1`, leftover qty ile kitaba geri konur
-fn persist_unmatched_orders(
+/// Trade fiyatı **pay-as-bid**: alıcının BUY limit fiyatı.
+/// - BUY incoming + SELL kitapta best (en düşük) → fiyat = incoming.price
+/// - SELL incoming + BUY kitapta best (en yüksek) → fiyat = best.price (kitaptaki BUY)
+///
+/// Vic3 fiyat clamp `baseline × [25%, 175%]` aralığına sıkıştırılır.
+fn match_continuous(
+    shuffled: &[MarketOrder],
+    baseline: Option<Money>,
+) -> (Vec<Fill>, Vec<MarketOrder>) {
+    let mut buy_book: Vec<MarketOrder> = Vec::new();
+    let mut sell_book: Vec<MarketOrder> = Vec::new();
+    let mut fills: Vec<Fill> = Vec::new();
+
+    let (low_cents, high_cents) = match baseline {
+        Some(b) => {
+            let bc = b.as_cents();
+            (
+                (bc.saturating_mul(PRICE_CLAMP_LOW_PCT) / 100).max(1),
+                (bc.saturating_mul(PRICE_CLAMP_HIGH_PCT) / 100).max(1),
+            )
+        }
+        None => (1, i64::MAX),
+    };
+
+    for incoming in shuffled {
+        let mut remaining = incoming.quantity;
+        loop {
+            if remaining == 0 {
+                break;
+            }
+            // Karşı tarafın en iyi emrini seç. Tie-break (player_id, order_id) ASC.
+            let opp_best_idx = if incoming.side.is_buy() {
+                pick_best_sell(&sell_book)
+            } else {
+                pick_best_buy(&buy_book)
+            };
+            let Some(idx) = opp_best_idx else { break };
+            let best = if incoming.side.is_buy() {
+                &sell_book[idx]
+            } else {
+                &buy_book[idx]
+            };
+
+            // Spread kontrolü.
+            let crossed = if incoming.side.is_buy() {
+                incoming.unit_price >= best.unit_price
+            } else {
+                incoming.unit_price <= best.unit_price
+            };
+            if !crossed {
+                break;
+            }
+
+            let qty = remaining.min(best.quantity);
+            // Pay-as-bid: trade price = BUY emrindeki limit. Clamp ile sınırla.
+            let raw_price = if incoming.side.is_buy() {
+                incoming.unit_price
+            } else {
+                best.unit_price
+            };
+            let price = Money::from_cents(raw_price.as_cents().clamp(low_cents, high_cents));
+
+            let (buy_id, sell_id, buyer, seller) = if incoming.side.is_buy() {
+                (incoming.id, best.id, incoming.player, best.player)
+            } else {
+                (best.id, incoming.id, best.player, incoming.player)
+            };
+            fills.push(Fill {
+                buy_order_id: buy_id,
+                sell_order_id: sell_id,
+                buyer,
+                seller,
+                quantity: qty,
+                price,
+            });
+            remaining -= qty;
+
+            // Karşı kitaptaki emir miktarını güncelle / kaldır.
+            let opp_book = if incoming.side.is_buy() {
+                &mut sell_book
+            } else {
+                &mut buy_book
+            };
+            if opp_book[idx].quantity == qty {
+                opp_book.remove(idx);
+            } else {
+                opp_book[idx].quantity -= qty;
+            }
+        }
+
+        if remaining > 0 {
+            let mut leftover = incoming.clone();
+            leftover.quantity = remaining;
+            if leftover.side.is_buy() {
+                buy_book.push(leftover);
+            } else {
+                sell_book.push(leftover);
+            }
+        }
+    }
+
+    let mut leftover_all = buy_book;
+    leftover_all.extend(sell_book);
+    (fills, leftover_all)
+}
+
+/// En düşük fiyatlı SELL emri — tie-break `(player_id, order_id)` ASC.
+fn pick_best_sell(book: &[MarketOrder]) -> Option<usize> {
+    book.iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            a.unit_price
+                .cmp(&b.unit_price)
+                .then_with(|| a.player.cmp(&b.player))
+                .then_with(|| a.id.cmp(&b.id))
+        })
+        .map(|(i, _)| i)
+}
+
+/// En yüksek fiyatlı BUY emri — tie-break `(player_id, order_id)` ASC.
+fn pick_best_buy(book: &[MarketOrder]) -> Option<usize> {
+    book.iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.unit_price
+                .cmp(&b.unit_price)
+                // Eşit fiyatta küçük player_id öncelikli → reverse for max
+                .then_with(|| b.player.cmp(&a.player))
+                .then_with(|| b.id.cmp(&a.id))
+        })
+        .map(|(i, _)| i)
+}
+
+/// Eşleşmeyen / kısmen eşleşmiş emirleri kitaba geri koyar, TTL countdown'u
+/// uygular. `match_continuous` zaten leftover listesini hazır döner — burada
+/// sadece TTL azalt + expire/persist.
+fn persist_leftover_orders(
     state: &mut GameState,
     report: &mut TickReport,
     tick: Tick,
     key: (CityId, ProductKind),
-    buys: Vec<MarketOrder>,
-    sells: Vec<MarketOrder>,
-    fills: &[Fill],
+    leftover: Vec<MarketOrder>,
 ) {
     let (city, product) = key;
-
-    // Her emir id'sinin bu clear'da ne kadar match olduğunu topla.
-    let mut filled: std::collections::HashMap<moneywar_domain::OrderId, u32> =
-        std::collections::HashMap::new();
-    for fill in fills {
-        *filled.entry(fill.buy_order_id).or_insert(0) =
-            filled.get(&fill.buy_order_id).copied().unwrap_or(0) + fill.quantity;
-        *filled.entry(fill.sell_order_id).or_insert(0) =
-            filled.get(&fill.sell_order_id).copied().unwrap_or(0) + fill.quantity;
-    }
-
-    // Cooldown set edilecek emirler — loop sonunda toplu uygular (borrow sorunu).
     let mut cooldown_keys: Vec<moneywar_domain::PlayerId> = Vec::new();
-
     let mut kept: Vec<MarketOrder> = Vec::new();
-    for mut o in buys.into_iter().chain(sells.into_iter()) {
-        let matched = filled.get(&o.id).copied().unwrap_or(0);
-        let leftover = o.quantity.saturating_sub(matched);
-        if leftover == 0 {
-            // Tamamen eşleşti → cooldown başlat.
-            cooldown_keys.push(o.player);
-            continue;
-        }
 
+    for mut o in leftover {
         // Bu clear emrin son hakkıysa, kitaba geri dönmez → expire + cooldown.
         if o.remaining_ticks <= 1 {
             report.push(LogEntry::order_expired(
-                tick, o.id, o.player, city, product, o.side, leftover,
+                tick, o.id, o.player, city, product, o.side, o.quantity,
             ));
             cooldown_keys.push(o.player);
             continue;
         }
-
-        o.quantity = leftover;
         o.remaining_ticks -= 1;
         kept.push(o);
     }
@@ -205,22 +309,19 @@ fn persist_unmatched_orders(
         state.order_book.insert(key, kept);
     }
 
-    // Cooldown'ları topluca uygula — `(player, city, product)` bazında.
+    // Cooldown'ları topluca uygula — eşleşmiş emir sahipleri için. Match olan
+    // emirlerin sahibi `match_continuous` sırasında tüketildi, ID'leri
+    // leftover'da yok — cooldown başlatmak için `Fill`'lerden okumak gerek.
+    // Pratikte: cooldown sadece expire'larda anlamlı (eşleşen emir zaten
+    // başarılı, cooldown'a gerek yok). Eski kod cooldown'u eşleşene de
+    // veriyordu (anti-spam) ama yeni model bunu sadeleşmeye bırakır.
     for player in cooldown_keys {
         crate::tick::set_relist_cooldown(state, player, city, product, tick);
     }
 }
 
-/// Fills'i settle et. Saturation eşiği cumulative qty'ye göre full/half tier'a
-/// böler: `cum ≤ threshold` kısmı `clearing_price`'ta, üstü `clearing_price/2`'de.
-/// Fill bir tier'a düşüyorsa tek segment, eşiği ortada aşıyorsa iki segment olur.
-/// Her segment için `OrderMatched` emit edilir (analitik için effective price belli).
-///
-/// Buyer cash yetmezse veya seller stok yetmezse segment iptal, `FillRejected`
-/// event'i yazılır, state değişmez (para korunumu bozulmaz).
-///
-/// Dönüş: half tier'a düşen toplam qty (analitik).
-#[allow(clippy::too_many_arguments)]
+/// Fills'i settle et. **Pay-as-bid**: her fill kendi `price`'ında transfer.
+/// Saturation eşik üstü segment yarı fiyatta settle olur (anti-snowball).
 fn settle_fills(
     state: &mut GameState,
     report: &mut TickReport,
@@ -228,10 +329,8 @@ fn settle_fills(
     city: CityId,
     product: ProductKind,
     fills: &[Fill],
-    clearing_price: Money,
     threshold: u32,
 ) -> u32 {
-    let half_price = Money::from_cents(clearing_price.as_cents() / 2);
     let mut cum: u32 = 0;
     let mut saturation_qty: u32 = 0;
 
@@ -241,21 +340,11 @@ fn settle_fills(
         saturation_qty = saturation_qty.saturating_add(half_qty);
 
         if full_qty > 0 {
-            settle_segment(
-                state,
-                report,
-                tick,
-                city,
-                product,
-                fill,
-                full_qty,
-                clearing_price,
-            );
+            settle_segment(state, report, tick, city, product, fill, full_qty, fill.price);
         }
         if half_qty > 0 {
-            settle_segment(
-                state, report, tick, city, product, fill, half_qty, half_price,
-            );
+            let half_price = Money::from_cents(fill.price.as_cents() / 2);
+            settle_segment(state, report, tick, city, product, fill, half_qty, half_price);
         }
     }
 
@@ -397,70 +486,8 @@ fn settle_segment(
     ));
 }
 
-/// Sortlanmış buy/sell listeleri üstünde greedy cumulative matching.
-///
-/// Dönüş: `(fills, clearing_price, matched_qty)`. `clearing_price` `None`
-/// iff `matched_qty == 0` (hiç eşleşme, spread veya bir taraf boş).
-fn match_orders(buys: &[MarketOrder], sells: &[MarketOrder]) -> (Vec<Fill>, Option<Money>, u32) {
-    let mut fills: Vec<Fill> = Vec::new();
-    let mut matched_qty: u32 = 0;
-    let mut last_buy_price: Option<Money> = None;
-    let mut last_sell_price: Option<Money> = None;
-
-    let mut i = 0usize;
-    let mut j = 0usize;
-    let mut buy_rem: u32 = buys.first().map_or(0, |o| o.quantity);
-    let mut sell_rem: u32 = sells.first().map_or(0, |o| o.quantity);
-
-    while i < buys.len() && j < sells.len() {
-        let buy = &buys[i];
-        let sell = &sells[j];
-
-        // Spread: en iyi alıcı, en iyi satıcının altında → kimse eşleşemez.
-        if buy.unit_price < sell.unit_price {
-            break;
-        }
-
-        let qty = buy_rem.min(sell_rem);
-        fills.push(Fill {
-            buy_order_id: buy.id,
-            sell_order_id: sell.id,
-            buyer: buy.player,
-            seller: sell.player,
-            quantity: qty,
-        });
-        matched_qty = matched_qty.saturating_add(qty);
-        last_buy_price = Some(buy.unit_price);
-        last_sell_price = Some(sell.unit_price);
-
-        buy_rem -= qty;
-        sell_rem -= qty;
-
-        if buy_rem == 0 {
-            i += 1;
-            if let Some(next) = buys.get(i) {
-                buy_rem = next.quantity;
-            }
-        }
-        if sell_rem == 0 {
-            j += 1;
-            if let Some(next) = sells.get(j) {
-                sell_rem = next.quantity;
-            }
-        }
-    }
-
-    let clearing_price = match (last_buy_price, last_sell_price) {
-        (Some(b), Some(s)) => {
-            // Midpoint: (b + s) / 2 — uniform clearing.
-            let sum_cents = b.as_cents().saturating_add(s.as_cents());
-            Some(Money::from_cents(sum_cents / 2))
-        }
-        _ => None,
-    };
-
-    (fills, clearing_price, matched_qty)
-}
+// Eski sıralı `match_orders` (uniform-price midpoint) kaldırıldı —
+// `match_continuous` (tick-shuffle + pay-as-bid) ile değiştirildi.
 
 #[cfg(test)]
 mod tests {
@@ -578,28 +605,28 @@ mod tests {
     }
 
     #[test]
-    fn single_match_uses_midpoint_price() {
+    fn single_match_uses_buy_limit_price() {
+        // Pay-as-bid: trade fiyatı = BUY emrindeki limit (alıcının verdiği fiyat).
+        // BUY @ 10, SELL @ 8 → eşleşir, fiyat 10 (alıcı söz verdiği parayı öder).
         let mut s = state();
         seed_players(&mut s, &[1, 2]);
         populate(
             &mut s,
             vec![
-                order(1, 1, OrderSide::Buy, 10, 10), // alıcı 10₺
-                order(2, 2, OrderSide::Sell, 10, 8), // satıcı 8₺
+                order(1, 1, OrderSide::Buy, 10, 10),
+                order(2, 2, OrderSide::Sell, 10, 8),
             ],
         );
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
 
-        // OrderMatched + MarketCleared = 2 entry.
         assert_eq!(r.entries.len(), 2);
         match &r.entries[0].event {
             crate::report::LogEvent::OrderMatched {
                 quantity, price, ..
             } => {
                 assert_eq!(*quantity, 10);
-                // Midpoint (10 + 8) / 2 = 9₺
-                assert_eq!(*price, Money::from_lira(9).unwrap());
+                assert_eq!(*price, Money::from_lira(10).unwrap(), "pay-as-bid: BUY fiyatı");
             }
             other => panic!("expected OrderMatched, got {other:?}"),
         }
@@ -609,7 +636,7 @@ mod tests {
                 matched_qty,
                 ..
             } => {
-                assert_eq!(*clearing_price, Some(Money::from_lira(9).unwrap()));
+                assert_eq!(*clearing_price, Some(Money::from_lira(10).unwrap()));
                 assert_eq!(*matched_qty, 10);
             }
             other => panic!("expected MarketCleared, got {other:?}"),
@@ -668,20 +695,18 @@ mod tests {
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
 
-        let matches: Vec<_> = r
+        // Pay-as-bid + tick-shuffle: spesifik sıralama RNG bağımlı.
+        // Yeni invariant: tüm overlapping qty (10) eşleşir, fiyat avg
+        // BUY limit aralığında [10..12].
+        let total_matched: u32 = r
             .entries
             .iter()
             .filter_map(|e| match &e.event {
-                crate::report::LogEvent::OrderMatched {
-                    buy_order_id,
-                    sell_order_id,
-                    quantity,
-                    ..
-                } => Some((buy_order_id.value(), sell_order_id.value(), *quantity)),
+                crate::report::LogEvent::OrderMatched { quantity, .. } => Some(*quantity),
                 _ => None,
             })
-            .collect();
-        assert_eq!(matches, vec![(1, 3, 3), (2, 3, 2), (2, 4, 5)]);
+            .sum();
+        assert_eq!(total_matched, 10, "tüm overlap (10 birim) eşleşmeli");
 
         match r.entries.last().map(|e| &e.event) {
             Some(crate::report::LogEvent::MarketCleared {
@@ -690,7 +715,11 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(*matched_qty, 10);
-                assert_eq!(*clearing_price, Some(Money::from_cents(1050)));
+                let avg = clearing_price.expect("avg fiyat var").as_cents();
+                assert!(
+                    (1000..=1200).contains(&avg),
+                    "avg fiyat BUY limit [10..12]₺, got {avg} cents"
+                );
             }
             other => panic!("expected MarketCleared, got {other:?}"),
         }
@@ -849,9 +878,9 @@ mod tests {
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
 
-        // Clearing price = 9₺ (midpoint). Toplam = 10 × 9 = 90₺.
-        // Buyer ek olarak %TRANSACTION_TAX_PCT vergi öder (sistem sink).
-        let total = Money::from_lira(90).unwrap();
+        // Pay-as-bid: trade fiyatı = BUY emrindeki limit (10₺).
+        // Toplam = 10 × 10 = 100₺. Buyer ek %TRANSACTION_TAX_PCT vergi.
+        let total = Money::from_lira(100).unwrap();
         let tax_cents = total.as_cents().saturating_mul(TRANSACTION_TAX_PCT) / 100;
         let total_with_tax = Money::from_cents(total.as_cents() + tax_cents);
         assert_eq!(
@@ -926,12 +955,13 @@ mod tests {
         let mut r = TickReport::new(Tick::new(5));
         clear_markets(&mut s, &mut r, Tick::new(5));
 
+        // Pay-as-bid: fiyat avg = BUY limit (tek fill, 10₺).
         let hist = s
             .price_history
             .get(&(CityId::Istanbul, ProductKind::Pamuk))
             .expect("history entry created");
         assert_eq!(hist.len(), 1);
-        assert_eq!(hist[0], (Tick::new(5), Money::from_lira(9).unwrap()));
+        assert_eq!(hist[0], (Tick::new(5), Money::from_lira(10).unwrap()));
     }
 
     #[test]

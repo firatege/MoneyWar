@@ -121,8 +121,8 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     );
     let (s5, _r5) = advance_tick(&s4, &[sell, buy]).unwrap();
 
-    // Midpoint price = (20 + 18) / 2 = 19₺. 50 × 19 = 950₺.
-    let expected_price = Money::from_lira(19).unwrap();
+    // Pay-as-bid: trade fiyatı = BUY emrindeki limit (20₺). 50 × 20 = 1000₺.
+    let expected_price = Money::from_lira(20).unwrap();
     assert_eq!(
         s5.price_history[&(CityId::Istanbul, ProductKind::Kumas)]
             .last()
