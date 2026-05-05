@@ -60,6 +60,7 @@ fn main() {
                     "hard" => Difficulty::Hard,
                     "medium" => Difficulty::Medium,
                     "synthetic" => Difficulty::Synthetic,
+                    "behavioral" => Difficulty::Behavioral,
                     other => panic!("bilinmeyen difficulty: {other}"),
                 };
                 i += 2;

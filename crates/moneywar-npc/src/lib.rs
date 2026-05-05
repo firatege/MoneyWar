@@ -26,6 +26,7 @@
 //! `decide` RNG alır; aynı (state, rng) → aynı komut seti. Motor, NPC'leri
 //! `decide_all_npcs` üzerinden sıralı işler (`BTreeMap` `player_id` ASC).
 
+pub mod behavior;
 pub mod dss;
 pub mod engine;
 mod error;
@@ -42,7 +43,7 @@ use moneywar_domain::{
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
-/// NPC zorluk seviyesi (4 kademe — Easy/Medium/Hard/Synthetic).
+/// NPC zorluk seviyesi (5 kademe).
 /// Oyun başlangıcında seçilir, tüm NPC'lere uygulanır.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Difficulty {
@@ -59,6 +60,10 @@ pub enum Difficulty {
     /// varyansından bağımsız test etmek için. Her rol sabit kuralla çalışır
     /// (`crate::synthetic`). Tuning baseline'ı + regresyon kapısı olarak kullanılır.
     Synthetic,
+    /// Behavioral NPC — yeni utility scoring + role-shaped enumeration motoru
+    /// (`crate::behavior`). Faz A iskelet, Faz B+'da rol göçü. Eski fuzzy/dss
+    /// silinince Easy/Medium/Hard'ın yerine geçecek; şu an yan yana kullanılır.
+    Behavioral,
 }
 
 impl Difficulty {
@@ -69,6 +74,7 @@ impl Difficulty {
             Self::Medium => "Medium (kişilikli, dengeli rekabet)",
             Self::Hard => "Hard (kişilikli, agresif ve hızlı)",
             Self::Synthetic => "Synthetic (sade kurallar — ekonomi testi)",
+            Self::Behavioral => "Behavioral (utility scoring — yeni motor)",
         }
     }
     #[must_use]
@@ -77,7 +83,8 @@ impl Difficulty {
             Self::Easy => Self::Medium,
             Self::Medium => Self::Hard,
             Self::Hard => Self::Synthetic,
-            Self::Synthetic => Self::Easy,
+            Self::Synthetic => Self::Behavioral,
+            Self::Behavioral => Self::Easy,
         }
     }
 
@@ -115,6 +122,27 @@ impl Difficulty {
                 aggressiveness: 1.0,
                 min_score_threshold: 0.0,
             },
+            // Behavioral fuzzy motoru kullanmaz; davranış parametreleri
+            // `BehaviorDifficulty` üzerinden çekilir. Bu kol sadece exhaustive
+            // match için var.
+            Self::Behavioral => DifficultyModulator {
+                max_actions_per_tick: 99,
+                silence_ratio_per10: 0,
+                aggressiveness: 1.0,
+                min_score_threshold: 0.0,
+            },
+        }
+    }
+
+    /// Behavioral motor için davranış parametreleri. Eski Difficulty'leri yeni
+    /// motorla eşleştirir (Easy/Medium/Hard mapping). Faz E'de TOML config'e
+    /// taşınacak.
+    #[must_use]
+    pub fn behavior(self) -> behavior::BehaviorDifficulty {
+        match self {
+            Self::Easy => behavior::BehaviorDifficulty::EASY,
+            Self::Medium | Self::Synthetic => behavior::BehaviorDifficulty::MEDIUM,
+            Self::Hard | Self::Behavioral => behavior::BehaviorDifficulty::HARD,
         }
     }
 }
@@ -807,6 +835,10 @@ pub fn decide_all_npcs(
         let next = match difficulty {
             // Synthetic: AI'sız sade kurallar (ekonomi testi baseline'ı).
             Difficulty::Synthetic => crate::synthetic::decide_synthetic(state, pid, tick),
+            // Behavioral: yeni utility motoru (Faz A iskelet, Faz B+'da rol göçü).
+            Difficulty::Behavioral => {
+                crate::behavior::decide_behavior(state, pid, rng, tick, difficulty.behavior())
+            }
             // Diğer 3 difficulty: fuzzy motoru, modulator parametreleriyle filtre.
             Difficulty::Easy | Difficulty::Medium | Difficulty::Hard => {
                 crate::engine::decide_npc_fuzzy(state, pid, difficulty.modulator(), rng)
