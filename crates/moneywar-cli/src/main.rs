@@ -286,17 +286,9 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 };
             }
             KeyCode::Char('L') => {
-                // v8.21: Leaderboard toggle. Default kapalı (alt satıra
-                // sığmıyordu küçük ekranlarda); L ile aç/kapa.
-                app.show_leaderboard = !app.show_leaderboard;
-                app.status = Some(StatusMsg {
-                    text: if app.show_leaderboard {
-                        "Leaderboard açık".to_string()
-                    } else {
-                        "Leaderboard kapalı".to_string()
-                    },
-                    kind: StatusKind::Info,
-                });
+                // v8.22: Leaderboard popup overlay. Eski alt satır barı
+                // kaldırıldı (sığmıyordu).
+                app.mode = Mode::Leaderboard;
             }
             KeyCode::Char('N') => {
                 // Büyük N: HABER abonelik (küçük 'n' news inbox için).
@@ -393,9 +385,10 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         | Mode::RecentTrades
         | Mode::CaravanPanel
         | Mode::Contracts
-        | Mode::Chatter => match code {
+        | Mode::Chatter
+        | Mode::Leaderboard => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('L') => {
                 app.mode = Mode::Normal;
             }
             _ => {}
@@ -546,6 +539,9 @@ enum Mode {
     Wizard {
         wizard: Wizard,
     },
+    /// Leaderboard overlay — `L` ile açılır. Sadece insan + Sanayici + Tüccar.
+    /// Eski alt satır barı kaldırıldı (sığmıyordu).
+    Leaderboard,
 }
 
 // ---------------------------------------------------------------------------
@@ -762,9 +758,6 @@ struct App {
     /// güncelle, render'da olduğu gibi kullan. Auto-sim'de 21 hücre × 4
     /// alloc/render sayısı sıfıra iner.
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
-    /// Leaderboard alt çubukta gösterilsin mi. v8.21: L tuşu ile toggle.
-    /// Default kapalı — küçük ekranlarda alt satıra sığmıyordu.
-    show_leaderboard: bool,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
     player_name_input: String,
     /// Startup'ta seçili rol. Şimdilik Sanayici-only — Tüccar geliştirme
@@ -945,7 +938,6 @@ impl App {
             balance_loaded,
             cached_leaderboard: Vec::new(),
             cached_sparklines: std::collections::BTreeMap::new(),
-            show_leaderboard: false,
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
             chatter_log: VecDeque::with_capacity(CHATTER_WINDOW),
@@ -1835,19 +1827,19 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
 
     // Aktif şok varsa header altında bir satır ayır; yoksa görünmez (0 satır).
     let shock_height: u16 = u16::from(!app.state.active_shocks.is_empty());
-    // v8.21: Leaderboard L tuşu ile toggle. Kapalıyken 0 satır → middle panel
-    // büyür, footer doğrudan altta.
-    let leaderboard_height: u16 = if app.show_leaderboard { 3 } else { 0 };
+    // v8.22: Alt leaderboard barı kaldırıldı — sığmıyordu. Artık `L` tuşu
+    // popup overlay açıyor (Mode::Leaderboard). Layout: 4 dikey bölge.
+    let bottom_height: u16 = u16::from(matches!(app.mode, Mode::Command { .. }));
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),                  // header
-            Constraint::Length(shock_height),       // aktif olaylar şeridi
-            Constraint::Min(10),                    // middle (panels)
-            Constraint::Length(1),                  // kervan status çubuğu
-            Constraint::Length(leaderboard_height), // leaderboard (toggle)
-            Constraint::Length(1),                  // footer
+            Constraint::Length(3),             // header
+            Constraint::Length(shock_height),  // aktif olaylar şeridi
+            Constraint::Min(10),               // middle (panels)
+            Constraint::Length(1),             // kervan status çubuğu
+            Constraint::Length(bottom_height), // command hint (sadece KOMUT modunda)
+            Constraint::Length(1),             // footer
         ])
         .split(area);
 
@@ -1857,15 +1849,16 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
     }
     render_middle(f, chunks[2], app);
     render_caravan_strip(f, chunks[3], app);
-    // Command mode'dayken leaderboard yerine komut hint'i göster —
-    // oyuncu hangi parametreleri girmesi gerektiğini bilsin.
-    // v8.21: Leaderboard kapalıyken (L tuşu off) hiçbir şey çizme.
+    // v8.22: Alt leaderboard barı kaldırıldı. Sadece KOMUT modunda hint çiz.
     if matches!(app.mode, Mode::Command { .. }) {
         render_command_hint(f, chunks[4], app);
-    } else if app.show_leaderboard {
-        render_leaderboard(f, chunks[4], app);
     }
     render_footer(f, chunks[5], app);
+
+    // L tuşu ile açılan leaderboard overlay (popup).
+    if matches!(app.mode, Mode::Leaderboard) {
+        render_leaderboard_overlay(f, area, app);
+    }
 
     // Overlay'ler — ortada popup, arkaplanı temizle.
     match app.mode {
@@ -6513,10 +6506,24 @@ fn render_caravan_strip(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     f.render_widget(para, area);
 }
 
-fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    // Sadece **gerçek rakipler** — insan oyuncu + Sanayici + Tüccar.
-    // v8.21: Çiftçi/Banka/Alıcı/Esnaf/Spek gizli (likidite/üretici tipleri,
-    // skor yarışında değil). Leaderboard daha kısa, alt satıra sığar.
+/// v8.22: Leaderboard popup overlay — `L` ile açılır. Wizard tarzı merkez popup.
+/// Her satır: rank + medal + isim + rol etiketi + skor.
+/// Filtre: insan + Sanayici + Tüccar (Çiftçi/Banka/Alıcı/Esnaf/Spek gizli).
+fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(60, 70, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ★  Liderlik  ★ ")
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
     let filtered: Vec<&PlayerScore> = app
         .cached_leaderboard
         .iter()
@@ -6529,79 +6536,67 @@ fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         })
         .collect();
 
-    let mut spans: Vec<Span> = vec![Span::styled(
-        " ★ Leaderboard ",
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )];
-    spans.push(Span::raw("  "));
-    for (idx, sc) in filtered.iter().take(10).enumerate() {
-        spans.push(rank_span(idx, sc, &app.state));
-        spans.push(Span::raw("  "));
-    }
-    let line = Line::from(spans);
-    let block = Block::default().borders(Borders::TOP | Borders::BOTTOM);
-    let para = Paragraph::new(line).block(block);
-    f.render_widget(para, area);
-}
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("  Tick {} · {} oyuncu", app.state.current_tick.value(), filtered.len()),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
 
-fn rank_span<'a>(idx: usize, sc: &PlayerScore, state: &GameState) -> Span<'a> {
-    let player = state.players.get(&sc.player_id);
-    let raw_name = player
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| format!("{}", sc.player_id));
-    // Personality emoji — NPC'lerde görünür ipucu (DSS modunda farklılık).
-    let personality_emoji = player
-        .and_then(|p| p.personality)
-        .map_or("", Personality::emoji);
-    let medal = match idx {
-        0 => "🥇",
-        1 => "🥈",
-        2 => "🥉",
-        _ => "  ",
-    };
-    let is_human = sc.player_id == HUMAN_ID;
-    let role_label = player
-        .map(|p| match p.npc_kind {
-            Some(kind) => kind.label(),
-            None => p.role.display_name(),
-        })
-        .unwrap_or("?");
-    let style = if is_human {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        let color = match role_label {
+    for (idx, sc) in filtered.iter().enumerate() {
+        let player = app.state.players.get(&sc.player_id);
+        let name = player.map(|p| p.name.clone()).unwrap_or_else(|| format!("{}", sc.player_id));
+        let role_label = player
+            .map(|p| match p.npc_kind {
+                Some(kind) => kind.label(),
+                None => p.role.display_name(),
+            })
+            .unwrap_or("?");
+        let medal = match idx {
+            0 => "🥇",
+            1 => "🥈",
+            2 => "🥉",
+            _ => "  ",
+        };
+        let is_human = sc.player_id == HUMAN_ID;
+        let role_color = match role_label {
             "Sanayici" => Color::Rgb(210, 140, 80),
             "Tüccar" => Color::Rgb(120, 180, 240),
             _ => Color::White,
         };
-        Style::default().fg(color)
-    };
-    // Skor fog'u: kendi skorun her zaman açık, rakibin skoru 5K'ya yuvarlanır
-    // ve `~` prefix'i ile fog hissi verir. Sıra + seviye görünür, mikro
-    // detay gizli. Game over reveal'da exact değerler açılır.
-    let score_label = if is_human {
-        compact_money(sc.total)
-    } else {
-        let cents = sc.total.as_cents();
-        let lira = cents / 100;
-        let rounded_lira = (lira / 5_000) * 5_000;
-        let rounded = Money::from_lira(rounded_lira).unwrap_or(Money::ZERO);
-        format!("~{}", compact_money(rounded))
-    };
-    let name_with_emoji = if personality_emoji.is_empty() {
-        raw_name
-    } else {
-        format!("{personality_emoji}{raw_name}")
-    };
-    Span::styled(
-        format!("{medal} {name_with_emoji} [{role_label}] {score_label}"),
-        style,
-    )
+        let name_style = if is_human {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(role_color)
+        };
+        // Skor fog'u: insan açık, NPC 5K'ya yuvarlanır + `~` prefix.
+        let score_label = if is_human {
+            format!("{}", sc.total)
+        } else {
+            let lira = sc.total.as_cents() / 100;
+            let rounded_lira = (lira / 5_000) * 5_000;
+            let rounded = Money::from_lira(rounded_lira).unwrap_or(Money::ZERO);
+            format!("~{}", rounded)
+        };
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {medal} {:>2}.  ", idx + 1)),
+            Span::styled(format!("{:<20}", name), name_style),
+            Span::styled(format!(" [{}]  ", role_label), Style::default().fg(role_color)),
+            Span::styled(score_label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  L / Esc / Enter — kapat",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let para = Paragraph::new(lines).style(Style::default().fg(Color::White));
+    f.render_widget(para, inner);
 }
 
 fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
