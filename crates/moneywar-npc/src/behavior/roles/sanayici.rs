@@ -192,7 +192,77 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     // Cap: Sanayici aynı anda max 1 aktif buyer kontratı.
     out.extend(enumerate_contract_accepts(state, player, &needed_raws));
 
+    // v8.25: Sanayici mamul satış kontratı önerisi. "5 tick sonra fab
+    // şehrimde 30 Kumaş üreteceğim, sat" → Tüccar kabul edip başka şehre
+    // götürür ve satar. Bu yön Tüccar→Sanayici (ham) çiftini tamamlar.
+    out.extend(enumerate_contract_proposals(state, player));
+
     out
+}
+
+/// Sanayici'nin mamul satış kontratı önerileri. Stok mamul varsa Public
+/// propose. Tüccar accept ederse 5 tick sonra teslim, kervan ile dağıtım.
+fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::{ContractProposal, ContractState, ListingKind};
+
+    // Cap: aynı anda max 1 aktif kontrat (seller olarak)
+    let active = state
+        .contracts
+        .values()
+        .filter(|c| c.seller == player.id)
+        .filter(|c| matches!(c.state, ContractState::Proposed | ContractState::Active))
+        .count();
+    if active >= 1 {
+        return Vec::new();
+    }
+
+    // En çok stok mamul nerede? (city, product, qty) bul.
+    let mut best_stock: Option<(CityId, ProductKind, u32)> = None;
+    for (city, product, qty) in player.inventory.entries() {
+        if !product.is_finished() || qty < 30 {
+            continue;
+        }
+        if best_stock.is_none_or(|(_, _, q)| qty > q) {
+            best_stock = Some((city, product, qty));
+        }
+    }
+    let Some((city, product, _qty)) = best_stock else {
+        return Vec::new();
+    };
+
+    // Fiyat: bu şehrin mamul baseline × 1.05 (Sanayici margin).
+    // Tüccar zaten %95 markdown ile başka şehre satar, kâr fırsatı.
+    let Some(reference) = state.reference_price(city, product) else {
+        return Vec::new();
+    };
+    let unit_price_cents = reference.as_cents().saturating_mul(105) / 100;
+    if unit_price_cents <= 0 {
+        return Vec::new();
+    }
+    let unit_price = Money::from_cents(unit_price_cents);
+    let quantity = 30u32;
+    let total = unit_price_cents.saturating_mul(i64::from(quantity));
+    let seller_deposit = Money::from_cents(total / 20); // %5
+    let buyer_deposit = Money::from_cents(total / 20);
+    if player.cash.as_cents() < seller_deposit.as_cents() {
+        return Vec::new();
+    }
+    let delivery_tick = match state.current_tick.checked_add(5) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let proposal = ContractProposal {
+        seller: player.id,
+        listing: ListingKind::Public,
+        product,
+        quantity,
+        unit_price,
+        delivery_city: city, // Sanayici kendi fab şehrinde teslim eder
+        delivery_tick,
+        seller_deposit,
+        buyer_deposit,
+    };
+    vec![ActionCandidate::ProposeContract(proposal)]
 }
 
 /// Sanayici'nin Tüccar tarafından önerilen kontratları kabul etme adayları.

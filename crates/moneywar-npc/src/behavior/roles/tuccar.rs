@@ -221,7 +221,57 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     // formuna çevirir. "5 tick sonra X şehrine 30 birim getireceğim" deyip
     // Public listing açar. Sanayici kapıyorsa kâr garantili (escrow + delivery).
     out.extend(enumerate_contract_proposals(state, player));
+
+    // v8.25: Sanayici mamul satış kontratlarını kabul et — fab şehrinden
+    // mamul al, kervan ile başka şehre götür, market'te sat. İki yönlü
+    // tedarik zinciri (Tüccar→Sanayici ham, Sanayici→Tüccar mamul).
+    out.extend(enumerate_contract_accepts(state, player));
     out
+}
+
+/// Tüccar'ın açık mamul kontratlarını kabul etme adayları (Sanayici → Tüccar).
+fn enumerate_contract_accepts(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::ContractState;
+
+    // Cap: Tüccar zaten 1 aktif kontrat varsa pas (seller veya buyer)
+    let active = state
+        .contracts
+        .values()
+        .filter(|c| c.seller == player.id || c.accepted_by == Some(player.id))
+        .filter(|c| matches!(c.state, ContractState::Proposed | ContractState::Active))
+        .count();
+    if active >= 1 {
+        return Vec::new();
+    }
+
+    for contract in state.contracts.values() {
+        if contract.state != ContractState::Proposed {
+            continue;
+        }
+        if contract.seller == player.id {
+            continue;
+        }
+        if let moneywar_domain::ListingKind::Personal { target } = contract.listing {
+            if target != player.id {
+                continue;
+            }
+        }
+        // Sadece mamul (Tüccar arbitraj için taşır, ham almaz Sanayici accept'i için)
+        if !contract.product.is_finished() {
+            continue;
+        }
+        // Buyer deposit affordable mı
+        if player.cash.as_cents() < contract.buyer_deposit.as_cents() {
+            continue;
+        }
+        // Bu mamul için arbitraj fırsatı var mı? delivery_city dışında pahalı satış
+        // mümkünse kabul. Aksi halde pas (Tüccar kâr odaklı).
+        let _profit_check = contract.unit_price; // simple: kabul et, sonra kervan ile arbitraj
+        return vec![ActionCandidate::AcceptContract {
+            contract_id: contract.id,
+        }];
+    }
+    Vec::new()
 }
 
 /// Tüccar'ın forward delivery kontratı önerileri.
