@@ -271,10 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn factory_value_uses_half_of_build_cost_and_skips_idle() {
+    fn factory_value_uses_three_quarters_of_build_cost_and_skips_idle() {
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
-        // 3 fabrika: cost table 0 / 4k / 10k → skor katkı 0 + 2k + 5k = 7k.
+        // v8.24: 3 fabrika: cost table 0 / 4k / 10k = 14k toplam.
+        // Skor katkı %75 → 10.5k.
         for i in 1..=3u64 {
             let fid = moneywar_domain::FactoryId::new(i);
             let mut f = Factory::new(fid, pid, CityId::Istanbul, ProductKind::Kumas).unwrap();
@@ -283,7 +284,7 @@ mod tests {
         }
         s.current_tick = Tick::new(10);
         let sc = score_player(&s, pid);
-        assert_eq!(sc.factory_value, Money::from_lira(7_000).unwrap());
+        assert_eq!(sc.factory_value, Money::from_lira(10_500).unwrap());
     }
 
     #[test]

@@ -197,9 +197,13 @@ pub const IDLE_FACTORY_THRESHOLD: u32 = 10;
 pub const PRICE_WINDOW: usize = 5;
 
 /// Fabrika sermayesi skor oranı (§9): `build_cost × NUM / DEN`.
-/// Default 1/2 = yatırımın %50'si skora döner.
-pub const FACTORY_SCORE_NUM: i64 = 1;
-pub const FACTORY_SCORE_DEN: i64 = 2;
+/// v8.24: 1/2 → 3/4 (yatırımın %50 → %75'i skora döner).
+/// User: "Sanayici'ler tüm paralarını fab'a atıyor, scoring'de ceza
+/// görüyorlar". %50'de Sanayici 15K fab kurarsa 7.5K direkt kayıp →
+/// mamul kâr edemezse Sanayici hep dipte. %75 ile yatırımın çoğu skor
+/// olur, Sanayici daha rekabetçi (kazanç hâlâ mamul satışından gelir).
+pub const FACTORY_SCORE_NUM: i64 = 3;
+pub const FACTORY_SCORE_DEN: i64 = 4;
 
 // =============================================================================
 // Şehir mesafeleri
@@ -368,9 +372,9 @@ mod tests {
     }
 
     #[test]
-    fn factory_score_ratio_is_half() {
-        // §9: yatırımın %50'si skora döner.
-        assert_eq!(FACTORY_SCORE_NUM * 2, FACTORY_SCORE_DEN);
+    fn factory_score_ratio_is_three_quarters() {
+        // v8.24: %50 → %75 (Sanayici yatırım kayıp cezası azaldı).
+        assert_eq!(FACTORY_SCORE_NUM * 4, FACTORY_SCORE_DEN * 3);
     }
 
     #[test]
