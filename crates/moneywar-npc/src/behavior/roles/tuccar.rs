@@ -216,7 +216,92 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         // rich_price kullanılmadı artık ama scope için referansta tut.
         let _ = rich_price;
     }
+
+    // v8.23: Forward kontrat propose — Tüccar arbitraj fırsatını taahhüt
+    // formuna çevirir. "5 tick sonra X şehrine 30 birim getireceğim" deyip
+    // Public listing açar. Sanayici kapıyorsa kâr garantili (escrow + delivery).
+    out.extend(enumerate_contract_proposals(state, player));
     out
+}
+
+/// Tüccar'ın forward delivery kontratı önerileri.
+/// - En az 1 aktif open kontrat varsa pas (cap 1)
+/// - En geniş arbitraj fırsatını seç (richest - cheapest spread > %15)
+/// - Public listing, delivery_tick=current+5
+/// - unit_price = best_bid_in_dest × 0.95 (Tüccar margin)
+/// - seller_deposit = unit_price × qty × 0.05
+fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::{ContractProposal, ContractState, ListingKind};
+
+    // Cap: aynı anda max 1 aktif (Proposed/Active) kontrat
+    let active_count = state
+        .contracts
+        .values()
+        .filter(|c| c.seller == player.id)
+        .filter(|c| matches!(c.state, ContractState::Proposed | ContractState::Active))
+        .count();
+    if active_count >= 1 {
+        return Vec::new();
+    }
+
+    // En iyi arbitraj fırsatı: spread % maksimum
+    let mut best_opportunity: Option<(ProductKind, CityId, CityId, Money, Money, i64)> = None;
+    for product in ProductKind::ALL {
+        let Some((from_city, from_price)) = cheapest_city(state, product) else {
+            continue;
+        };
+        let Some((to_city, to_price)) = richest_city(state, product) else {
+            continue;
+        };
+        if from_city == to_city || from_price.as_cents() <= 0 {
+            continue;
+        }
+        let spread_pct = ((to_price.as_cents() - from_price.as_cents()) * 100)
+            / from_price.as_cents().max(1);
+        if spread_pct < ARBITRAGE_SPREAD_PCT {
+            continue;
+        }
+        if best_opportunity
+            .as_ref()
+            .is_none_or(|(_, _, _, _, _, p)| spread_pct > *p)
+        {
+            best_opportunity = Some((product, from_city, to_city, from_price, to_price, spread_pct));
+        }
+    }
+    let Some((product, _from_city, to_city, _, to_price, _)) = best_opportunity else {
+        return Vec::new();
+    };
+
+    // unit_price = to_city BID × 0.95 (Tüccar margin), qty=30
+    let quantity = 30u32;
+    let unit_price_cents = to_price.as_cents().saturating_mul(95) / 100;
+    if unit_price_cents <= 0 {
+        return Vec::new();
+    }
+    let unit_price = Money::from_cents(unit_price_cents);
+    let total = unit_price_cents.saturating_mul(i64::from(quantity));
+    let seller_deposit = Money::from_cents(total / 20); // %5
+    let buyer_deposit = Money::from_cents(total / 20);
+    if player.cash.as_cents() < seller_deposit.as_cents() {
+        return Vec::new(); // Tüccar deposit ödeyemiyor
+    }
+
+    let delivery_tick = match state.current_tick.checked_add(5) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let proposal = ContractProposal {
+        seller: player.id,
+        listing: ListingKind::Public,
+        product,
+        quantity,
+        unit_price,
+        delivery_city: to_city,
+        delivery_tick,
+        seller_deposit,
+        buyer_deposit,
+    };
+    vec![ActionCandidate::ProposeContract(proposal)]
 }
 
 fn cheapest_city(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {

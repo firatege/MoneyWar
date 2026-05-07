@@ -7,7 +7,7 @@
 //! - Test yazılırken aday listesi assertion edilebilir.
 
 use moneywar_domain::{
-    CargoSpec, CaravanId, CityId, ContractProposal, Money, OrderSide, ProductKind,
+    CargoSpec, CaravanId, CityId, ContractId, ContractProposal, Money, OrderSide, ProductKind,
 };
 
 /// Bir NPC'nin yapabileceği bir aksiyon önerisi. `Command`'a henüz çevrilmedi.
@@ -38,6 +38,8 @@ pub enum ActionCandidate {
     },
     /// Kontrat öner (uzun vadeli anlaşma).
     ProposeContract(ContractProposal),
+    /// Açık kontrat önerisini kabul et.
+    AcceptContract { contract_id: ContractId },
 }
 
 impl ActionCandidate {
@@ -51,7 +53,8 @@ impl ActionCandidate {
             Self::BuildFactory { city, product } => Some((*city, *product)),
             Self::BuyCaravan { .. }
             | Self::DispatchCaravan { .. }
-            | Self::ProposeContract(_) => None,
+            | Self::ProposeContract(_)
+            | Self::AcceptContract { .. } => None,
         }
     }
 }

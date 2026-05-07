@@ -184,6 +184,10 @@ fn candidate_to_command(
             cargo,
         }),
         ActionCandidate::ProposeContract(p) => Some(Command::ProposeContract(p)),
+        ActionCandidate::AcceptContract { contract_id } => Some(Command::AcceptContract {
+            contract_id,
+            acceptor: pid,
+        }),
     }
 }
 

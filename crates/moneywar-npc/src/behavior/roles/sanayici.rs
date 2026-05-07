@@ -188,7 +188,76 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
+    // v8.23: Açık Tüccar kontratlarını tara, fab ihtiyacına uyanı kabul et.
+    // Cap: Sanayici aynı anda max 1 aktif buyer kontratı.
+    out.extend(enumerate_contract_accepts(state, player, &needed_raws));
+
     out
+}
+
+/// Sanayici'nin Tüccar tarafından önerilen kontratları kabul etme adayları.
+fn enumerate_contract_accepts(
+    state: &GameState,
+    player: &Player,
+    needed_raws: &std::collections::BTreeSet<ProductKind>,
+) -> Vec<ActionCandidate> {
+    use moneywar_domain::ContractState;
+
+    if needed_raws.is_empty() {
+        return Vec::new();
+    }
+    // Cap: aktif kontrat varsa pas
+    let active = state
+        .contracts
+        .values()
+        .filter(|c| c.accepted_by == Some(player.id))
+        .filter(|c| matches!(c.state, ContractState::Active))
+        .count();
+    if active >= 1 {
+        return Vec::new();
+    }
+
+    // Sanayici'nin fab kurmuş olduğu şehirler — kontrat delivery_city'si
+    // bunlardan biriyse uyumlu (ham yerinde teslim).
+    let fab_cities: std::collections::BTreeSet<CityId> = state
+        .factories
+        .values()
+        .filter(|f| f.owner == player.id)
+        .map(|f| f.city)
+        .collect();
+    if fab_cities.is_empty() {
+        return Vec::new();
+    }
+
+    // İlk uyumlu Public/Personal kontratı kabul et
+    for contract in state.contracts.values() {
+        if contract.state != ContractState::Proposed {
+            continue;
+        }
+        if contract.seller == player.id {
+            continue;
+        }
+        // Personal ise kendisine olmalı
+        if let moneywar_domain::ListingKind::Personal { target } = contract.listing {
+            if target != player.id {
+                continue;
+            }
+        }
+        if !needed_raws.contains(&contract.product) {
+            continue;
+        }
+        if !fab_cities.contains(&contract.delivery_city) {
+            continue;
+        }
+        // Buyer deposit affordable mı
+        if player.cash.as_cents() < contract.buyer_deposit.as_cents() {
+            continue;
+        }
+        return vec![ActionCandidate::AcceptContract {
+            contract_id: contract.id,
+        }];
+    }
+    Vec::new()
 }
 
 fn scale_pct(price: Money, pct: i64) -> Money {
