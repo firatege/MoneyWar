@@ -168,7 +168,10 @@ pub const NEWS_LEAD_GOLD: u32 = 2;
 pub const EVENT_LEAD_TICKS: u32 = 2;
 
 /// Erken sezon (< %50 progress) olay olasılığı (yüzde).
-pub const EVENT_PROB_EARLY_PCT: u32 = 5;
+/// v8.25: 5 → 8. Sezon başı şok eventleri daha sık tetiklensin —
+/// sezon ilk 30 tick'te ortalama ~2.4 event (önce ~1.5). Korelasyon
+/// fix'iyle birlikte fiyat dalgalanması natural ritim kazansın.
+pub const EVENT_PROB_EARLY_PCT: u32 = 8;
 /// Mid sezon (%50–80) olasılığı.
 pub const EVENT_PROB_MID_PCT: u32 = 10;
 /// Geç sezon (%80+) olasılığı — makro şok penceresi.

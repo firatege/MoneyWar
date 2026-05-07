@@ -95,13 +95,13 @@ pub(crate) fn tick_economy(
         charge_factory_maintenance(state, report, tick);
     }
 
-    // Consume — Alıcı NPC'leri mamul stoğunun %50'sini tüketir (Vic3 pop needs)
-    if t > 0 && t % CONSUME_PERIOD == 0 {
-        consume_alici_inventory(state);
-    }
-
-    // Mahsul — Çiftçi'lere ham madde inject
-    if t > 0 && t % HARVEST_PERIOD == 0 {
+    // v8.25: Consume + harvest her tick çağrılır, içinde her player kendi
+    // offset'inde tetiklenir (player_id % PERIOD). Eski "her PERIOD tickte
+    // tüm Alıcı/Çiftçi aynı anda" senkronize emir patlaması yaratıyordu →
+    // tüm bucket aynı yönde kayıyordu (15 artan / 13 azalan blok'lar).
+    // Offset ile ritim dağılır; bucket'lar birbirinden bağımsız hareket eder.
+    if t > 0 {
+        consume_alici_inventory(state, tick);
         harvest_ciftci_stock(state, rng, report, tick);
     }
 
@@ -179,10 +179,11 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
     }
 }
 
-/// Alıcı NPC'lerinin mamul stoğunu tüket (envanterden sil). Tüketici davranış
-/// modeli: Alıcı aldığı mamulü "kullanır", varlık olarak biriktirmez.
-/// Vic3 pop needs inspiration. Each cycle: stoğun `CONSUME_PCT`%'i silinir.
-fn consume_alici_inventory(state: &mut GameState) {
+/// Alıcı NPC'lerinin mamul stoğunu tüket (envanterden sil). v8.25: Her Alıcı
+/// kendi player_id offset'inde tetiklenir → senkronize toplu BUY patlaması
+/// kalkar, ritim dağılır.
+fn consume_alici_inventory(state: &mut GameState, tick: Tick) {
+    let t = tick.value();
     let alici_ids: Vec<PlayerId> = state
         .players
         .iter()
@@ -190,6 +191,11 @@ fn consume_alici_inventory(state: &mut GameState) {
         .map(|(id, _)| *id)
         .collect();
     for pid in alici_ids {
+        // Player offset: her Alıcı kendi tick'inde tüketir.
+        let offset = (pid.value() % u64::from(CONSUME_PERIOD)) as u32;
+        if (t + offset) % CONSUME_PERIOD != 0 {
+            continue;
+        }
         let Some(player) = state.players.get_mut(&pid) else {
             continue;
         };
@@ -242,6 +248,7 @@ fn harvest_ciftci_stock(
     report: &mut TickReport,
     tick: Tick,
 ) {
+    let t = tick.value();
     let ciftci_ids: Vec<PlayerId> = state
         .players
         .iter()
@@ -250,6 +257,11 @@ fn harvest_ciftci_stock(
         .collect();
 
     for pid in ciftci_ids {
+        // v8.25: Player offset — her Çiftçi kendi tick'inde mahsul alır.
+        let offset = (pid.value() % u64::from(HARVEST_PERIOD)) as u32;
+        if (t + offset) % HARVEST_PERIOD != 0 {
+            continue;
+        }
         // Çiftçi şehir ataması — PlayerId mod 3 ile 3 şehir.
         let city_idx = (pid.value() as usize) % CityId::ALL.len();
         let city = CityId::ALL[city_idx];
