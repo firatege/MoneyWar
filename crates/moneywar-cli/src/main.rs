@@ -3474,6 +3474,98 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
     out
 }
 
+/// v8.23: Wizard pre-flight engel listesi — Enter ile submit etmeden önce
+/// engine'in kesin reddedeceği durumları yakalayıp **kullanıcıyı uyarır**.
+/// Boş ise temiz, dolu ise Enter blok.
+///
+/// Kapsam:
+/// - Buy/Sell: relist cooldown (aynı bucket'ta yeni emir)
+/// - Buy: cash yetersizliği (qty × price × (1+tax) > cash)
+/// - Sell: stok yetersizliği (envanter < qty)
+/// - Build: cash yetersizliği (next_factory_cost > cash)
+fn wizard_preflight_blocks(app: &App, wizard: &Wizard) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let player = match app.state.players.get(&HUMAN_ID) {
+        Some(p) => p,
+        None => return blocks,
+    };
+    match wizard.kind {
+        ActionKind::Buy | ActionKind::Sell => {
+            // Tüm field'lar dolduğunda kontrol; eksikse henüz blok yok
+            let city = match wizard.fields.first() {
+                Some(FieldValue::City(c)) => *c,
+                _ => return blocks,
+            };
+            let product = match wizard.fields.get(1) {
+                Some(FieldValue::Product(p)) => *p,
+                _ => return blocks,
+            };
+            let qty = match wizard.fields.get(2) {
+                Some(FieldValue::Number(n)) => *n as u32,
+                _ => return blocks,
+            };
+            // Cooldown — relist_cooldown[(player, city, product)] = bekleme
+            // BİTİŞ tick'i. current_tick < bitiş ise hâlâ cooldown'da.
+            if let Some(until) = app
+                .state
+                .relist_cooldown
+                .get(&(HUMAN_ID, city, product))
+                .copied()
+            {
+                if app.state.current_tick.is_before(until) {
+                    let remaining = until.value().saturating_sub(app.state.current_tick.value());
+                    blocks.push(format!(
+                        "Cooldown: {city}/{product} bucket'ta {remaining} tick beklemen lazım"
+                    ));
+                }
+            }
+            // Cash/stok kontrolü fiyat girilince
+            let price_input: f64 = wizard.text_buf.replace(',', ".").parse().unwrap_or(0.0);
+            if matches!(wizard.kind, ActionKind::Buy) && price_input > 0.0 && qty > 0 {
+                let total_cents = (price_input * qty as f64 * 100.0) as i64;
+                let with_tax = total_cents
+                    + total_cents * moneywar_domain::balance::TRANSACTION_TAX_PCT / 100;
+                if player.cash.as_cents() < with_tax {
+                    blocks.push(format!(
+                        "Cash yetersiz: {} öde, {} var",
+                        Money::from_cents(with_tax),
+                        player.cash
+                    ));
+                }
+            }
+            if matches!(wizard.kind, ActionKind::Sell) && qty > 0 {
+                let stock = player.inventory.get(city, product);
+                if stock < qty {
+                    blocks.push(format!(
+                        "Stok yetersiz: {} satıyorsun, {city}/{product} sadece {} birim",
+                        qty, stock
+                    ));
+                }
+            }
+        }
+        ActionKind::Build => {
+            // Next fab cost
+            let owned = app
+                .state
+                .factories
+                .values()
+                .filter(|f| f.owner == HUMAN_ID)
+                .count();
+            let cost = moneywar_domain::Factory::build_cost(u32::try_from(owned).unwrap_or(0));
+            if player.cash < cost {
+                blocks.push(format!(
+                    "Cash yetersiz: fab #{}'in maliyeti {}, {} var",
+                    owned + 1,
+                    cost,
+                    player.cash
+                ));
+            }
+        }
+        _ => {}
+    }
+    blocks
+}
+
 fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wizard: &Wizard) {
     let popup = centered_rect(70, 70, area);
     f.render_widget(Clear, popup);
@@ -3493,6 +3585,18 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
 
     // Cash + ilgili maliyet bilgisi — wizard'ın üstünde hep görünür.
     lines.extend(wizard_money_header(app, wizard));
+    // v8.23: Pre-flight ENGELLER — engine reddedeceği şartlar. Listede entry
+    // varsa Enter submit etmez. Cooldown / yetersiz cash / yetersiz stok.
+    let blocks = wizard_preflight_blocks(app, wizard);
+    for block in &blocks {
+        lines.push(Line::from(Span::styled(
+            format!("  ❌ ENGEL: {block}"),
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
     // Pre-flight uyarıları — "kervan yok", "stok 0" gibi durum bildirimi.
     lines.extend(wizard_preflight_hints(app, wizard));
     // Multi-cargo durumu (Ship wizard): şu ana dek yüklenen ek kalemler.
@@ -6952,9 +7056,13 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
             _ => return WizardOutcome::Continue,
         }
     }
-    // Tüm alanlar tamam → Enter ile gönder.
+    // Tüm alanlar tamam → Enter ile gönder. v8.23: Engel varsa Enter blokla.
     if wizard.is_done() {
         if matches!(code, KeyCode::Enter) {
+            let blocks = wizard_preflight_blocks(app, wizard);
+            if !blocks.is_empty() {
+                return WizardOutcome::Error(format!("ENGEL: {}", blocks.join(" | ")));
+            }
             return match build_command_from_wizard(app, wizard) {
                 Ok(cmd) => WizardOutcome::Submitted(cmd),
                 Err(e) => WizardOutcome::Error(e),
