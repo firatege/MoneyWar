@@ -133,6 +133,15 @@ pub struct GameState {
     /// taşmaz, deterministic.
     #[serde(default)]
     pub no_match_streak: BTreeMap<(PlayerId, CityId, ProductKind), u32>,
+
+    /// v8.22: Easy/Hard difficulty için fiyat cömertliği. NPC pricing
+    /// helper'ları bunu urgency_pct'ye ekler (SELL floor düşer, BUY ceiling
+    /// yükselir) → human için kâr fırsatı genişler.
+    /// - 0  = nötr (Hard)
+    /// - 5  = hafif (Medium)
+    /// - 15 = cömert (Easy) — NPC fiyat marjları %15 human lehine kayar
+    #[serde(default)]
+    pub market_softener_pct: u32,
 }
 
 /// Patience erosion'in üst sınırı — bu eşikten sonra %15 sabit yumuşama.
@@ -177,6 +186,7 @@ impl GameState {
             city_demand: BTreeMap::new(),
             counters: IdCounters::default(),
             no_match_streak: BTreeMap::new(),
+            market_softener_pct: 0,
         }
     }
 

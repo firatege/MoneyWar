@@ -91,20 +91,21 @@ pub enum CrossPolicy {
     Passive,
 }
 
-/// Patience erosion + season drift'in toplam yumuşama yüzdesi (0-30 arası).
-/// Hem SELL floor'ı düşürür, hem BUY ceiling'i yükseltir.
+/// Patience erosion + season drift + difficulty softener'in toplam yumuşama
+/// yüzdesi (0-45 arası). Hem SELL floor'ı düşürür, hem BUY ceiling'i yükseltir.
 ///
-/// - **Patience erosion** (0-15%): bu (player, city, product) için art arda
-///   match olmadan geçen tick sayısı. Hızlı tepki — 5-10 tickte fark eder.
+/// - **Patience erosion** (0-15%): art arda match olmadan geçen tick sayısı.
 /// - **Season drift** (0-15%): sezon ilerledikçe pozisyon kapatma baskısı.
-///   Yavaş, yapısal kayma.
+/// - **Difficulty softener** (0-15%): Easy mode'da NPC fiyat marjları human
+///   lehine kayar (state.market_softener_pct). Hard mode'da 0.
 #[must_use]
 fn urgency_pct(state: &GameState, player: PlayerId, city: CityId, product: ProductKind) -> i64 {
     let streak = state.no_match_streak(player, city, product);
     let patience = i64::from(streak.min(MAX_NO_MATCH_STREAK));
     let progress = state.season_progress().value(); // 0..=100
     let drift = i64::from(progress) * 15 / 100; // 0..=15
-    patience.saturating_add(drift).min(30)
+    let softener = i64::from(state.market_softener_pct).min(15);
+    patience.saturating_add(drift).saturating_add(softener).min(45)
 }
 
 /// SELL emir için marketable fiyat hesabı (Çiftçi, Spek-ASK, Tüccar SELL).

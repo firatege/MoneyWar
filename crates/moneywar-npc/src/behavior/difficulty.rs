@@ -38,12 +38,17 @@ impl BehaviorDifficulty {
         min_score: 0.10,
     };
 
-    /// Easy — sadece en iyi aksiyon, çoğu tick sessiz.
+    /// Easy — Hard'ın opposite'i: bol likidite (top_k yüksek), AMA NPC
+    /// fiyatları human lehine cömert (bkz. `state.market_softener_pct=15`,
+    /// pricing helper'larda Easy mode'da floor düşer / ceiling yükselir).
+    /// Eski Easy (top_k=2, silence=3) piyasayı donuklaştırıyordu — human
+    /// emir veriyor ama karşı taraf yok hissi. Şimdi NPC'ler aktif emir
+    /// basıyor (likidite), sadece marjları yumuşak (human cömertlik).
     pub const EASY: Self = Self {
-        top_k: 2,
-        silence_per_10: 3,
-        noise: 0.20,
-        min_score: 0.20,
+        top_k: 8,
+        silence_per_10: 0,
+        noise: 0.05,
+        min_score: 0.05,
     };
 }
 
@@ -58,22 +63,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presets_are_monotonic_by_top_k() {
-        // Easy < Medium < Hard
-        assert!(BehaviorDifficulty::EASY.top_k < BehaviorDifficulty::MEDIUM.top_k);
-        assert!(BehaviorDifficulty::MEDIUM.top_k < BehaviorDifficulty::HARD.top_k);
+    fn easy_has_high_liquidity() {
+        // v8.22: Easy artık top_k yüksek (likidite bol), silence yok.
+        // Cömertlik state.market_softener_pct ile ayrı → Difficulty
+        // sadece akış kontrol parametresi.
+        assert!(BehaviorDifficulty::EASY.top_k >= 8);
+        assert_eq!(BehaviorDifficulty::EASY.silence_per_10, 0);
     }
 
     #[test]
-    fn easy_silences_more_than_hard() {
-        assert!(BehaviorDifficulty::EASY.silence_per_10 > BehaviorDifficulty::HARD.silence_per_10);
-    }
-
-    #[test]
-    fn min_score_threshold_descends_with_difficulty() {
-        // Easy seçici (yüksek eşik), Hard hep emit (düşük eşik)
-        assert!(BehaviorDifficulty::EASY.min_score > BehaviorDifficulty::MEDIUM.min_score);
-        assert!(BehaviorDifficulty::MEDIUM.min_score > BehaviorDifficulty::HARD.min_score);
+    fn hard_has_max_aggression() {
+        // Hard her tick max top_k emit, sıfır sessizlik.
+        assert_eq!(BehaviorDifficulty::HARD.top_k, 12);
+        assert_eq!(BehaviorDifficulty::HARD.silence_per_10, 0);
     }
 
     #[test]

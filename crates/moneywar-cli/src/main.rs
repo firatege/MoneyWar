@@ -1073,6 +1073,13 @@ impl App {
             Some(custom_name.to_string())
         };
         self.state = seed_world(role, cfg, room_id, custom_name);
+        // v8.22: Difficulty'e göre NPC market cömertliği. Easy = %15 softener
+        // (NPC SELL ucuz / BUY pahalı, human lehine kâr fırsatı). Hard = 0.
+        self.state.market_softener_pct = match self.difficulty {
+            Difficulty::Easy => 15,
+            Difficulty::Medium => 5,
+            Difficulty::Hard | Difficulty::Synthetic => 0,
+        };
         self.mode = Mode::Normal;
         self.refresh_caches();
         // Rol'e göre ilk hamle önerisi — terminal açılır açılmaz oyuncu
