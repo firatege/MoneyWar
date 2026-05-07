@@ -96,7 +96,12 @@ impl NpcComposition {
             tuccar: 4,
             alici: 8,
             esnaf: 0,
-            spekulator: 3,
+            // v8.24: Spek emekli — Hard mode'da -304K zarar (3 NPC × -100K).
+            // SELL match=0 (ASK %101 baseline hiç eşleşmiyor), ham depoda
+            // birikiyor. Para sızıntısı: Spek → Tüccar/Çiftçi. Çıkarınca
+            // ham BUY tarafı %30 azalır ama Sanayici cross + tâtonnement
+            // ile dengelenir. NPC altyapısı korundu (kompozisyon 0).
+            spekulator: 0,
             ciftci: 6,
             banka: 3,
         }
@@ -501,17 +506,17 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_sim_aligned_29_npc() {
-        // v8.19: Esnaf emekli (esnaf=0). Toplam 35 → 29.
+    fn npc_composition_default_is_sim_aligned_26_npc() {
+        // v8.24: Spek emekli (spekulator=0). Toplam 29 → 26.
         let c = NpcComposition::default_const();
         assert_eq!(c.sanayici, 5);
         assert_eq!(c.tuccar, 4);
         assert_eq!(c.alici, 8);
         assert_eq!(c.esnaf, 0);
-        assert_eq!(c.spekulator, 3);
+        assert_eq!(c.spekulator, 0);
         assert_eq!(c.ciftci, 6);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 29);
+        assert_eq!(c.total(), 26);
     }
 
     #[test]
