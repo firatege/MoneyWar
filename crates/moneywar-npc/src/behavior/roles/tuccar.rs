@@ -324,14 +324,14 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         return Vec::new();
     };
 
-    // v8.25 ek: Bu ürün için Tüccar elinde stok varsa kontrat propose. Stok
-    // yoksa 8 tick'te BUY+dispatch+varış chain'i oturmuyor → breach. Eski
-    // %50 Tüccar breach bu kontrol ile düşmeli.
+    // v8.25 fix2: Stok şartı 30 → 50 (qty × 1.66). Tüccar 8 tick'te
+    // sat+dispatch ile 30'u eritebiliyor → breach. 50 buffer ile teslim
+    // garantisi.
     let total_stock: u32 = CityId::ALL
         .iter()
         .map(|&city| player.inventory.get(city, product))
         .sum();
-    if total_stock < 30 {
+    if total_stock < 50 {
         return Vec::new();
     }
 

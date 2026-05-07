@@ -217,12 +217,12 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
     }
 
     // En çok stok mamul nerede? (city, product, qty) bul.
-    // v8.25 fix: Stok ≥ qty × 2 (60 birim) olmalı. Tek qty kontrolü
-    // yetersizdi → 5 tick içinde stok satılır → breach. Buffer ile
-    // teslim garantisi.
+    // v8.25 fix2: Stok ≥ qty × 3 (90 birim) — qty × 2 hâlâ %57 cay
+    // veriyordu. 8 tick içinde 60 stok satılabiliyor (Sanayici Cross
+    // policy + Alıcı'nın ısrarlı BUY). 90 birim güvenli buffer.
     let mut best_stock: Option<(CityId, ProductKind, u32)> = None;
     for (city, product, qty) in player.inventory.entries() {
-        if !product.is_finished() || qty < 60 {
+        if !product.is_finished() || qty < 90 {
             continue;
         }
         if best_stock.is_none_or(|(_, _, q)| qty > q) {
