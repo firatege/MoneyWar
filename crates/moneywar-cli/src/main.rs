@@ -3664,6 +3664,44 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         )));
                     }
                 }
+                // v8.20: PriceLira adımında pazar bilgisi (best_bid/ask/last) +
+                // 'M' tuşu marketable fiyatı text_buf'a yazıyor (NPC parite).
+                if matches!(field, FieldKind::PriceLira) {
+                    if let Some((city, product)) = wizard_market_target(wizard) {
+                        let bid = app.state.best_bid(city, product);
+                        let ask = app.state.best_ask(city, product);
+                        let last = app
+                            .state
+                            .price_history
+                            .get(&(city, product))
+                            .and_then(|h| h.last())
+                            .map(|(_, p)| *p);
+                        let bid_str = bid
+                            .map(|(p, q)| format!("{}₺ ({})", p, q))
+                            .unwrap_or_else(|| "—".into());
+                        let ask_str = ask
+                            .map(|(p, q)| format!("{}₺ ({})", p, q))
+                            .unwrap_or_else(|| "—".into());
+                        let last_str = last
+                            .map(|p| format!("{}₺", p))
+                            .unwrap_or_else(|| "—".into());
+                        lines.push(Line::from(Span::styled(
+                            format!("  📊 Pazar: bid {bid_str}  ask {ask_str}  last {last_str}"),
+                            Style::default().fg(Color::Cyan),
+                        )));
+                        let hint = match wizard.kind {
+                            ActionKind::Buy => "M → marketable (best_ask + 1k)",
+                            ActionKind::Sell => "M → marketable (best_bid + 1k)",
+                            _ => "",
+                        };
+                        if !hint.is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                format!("  ⚡ {hint}"),
+                                Style::default().fg(Color::Magenta),
+                            )));
+                        }
+                    }
+                }
             }
         }
     } else if wizard.confirm_more_cargo {
@@ -3984,6 +4022,46 @@ fn filtered_products_for_wizard(
 /// Offer wizard'ında numerik alanlar için akıllı default. Boş Enter → bu değer
 /// otomatik kullanılır. Hint'lerde de gösterilir. Cents bazlı (Number alanı bu
 /// birime saklanıyor: PriceLira para → cents, Qty/Tick → ham sayı).
+/// Buy/Sell wizard'ında PriceLira adımı aktifken, kullanıcının seçtiği
+/// (city, product). City ilk field, product ikinci field. Diğer aksiyon
+/// türleri için None.
+fn wizard_market_target(wizard: &Wizard) -> Option<(CityId, ProductKind)> {
+    if !matches!(wizard.kind, ActionKind::Buy | ActionKind::Sell) {
+        return None;
+    }
+    let city = match wizard.fields.first()? {
+        FieldValue::City(c) => *c,
+        _ => return None,
+    };
+    let product = match wizard.fields.get(1)? {
+        FieldValue::Product(p) => *p,
+        _ => return None,
+    };
+    Some((city, product))
+}
+
+/// Marketable fiyat: BUY için best_ask, SELL için best_bid (1 jiton üstü/altı).
+/// Likidite yoksa None. v8.20: M tuşu insan oyuncuya NPC parite veriyor.
+fn marketable_price_hint(state: &GameState, wizard: &Wizard) -> Option<Money> {
+    let (city, product) = wizard_market_target(wizard)?;
+    match wizard.kind {
+        ActionKind::Buy => {
+            // best_ask + 1 jiton (cross above ask) — match garantisi
+            state
+                .best_ask(city, product)
+                .map(|(p, _)| Money::from_cents(p.as_cents().saturating_add(1)))
+        }
+        ActionKind::Sell => {
+            // best_bid + 1 jiton (cross below bid) — pay-as-bid'da Tüccar
+            // bid fiyatından alır, yine bu Spread alır
+            state
+                .best_bid(city, product)
+                .map(|(p, _)| Money::from_cents(p.as_cents().saturating_sub(1).max(1)))
+        }
+        _ => None,
+    }
+}
+
 fn offer_default_for(state: &GameState, wizard: &Wizard, field: FieldKind) -> Option<u64> {
     if !matches!(wizard.kind, ActionKind::Offer) {
         return None;
@@ -6707,6 +6785,26 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
             }
             wizard.text_buf = max_load.to_string();
             return WizardOutcome::Continue;
+        }
+        // v8.20: Buy/Sell PriceLira adımında M → marketable fiyat (NPC parite).
+        if matches!(wizard.kind, ActionKind::Buy | ActionKind::Sell)
+            && matches!(field, FieldKind::PriceLira)
+            && matches!(code, KeyCode::Char('m') | KeyCode::Char('M'))
+        {
+            match marketable_price_hint(&app.state, wizard) {
+                Some(price) => {
+                    let lira_str = format!("{}", price);
+                    // "1234.56₺" → "1234.56" (₺ sembolünü temizle)
+                    let cleaned = lira_str.trim_end_matches('₺').trim().to_string();
+                    wizard.text_buf = cleaned;
+                    return WizardOutcome::Continue;
+                }
+                None => {
+                    return WizardOutcome::Error(
+                        "Pazarda likidite yok — manuel fiyat gir".to_string(),
+                    );
+                }
+            }
         }
         match code {
             KeyCode::Char(c) if c.is_ascii_digit() => wizard.text_buf.push(c),
