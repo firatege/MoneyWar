@@ -169,23 +169,28 @@ fn clear_bucket(
         if total > 0 {
             let imbalance =
                 (i64::from(submitted_buy_qty) - i64::from(submitted_sell_qty)) * 1000 / total;
-            // Tâtonnement: factor_milli = 1000 + imb × 5/1000 → [-5, +5] = ±%0.5
-            let mut factor_milli = 1000 + imbalance * 5 / 1000;
+            // v8.24: Asimetrik tâtonnement — yukarı kayma yavaş, aşağı hızlı.
+            // Alıcı 8 NPC sürekli BUY > SELL → imbalance hep pozitif. Simetrik
+            // formül her tick yukarı kaydırırdı. Asimetri: yukarı %0.3, aşağı
+            // %0.7 → reel piyasa "fiyat hızla düşer, yavaş yükselir" davranışı.
+            let mut factor_milli = if imbalance > 0 {
+                1000 + imbalance * 3 / 1000  // +%0.3/tick
+            } else {
+                1000 + imbalance * 7 / 1000  // -%0.7/tick
+            };
 
-            // v8.24 (C): Stok-bazlı aşağı drift. Bucket'ta toplam stok yüksekse
-            // "arz fazlası → fiyat düşer" mantığı — mevcut tâtonnement +0.5%
-            // monoton yukarı kayma (Alıcı 8 NPC sürekli BUY) doğal düşüş yapamaz.
-            // Bu term tüm fiyat trendini sezon boyu +60-99% kayma sorununu kırar.
+            // v8.24 (C): Stok-bazlı aşağı drift — threshold düşürüldü
+            // (raw 800→400, mamul 200→100). Drift daha sık tetiklenir,
+            // arz fazlası fiyat baskısını gerçekten yansıtır.
             let total_stock: u32 = state
                 .players
                 .values()
                 .map(|p| p.inventory.get(city, product))
                 .sum();
-            let high_threshold: u32 = if product.is_raw() { 800 } else { 200 };
+            let high_threshold: u32 = if product.is_raw() { 400 } else { 100 };
             if total_stock > high_threshold {
                 let excess = (total_stock - high_threshold).min(2000) as i64;
-                // -3..-7 milli: hafif başlar, stok arttıkça hızlanır.
-                let down = 3 + excess / 500; // 3..7
+                let down = 3 + excess / 500;
                 factor_milli -= down;
             }
 
