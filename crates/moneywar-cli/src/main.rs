@@ -285,6 +285,19 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                     wizard: Wizard::new(ActionKind::Repay),
                 };
             }
+            KeyCode::Char('L') => {
+                // v8.21: Leaderboard toggle. Default kapalı (alt satıra
+                // sığmıyordu küçük ekranlarda); L ile aç/kapa.
+                app.show_leaderboard = !app.show_leaderboard;
+                app.status = Some(StatusMsg {
+                    text: if app.show_leaderboard {
+                        "Leaderboard açık".to_string()
+                    } else {
+                        "Leaderboard kapalı".to_string()
+                    },
+                    kind: StatusKind::Info,
+                });
+            }
             KeyCode::Char('N') => {
                 // Büyük N: HABER abonelik (küçük 'n' news inbox için).
                 app.mode = Mode::Wizard {
@@ -749,6 +762,9 @@ struct App {
     /// güncelle, render'da olduğu gibi kullan. Auto-sim'de 21 hücre × 4
     /// alloc/render sayısı sıfıra iner.
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
+    /// Leaderboard alt çubukta gösterilsin mi. v8.21: L tuşu ile toggle.
+    /// Default kapalı — küçük ekranlarda alt satıra sığmıyordu.
+    show_leaderboard: bool,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
     player_name_input: String,
     /// Startup'ta seçili rol. Şimdilik Sanayici-only — Tüccar geliştirme
@@ -929,6 +945,7 @@ impl App {
             balance_loaded,
             cached_leaderboard: Vec::new(),
             cached_sparklines: std::collections::BTreeMap::new(),
+            show_leaderboard: false,
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
             chatter_log: VecDeque::with_capacity(CHATTER_WINDOW),
@@ -1818,16 +1835,19 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
 
     // Aktif şok varsa header altında bir satır ayır; yoksa görünmez (0 satır).
     let shock_height: u16 = u16::from(!app.state.active_shocks.is_empty());
+    // v8.21: Leaderboard L tuşu ile toggle. Kapalıyken 0 satır → middle panel
+    // büyür, footer doğrudan altta.
+    let leaderboard_height: u16 = if app.show_leaderboard { 3 } else { 0 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),            // header
-            Constraint::Length(shock_height), // aktif olaylar şeridi
-            Constraint::Min(10),              // middle (panels)
-            Constraint::Length(1),            // kervan status çubuğu
-            Constraint::Length(3),            // leaderboard
-            Constraint::Length(1),            // footer
+            Constraint::Length(3),                  // header
+            Constraint::Length(shock_height),       // aktif olaylar şeridi
+            Constraint::Min(10),                    // middle (panels)
+            Constraint::Length(1),                  // kervan status çubuğu
+            Constraint::Length(leaderboard_height), // leaderboard (toggle)
+            Constraint::Length(1),                  // footer
         ])
         .split(area);
 
@@ -1839,9 +1859,10 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
     render_caravan_strip(f, chunks[3], app);
     // Command mode'dayken leaderboard yerine komut hint'i göster —
     // oyuncu hangi parametreleri girmesi gerektiğini bilsin.
+    // v8.21: Leaderboard kapalıyken (L tuşu off) hiçbir şey çizme.
     if matches!(app.mode, Mode::Command { .. }) {
         render_command_hint(f, chunks[4], app);
-    } else {
+    } else if app.show_leaderboard {
         render_leaderboard(f, chunks[4], app);
     }
     render_footer(f, chunks[5], app);
@@ -5337,16 +5358,14 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    // Sezon sonu reveal — leaderboard ile aynı filter (sadece gerçek rakipler:
-    // insan + Sanayici + Tüccar). Likidite NPC'leri Alıcı/Esnaf/Spekülatör
-    // skor tablosuna katılmaz.
+    // Sezon sonu reveal — leaderboard ile aynı filter (insan + Sanayici + Tüccar).
     let board: Vec<PlayerScore> = leaderboard(&app.state)
         .into_iter()
         .filter(|sc| {
             app.state.players.get(&sc.player_id).is_none_or(|p| {
-                !p.has_npc_kind(NpcKind::Alici)
-                    && !p.has_npc_kind(NpcKind::Esnaf)
-                    && !p.has_npc_kind(NpcKind::Spekulator)
+                !p.is_npc
+                    || p.has_npc_kind(NpcKind::Sanayici)
+                    || p.has_npc_kind(NpcKind::Tuccar)
             })
         })
         .collect();
@@ -6495,18 +6514,17 @@ fn render_caravan_strip(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_leaderboard(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    // Tick başında hesaplanmış cache'ten oku — render hot-path'inde
-    // 12 player × scoring iter çalıştırma yok.
-    // Sadece **gerçek rakipler** (insan + Sanayici + Tüccar) görünsün; likidite
-    // sağlayan tipler (Alıcı/Esnaf/Spekülatör) saklanır.
+    // Sadece **gerçek rakipler** — insan oyuncu + Sanayici + Tüccar.
+    // v8.21: Çiftçi/Banka/Alıcı/Esnaf/Spek gizli (likidite/üretici tipleri,
+    // skor yarışında değil). Leaderboard daha kısa, alt satıra sığar.
     let filtered: Vec<&PlayerScore> = app
         .cached_leaderboard
         .iter()
         .filter(|sc| {
             app.state.players.get(&sc.player_id).is_none_or(|p| {
-                !p.has_npc_kind(NpcKind::Alici)
-                    && !p.has_npc_kind(NpcKind::Esnaf)
-                    && !p.has_npc_kind(NpcKind::Spekulator)
+                !p.is_npc
+                    || p.has_npc_kind(NpcKind::Sanayici)
+                    || p.has_npc_kind(NpcKind::Tuccar)
             })
         })
         .collect();
@@ -6650,6 +6668,9 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
                 hotkey("b/s"),
                 Span::styled(" al-sat", Style::default().fg(Color::Gray)),
+                Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
+                hotkey("L"),
+                Span::styled(" liderlik", Style::default().fg(Color::Gray)),
                 Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
                 hotkey("?"),
                 Span::styled(" tüm tuşlar", Style::default().fg(Color::Gray)),
