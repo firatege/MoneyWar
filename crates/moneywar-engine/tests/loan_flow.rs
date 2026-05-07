@@ -17,7 +17,8 @@ fn init_state() -> GameState {
     .unwrap();
     s.players.insert(p.id, p);
     // Bu test kredi akışını izole eder; news fee dengesini bozmasın.
-    s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
+    s.news_subscriptions
+        .insert(PlayerId::new(1), NewsTier::Free);
     s
 }
 

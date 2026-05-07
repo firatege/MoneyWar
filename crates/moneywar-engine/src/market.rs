@@ -135,10 +135,7 @@ fn clear_bucket(
     {
         use std::collections::BTreeSet;
         let participants: BTreeSet<PlayerId> = orders.iter().map(|o| o.player).collect();
-        let matched: BTreeSet<PlayerId> = fills
-            .iter()
-            .flat_map(|f| [f.buyer, f.seller])
-            .collect();
+        let matched: BTreeSet<PlayerId> = fills.iter().flat_map(|f| [f.buyer, f.seller]).collect();
         for pid in &participants {
             if matched.contains(pid) {
                 state.no_match_streak.insert((*pid, city, product), 0);
@@ -175,7 +172,7 @@ fn clear_bucket(
             // dengelenir. Reel piyasa "fiyat hızla düşer (panik), yavaş
             // yükselir (talep)" davranışı amplify edildi.
             let mut factor_milli = if imbalance > 0 {
-                1000 + imbalance * 2 / 1000  // +%0.2/tick
+                1000 + imbalance * 2 / 1000 // +%0.2/tick
             } else {
                 1000 + imbalance * 10 / 1000 // -%1.0/tick
             };
@@ -427,11 +424,15 @@ fn settle_fills(
         saturation_qty = saturation_qty.saturating_add(half_qty);
 
         if full_qty > 0 {
-            settle_segment(state, report, tick, city, product, fill, full_qty, fill.price);
+            settle_segment(
+                state, report, tick, city, product, fill, full_qty, fill.price,
+            );
         }
         if half_qty > 0 {
             let half_price = Money::from_cents(fill.price.as_cents() / 2);
-            settle_segment(state, report, tick, city, product, fill, half_qty, half_price);
+            settle_segment(
+                state, report, tick, city, product, fill, half_qty, half_price,
+            );
         }
     }
 
@@ -551,9 +552,7 @@ fn settle_segment(
         seller.credit(total).expect("cash overflow on credit");
     }
     if let Some(buyer) = state.players.get_mut(&fill.buyer) {
-        buyer
-            .debit(total_with_tax)
-            .expect("pre-flight validated");
+        buyer.debit(total_with_tax).expect("pre-flight validated");
         buyer
             .inventory
             .add(city, product, qty)
@@ -713,7 +712,11 @@ mod tests {
                 quantity, price, ..
             } => {
                 assert_eq!(*quantity, 10);
-                assert_eq!(*price, Money::from_lira(10).unwrap(), "pay-as-bid: BUY fiyatı");
+                assert_eq!(
+                    *price,
+                    Money::from_lira(10).unwrap(),
+                    "pay-as-bid: BUY fiyatı"
+                );
             }
             other => panic!("expected OrderMatched, got {other:?}"),
         }

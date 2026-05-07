@@ -26,14 +26,14 @@ pub mod stats;
 pub mod thresholds;
 pub mod trace;
 
-pub use report::render_markdown;
 pub use moneywar_domain::NpcComposition;
+pub use report::render_markdown;
 pub use runner::{RoleActionMix, SimResult, SimRunner};
 pub use scenario::Scenario;
 pub use snapshot::{ClearingSnapshot, OrderBookSummary, PlayerSnapshot, TickSnapshot};
 pub use stats::{PerRunMetrics, QualityScore, Stats, Summary};
 pub use thresholds::{
-    audit_game, audit_role, default_contracts, render_threshold_report, ActionField, CheckResult,
-    GameThresholds, RequiredAction, RoleContract,
+    ActionField, CheckResult, GameThresholds, RequiredAction, RoleContract, audit_game, audit_role,
+    default_contracts, render_threshold_report,
 };
 pub use trace::{NpcDecisionTrace, TickTrace};

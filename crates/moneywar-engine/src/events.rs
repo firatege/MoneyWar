@@ -443,7 +443,8 @@ mod tests {
         let mut s = state_at(0);
         add_player(&mut s, 1, Role::Sanayici);
         // Açıkça Free'ye geç (default artık Bronze).
-        s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
+        s.news_subscriptions
+            .insert(PlayerId::new(1), NewsTier::Free);
 
         for t in 1..=200 {
             let mut r = TickReport::new(Tick::new(t));

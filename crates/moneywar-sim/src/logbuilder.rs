@@ -26,7 +26,7 @@ use crate::report::render_markdown;
 use crate::runner::SimResult;
 use crate::stats::{PerRunMetrics, QualityScore, Stats};
 use crate::thresholds::{
-    audit_game_with_runs, audit_role, default_contracts, render_threshold_report, GameThresholds,
+    GameThresholds, audit_game_with_runs, audit_role, default_contracts, render_threshold_report,
 };
 
 /// Şehir id (0..2) → display name.
@@ -178,7 +178,10 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
 
     // Şehir başına toplam clearing + match qty
     let _ = writeln!(out, "### Şehir Toplam");
-    let _ = writeln!(out, "| Şehir | Clearing | Match qty | Buy submit | Sell submit |");
+    let _ = writeln!(
+        out,
+        "| Şehir | Clearing | Match qty | Buy submit | Sell submit |"
+    );
     let _ = writeln!(out, "|---|---|---|---|---|");
     for city_id in 0..3u8 {
         let mut total_clearing = 0u32;
@@ -290,10 +293,7 @@ fn render_inventory_flow_md(runs: &[SimResult]) -> String {
         } else {
             "📉 eriyor"
         };
-        let _ = writeln!(
-            out,
-            "| {kind} | {mean:.0} {icon} | {min} | {max} |"
-        );
+        let _ = writeln!(out, "| {kind} | {mean:.0} {icon} | {min} | {max} |");
     }
     let _ = writeln!(out);
     out
@@ -343,11 +343,7 @@ pub fn write_full_log(
     }
 }
 
-fn render_aggregate_md(
-    stats: &Stats,
-    quality: &QualityScore,
-    runs: &[PerRunMetrics],
-) -> String {
+fn render_aggregate_md(stats: &Stats, quality: &QualityScore, runs: &[PerRunMetrics]) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let _ = writeln!(
@@ -356,7 +352,11 @@ fn render_aggregate_md(
         stats.n_runs, stats.difficulty
     );
     let _ = writeln!(out);
-    let _ = writeln!(out, "## Kalite Kapısı: {}/{}", quality.passed, quality.total);
+    let _ = writeln!(
+        out,
+        "## Kalite Kapısı: {}/{}",
+        quality.passed, quality.total
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "| Madde | Geçti | Değer |");
     let _ = writeln!(out, "|---|---|---|");
@@ -596,11 +596,7 @@ fn epoch_to_ymdhms(secs: u64) -> (u32, u32, u32, u32, u32, u32) {
     let mut month: u32 = 1;
     for &md in &months {
         let md = if month == 2 {
-            if is_leap(year as u32) {
-                29
-            } else {
-                28
-            }
+            if is_leap(year as u32) { 29 } else { 28 }
         } else {
             md
         };

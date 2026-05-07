@@ -161,7 +161,10 @@ fn section_stale_orders(out: &mut String, r: &SimResult) {
 }
 
 fn section_pnl_evolution(out: &mut String, r: &SimResult) {
-    let _ = writeln!(out, "## 💰 PnL Evolution (her oyuncu cash + stok birimleri)");
+    let _ = writeln!(
+        out,
+        "## 💰 PnL Evolution (her oyuncu cash + stok birimleri)"
+    );
     if r.snapshots.is_empty() {
         return;
     }
@@ -245,7 +248,10 @@ fn section_action_distribution(out: &mut String, r: &SimResult) {
     let _ = writeln!(out, "| NPC | Aksiyon | Sayı |");
     let _ = writeln!(out, "|---|---|---|");
     for ((id, kind), n) in counts {
-        let name = npc_names.get(&id).cloned().unwrap_or_else(|| format!("?{id}"));
+        let name = npc_names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("?{id}"));
         let _ = writeln!(out, "| {name} | {kind} | {n} |");
     }
     let _ = writeln!(out);

@@ -9,9 +9,7 @@
 //! Sadece NPC'lere kredi verir — oyuncu hâlâ klasik `TakeLoan` komutu
 //! kullanır (sistem bankası).
 
-use moneywar_domain::{
-    GameState, Loan, LoanId, Money, NpcKind, PlayerId, Tick,
-};
+use moneywar_domain::{GameState, Loan, LoanId, Money, NpcKind, PlayerId, Tick};
 
 use crate::report::{LogEntry, TickReport};
 
@@ -59,9 +57,7 @@ pub(crate) fn tick_banks(state: &mut GameState, report: &mut TickReport, tick: T
         .players
         .iter()
         .filter(|(_, p)| {
-            p.is_npc
-                && p.npc_kind != Some(NpcKind::Banka)
-                && p.cash.as_cents() < threshold_cents
+            p.is_npc && p.npc_kind != Some(NpcKind::Banka) && p.cash.as_cents() < threshold_cents
         })
         .map(|(id, _)| *id)
         .collect();

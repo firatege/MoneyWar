@@ -34,8 +34,10 @@ fn init_state() -> GameState {
     s.players.insert(buyer.id, buyer);
     // Bu integration testleri kontrat akışını izole eder; news tick fee
     // dengesini kirletmesin diye oyuncuları Free'ye geçir.
-    s.news_subscriptions.insert(PlayerId::new(1), NewsTier::Free);
-    s.news_subscriptions.insert(PlayerId::new(2), NewsTier::Free);
+    s.news_subscriptions
+        .insert(PlayerId::new(1), NewsTier::Free);
+    s.news_subscriptions
+        .insert(PlayerId::new(2), NewsTier::Free);
     s
 }
 

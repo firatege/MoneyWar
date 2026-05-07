@@ -18,8 +18,7 @@
 //! - `competition -0.2` — rakip baskı varsa bekle
 
 use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, Player, ProductKind,
-    balance::TRANSACTION_TAX_PCT,
+    CityId, GameState, Money, OrderSide, Player, ProductKind, balance::TRANSACTION_TAX_PCT,
 };
 
 use crate::behavior::candidates::ActionCandidate;
@@ -149,17 +148,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).max(1).min(50);
-        let reference = state
-            .reference_price(city, product)
-            .unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
-                    .unwrap_or(Money::ZERO)
-            });
+        let reference = state.reference_price(city, product).unwrap_or_else(|| {
+            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
+                .unwrap_or(Money::ZERO)
+        });
         let stock_floor_pct: i64 = match qty {
-            0..=49 => 95,           // taze mamul → kâr maks
-            50..=149 => 88,         // orta basınç
-            150..=299 => 78,        // ağır basınç → fiyat aşağı kay
-            _ => 70,                // 300+ kriz, agresif erit
+            0..=49 => 95,    // taze mamul → kâr maks
+            50..=149 => 88,  // orta basınç
+            150..=299 => 78, // ağır basınç → fiyat aşağı kay
+            _ => 70,         // 300+ kriz, agresif erit
         };
         let stock_floor = scale_pct(reference, stock_floor_pct);
         // Stok>150 ise CROSS (alıcıya yetiş, depoyu boşalt).
@@ -303,10 +300,7 @@ fn enumerate_contract_accepts(
     // accept. Yeni: fab varsa **herhangi bir şehirde** ham gelsin yeter,
     // Sanayici sonra kervan ile lojistik yapar (Sanayici kervan kapasitesi
     // 500'e çıktı v8.24).
-    let has_any_fab = state
-        .factories
-        .values()
-        .any(|f| f.owner == player.id);
+    let has_any_fab = state.factories.values().any(|f| f.owner == player.id);
     if !has_any_fab {
         return Vec::new();
     }
@@ -417,47 +411,44 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
     // görüyordu → yığılıyordu. Her NPC kendi player_id × tick hash'i ile
     // küçük rastgele jitter alır → farklı NPC'ler farklı seçer.
     let current_tick = state.current_tick.value();
-    candidates
-        .into_iter()
-        .max_by_key(|(city, product)| {
-            let mamul_cents = state
-                .reference_price(*city, *product)
-                .map_or(0, |m| m.as_cents());
-            let raw_cents = product
-                .raw_input()
-                .and_then(|raw| state.reference_price(*city, raw))
-                .map_or(0, |m| m.as_cents());
-            let margin = (mamul_cents - raw_cents).max(0);
+    candidates.into_iter().max_by_key(|(city, product)| {
+        let mamul_cents = state
+            .reference_price(*city, *product)
+            .map_or(0, |m| m.as_cents());
+        let raw_cents = product
+            .raw_input()
+            .and_then(|raw| state.reference_price(*city, raw))
+            .map_or(0, |m| m.as_cents());
+        let margin = (mamul_cents - raw_cents).max(0);
 
-            let rival_count = state
-                .factories
-                .values()
-                .filter(|f| f.city == *city && f.product == *product && f.owner != player.id)
-                .count() as i64;
-            let own_count = state
-                .factories
-                .values()
-                .filter(|f| f.city == *city && f.product == *product && f.owner == player.id)
-                .count() as i64;
-            let competition_factor = 1 + 2 * rival_count + 3 * own_count;
-            let base_score = margin / competition_factor;
+        let rival_count = state
+            .factories
+            .values()
+            .filter(|f| f.city == *city && f.product == *product && f.owner != player.id)
+            .count() as i64;
+        let own_count = state
+            .factories
+            .values()
+            .filter(|f| f.city == *city && f.product == *product && f.owner == player.id)
+            .count() as i64;
+        let competition_factor = 1 + 2 * rival_count + 3 * own_count;
+        let base_score = margin / competition_factor;
 
-            // Jitter: NPC × tick × (city, product) hash'i ile. Marjın %20'si
-            // kadar varyans → kararı sallar ama yön kaybetmez.
-            let hash_seed = player
-                .id
-                .value()
-                .wrapping_mul(31)
-                .wrapping_add(u64::from(current_tick))
-                .wrapping_mul(17)
-                .wrapping_add(*city as u64)
-                .wrapping_mul(7)
-                .wrapping_add(*product as u64);
-            let jitter = ((hash_seed % 100) as i64) * margin.max(1) / 500;
-            base_score + jitter
-        })
+        // Jitter: NPC × tick × (city, product) hash'i ile. Marjın %20'si
+        // kadar varyans → kararı sallar ama yön kaybetmez.
+        let hash_seed = player
+            .id
+            .value()
+            .wrapping_mul(31)
+            .wrapping_add(u64::from(current_tick))
+            .wrapping_mul(17)
+            .wrapping_add(*city as u64)
+            .wrapping_mul(7)
+            .wrapping_add(*product as u64);
+        let jitter = ((hash_seed % 100) as i64) * margin.max(1) / 500;
+        base_score + jitter
+    })
 }
-
 
 /// Tax-aware satın alma qty.
 fn affordable_qty(cash: Money, unit_price: Money, want: u32) -> u32 {
@@ -501,7 +492,9 @@ mod tests {
         let s = fresh();
         let p = sanayici(50_000);
         let cands = enumerate(&s, &p);
-        let has_build = cands.iter().any(|c| matches!(c, ActionCandidate::BuildFactory { .. }));
+        let has_build = cands
+            .iter()
+            .any(|c| matches!(c, ActionCandidate::BuildFactory { .. }));
         assert!(has_build, "fab yoksa BuildFactory emit etmeli");
     }
 
@@ -517,7 +510,9 @@ mod tests {
         }
         s.players.insert(p.id, p.clone());
         let cands = enumerate(&s, &p);
-        let has_build = cands.iter().any(|c| matches!(c, ActionCandidate::BuildFactory { .. }));
+        let has_build = cands
+            .iter()
+            .any(|c| matches!(c, ActionCandidate::BuildFactory { .. }));
         assert!(!has_build, "hedef sayıda fab varsa Build durur");
     }
 
@@ -533,9 +528,18 @@ mod tests {
             .count();
         assert_eq!(buy_count, 3, "fab yok → fallback specialty (3 BUY)");
         for c in &cands {
-            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, city, product, .. } = c {
-                assert_eq!(*product, city.cheap_raw(),
-                    "fab yok → BUY {city:?}'in specialty'si");
+            if let ActionCandidate::SubmitOrder {
+                side: OrderSide::Buy,
+                city,
+                product,
+                ..
+            } = c
+            {
+                assert_eq!(
+                    *product,
+                    city.cheap_raw(),
+                    "fab yok → BUY {city:?}'in specialty'si"
+                );
             }
         }
     }
@@ -574,7 +578,15 @@ mod tests {
         let cands = enumerate(&s, &p);
         let buy_count = cands
             .iter()
-            .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    ActionCandidate::SubmitOrder {
+                        side: OrderSide::Buy,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(buy_count, 0);
     }
@@ -583,7 +595,9 @@ mod tests {
     fn finished_stock_yields_sell_candidates() {
         let s = fresh();
         let mut p = sanayici(50_000);
-        p.inventory.add(CityId::Istanbul, ProductKind::Kumas, 100).unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Kumas, 100)
+            .unwrap();
         let cands = enumerate(&s, &p);
         let sell_count = cands
             .iter()
@@ -597,7 +611,9 @@ mod tests {
         let s = fresh();
         let mut p = sanayici(50_000);
         // Sanayici raw'ı satmaz (sadece mamul SAT).
-        p.inventory.add(CityId::Istanbul, ProductKind::Pamuk, 100).unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 100)
+            .unwrap();
         let cands = enumerate(&s, &p);
         let sell_raw = cands
             .iter()

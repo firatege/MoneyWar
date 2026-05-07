@@ -14,7 +14,7 @@
 //! - `momentum +0.1`: trend yönü
 
 use moneywar_domain::{
-    Cargo, CaravanState, CityId, GameState, Money, OrderSide, Player, ProductKind,
+    CaravanState, Cargo, CityId, GameState, Money, OrderSide, Player, ProductKind,
     balance::TRANSACTION_TAX_PCT,
 };
 
@@ -50,16 +50,20 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         .filter(|c| c.owner == player.id)
         .count();
     let any_arbitrage = ProductKind::ALL.iter().any(|prod| {
-        let Some((_, cheap_p)) = cheapest_city(state, *prod) else { return false; };
-        let Some((_, rich_p)) = richest_city(state, *prod) else { return false; };
+        let Some((_, cheap_p)) = cheapest_city(state, *prod) else {
+            return false;
+        };
+        let Some((_, rich_p)) = richest_city(state, *prod) else {
+            return false;
+        };
         let cheap_c = cheap_p.as_cents();
-        if cheap_c <= 0 { return false; }
+        if cheap_c <= 0 {
+            return false;
+        }
         (rich_p.as_cents() - cheap_c) * 100 / cheap_c >= ARBITRAGE_SPREAD_PCT
     });
-    let next_cost = moneywar_domain::Caravan::buy_cost(
-        player.role,
-        u32::try_from(owned_caravans).unwrap_or(0),
-    );
+    let next_cost =
+        moneywar_domain::Caravan::buy_cost(player.role, u32::try_from(owned_caravans).unwrap_or(0));
     let cash_reserve_threshold = Money::from_cents(player.cash.as_cents() / 3);
     if any_arbitrage && next_cost <= cash_reserve_threshold {
         let starting_city = CityId::ALL[owned_caravans % CityId::ALL.len()];
@@ -191,7 +195,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             // baskılı bucket'larda (1703 BUY 0 SELL) bu fiyat doğal yüksek.
             let to_target = best_bid_in_city(state, to_city, product)
                 .map(|m| m.as_cents())
-                .or_else(|| state.reference_price(to_city, product).map(|m| m.as_cents()))
+                .or_else(|| {
+                    state
+                        .reference_price(to_city, product)
+                        .map(|m| m.as_cents())
+                })
                 .unwrap_or(0);
             if to_target <= cheap_price.as_cents() {
                 continue;
@@ -304,8 +312,8 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         if from_city == to_city || from_price.as_cents() <= 0 {
             continue;
         }
-        let spread_pct = ((to_price.as_cents() - from_price.as_cents()) * 100)
-            / from_price.as_cents().max(1);
+        let spread_pct =
+            ((to_price.as_cents() - from_price.as_cents()) * 100) / from_price.as_cents().max(1);
         if spread_pct < ARBITRAGE_SPREAD_PCT {
             continue;
         }
@@ -313,7 +321,9 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
             .as_ref()
             .is_none_or(|(_, _, _, _, _, p)| spread_pct > *p)
         {
-            best_opportunity = Some((product, from_city, to_city, from_price, to_price, spread_pct));
+            best_opportunity = Some((
+                product, from_city, to_city, from_price, to_price, spread_pct,
+            ));
         }
     }
     let Some((product, _from_city, _, _, _, _)) = best_opportunity else {
@@ -339,12 +349,11 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         return Vec::new();
     };
     // Bu şehrin best_bid'ı ya da reference fiyatı
-    let to_price = best_bid_in_city(state, to_city, product)
-        .unwrap_or_else(|| {
-            state
-                .reference_price(to_city, product)
-                .unwrap_or(Money::ZERO)
-        });
+    let to_price = best_bid_in_city(state, to_city, product).unwrap_or_else(|| {
+        state
+            .reference_price(to_city, product)
+            .unwrap_or(Money::ZERO)
+    });
     if to_price.as_cents() <= 0 {
         return Vec::new();
     }
@@ -473,7 +482,12 @@ mod tests {
         let cands = enumerate(&s, &p);
         let arbitrage_cands = cands
             .iter()
-            .filter(|c| matches!(c, ActionCandidate::SubmitOrder { .. } | ActionCandidate::DispatchCaravan { .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    ActionCandidate::SubmitOrder { .. } | ActionCandidate::DispatchCaravan { .. }
+                )
+            })
             .count();
         assert_eq!(arbitrage_cands, 0, "spread sıfırsa arbitraj yok");
     }
@@ -482,36 +496,75 @@ mod tests {
     fn synthetic_spread_yields_arbitrage_candidates() {
         // Sun'i baseline'lar: İst Pamuk = 4, Ank = 6, Izm = 8 → spread 100%
         let mut s = fresh();
-        s.price_baseline.insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
-        s.price_baseline.insert((CityId::Ankara, ProductKind::Pamuk), Money::from_lira(6).unwrap());
-        s.price_baseline.insert((CityId::Izmir, ProductKind::Pamuk), Money::from_lira(8).unwrap());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(4).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Ankara, ProductKind::Pamuk),
+            Money::from_lira(6).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Izmir, ProductKind::Pamuk),
+            Money::from_lira(8).unwrap(),
+        );
         let p = tuccar(15_000);
         let cands = enumerate(&s, &p);
-        let buy_in_istanbul = cands.iter().any(|c| matches!(c,
-            ActionCandidate::SubmitOrder { side: OrderSide::Buy, city: CityId::Istanbul, product: ProductKind::Pamuk, .. }
-        ));
+        let buy_in_istanbul = cands.iter().any(|c| {
+            matches!(
+                c,
+                ActionCandidate::SubmitOrder {
+                    side: OrderSide::Buy,
+                    city: CityId::Istanbul,
+                    product: ProductKind::Pamuk,
+                    ..
+                }
+            )
+        });
         assert!(buy_in_istanbul, "ucuz şehirde AL emit etmeli");
     }
 
     #[test]
     fn stock_in_rich_city_yields_sell() {
         let mut s = fresh();
-        s.price_baseline.insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
-        s.price_baseline.insert((CityId::Izmir, ProductKind::Pamuk), Money::from_lira(8).unwrap());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(4).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Izmir, ProductKind::Pamuk),
+            Money::from_lira(8).unwrap(),
+        );
         let mut p = tuccar(15_000);
-        p.inventory.add(CityId::Izmir, ProductKind::Pamuk, 30).unwrap();
+        p.inventory
+            .add(CityId::Izmir, ProductKind::Pamuk, 30)
+            .unwrap();
         let cands = enumerate(&s, &p);
-        let sell_in_izmir = cands.iter().any(|c| matches!(c,
-            ActionCandidate::SubmitOrder { side: OrderSide::Sell, city: CityId::Izmir, product: ProductKind::Pamuk, .. }
-        ));
+        let sell_in_izmir = cands.iter().any(|c| {
+            matches!(
+                c,
+                ActionCandidate::SubmitOrder {
+                    side: OrderSide::Sell,
+                    city: CityId::Izmir,
+                    product: ProductKind::Pamuk,
+                    ..
+                }
+            )
+        });
         assert!(sell_in_izmir, "pahalı şehirde stok varsa SAT");
     }
 
     #[test]
     fn deterministic_no_rng() {
         let mut s = fresh();
-        s.price_baseline.insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
-        s.price_baseline.insert((CityId::Ankara, ProductKind::Pamuk), Money::from_lira(8).unwrap());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(4).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Ankara, ProductKind::Pamuk),
+            Money::from_lira(8).unwrap(),
+        );
         let p = tuccar(15_000);
         let a = enumerate(&s, &p);
         let b = enumerate(&s, &p);
@@ -524,16 +577,27 @@ mod tests {
         // BuyCaravan emit eder. fresh state'te baseline boş → arbitraj yok.
         // Test için baseline doldur (fiyat farkı %15+ → arbitraj sinyali var).
         let mut s = fresh();
-        s.price_baseline
-            .insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
-        s.price_baseline
-            .insert((CityId::Ankara, ProductKind::Pamuk), Money::from_lira(8).unwrap());
-        s.price_baseline
-            .insert((CityId::Izmir, ProductKind::Pamuk), Money::from_lira(6).unwrap());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(4).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Ankara, ProductKind::Pamuk),
+            Money::from_lira(8).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Izmir, ProductKind::Pamuk),
+            Money::from_lira(6).unwrap(),
+        );
         let p = tuccar(15_000);
         let cands = enumerate(&s, &p);
-        let has_buy_caravan = cands.iter().any(|c| matches!(c, ActionCandidate::BuyCaravan { .. }));
-        assert!(has_buy_caravan, "arbitraj sinyali + cash varsa BuyCaravan emit etmeli");
+        let has_buy_caravan = cands
+            .iter()
+            .any(|c| matches!(c, ActionCandidate::BuyCaravan { .. }));
+        assert!(
+            has_buy_caravan,
+            "arbitraj sinyali + cash varsa BuyCaravan emit etmeli"
+        );
     }
 
     #[test]
@@ -541,35 +605,67 @@ mod tests {
         use moneywar_domain::{Caravan, CaravanId};
         let mut s = fresh();
         // Şehirler arası fiyat farkı (Pamuk: Ist 4, Ank 8)
-        s.price_baseline.insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
-        s.price_baseline.insert((CityId::Ankara, ProductKind::Pamuk), Money::from_lira(8).unwrap());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(4).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Ankara, ProductKind::Pamuk),
+            Money::from_lira(8).unwrap(),
+        );
         let mut p = tuccar(15_000);
         // İstanbul'da Tüccar'ın 50 birim Pamuk stoğu
-        p.inventory.add(CityId::Istanbul, ProductKind::Pamuk, 50).unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 50)
+            .unwrap();
         // İdle kervan İstanbul'da
         let caravan = Caravan::new(CaravanId::new(1), p.id, 200, CityId::Istanbul);
         s.caravans.insert(caravan.id, caravan);
         let cands = enumerate(&s, &p);
-        let has_dispatch = cands.iter().any(|c| matches!(c, ActionCandidate::DispatchCaravan { from: CityId::Istanbul, to: CityId::Ankara, .. }));
-        assert!(has_dispatch, "idle kervan + ucuz şehir stoğu → pahalı şehre dispatch");
+        let has_dispatch = cands.iter().any(|c| {
+            matches!(
+                c,
+                ActionCandidate::DispatchCaravan {
+                    from: CityId::Istanbul,
+                    to: CityId::Ankara,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_dispatch,
+            "idle kervan + ucuz şehir stoğu → pahalı şehre dispatch"
+        );
     }
 
     #[test]
     fn enroute_caravan_no_dispatch() {
         use moneywar_domain::{Caravan, CaravanId, Tick};
         let mut s = fresh();
-        s.price_baseline.insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
-        s.price_baseline.insert((CityId::Ankara, ProductKind::Pamuk), Money::from_lira(8).unwrap());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(4).unwrap(),
+        );
+        s.price_baseline.insert(
+            (CityId::Ankara, ProductKind::Pamuk),
+            Money::from_lira(8).unwrap(),
+        );
         let mut p = tuccar(15_000);
-        p.inventory.add(CityId::Istanbul, ProductKind::Pamuk, 50).unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 50)
+            .unwrap();
         // EnRoute kervan — dispatch yapamaz
         let mut caravan = Caravan::new(CaravanId::new(1), p.id, 200, CityId::Istanbul);
         let mut cargo = moneywar_domain::Cargo::new();
         cargo.add(ProductKind::Pamuk, 10).unwrap();
-        caravan.dispatch(CityId::Istanbul, CityId::Ankara, cargo, Tick::new(5)).unwrap();
+        caravan
+            .dispatch(CityId::Istanbul, CityId::Ankara, cargo, Tick::new(5))
+            .unwrap();
         s.caravans.insert(caravan.id, caravan);
         let cands = enumerate(&s, &p);
-        let has_dispatch = cands.iter().any(|c| matches!(c, ActionCandidate::DispatchCaravan { .. }));
+        let has_dispatch = cands
+            .iter()
+            .any(|c| matches!(c, ActionCandidate::DispatchCaravan { .. }));
         assert!(!has_dispatch, "enroute kervan dispatch emit etmemeli");
     }
 }

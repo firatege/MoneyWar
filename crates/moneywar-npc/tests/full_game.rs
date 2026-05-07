@@ -79,9 +79,12 @@ fn init_world() -> GameState {
     s.players.insert(npc_buyer.id, npc_buyer);
 
     // Money conservation testi: news fee ekonomi dışı sink olduğu için Free'ye geç.
-    s.news_subscriptions.insert(PlayerId::new(1), moneywar_domain::NewsTier::Free);
-    s.news_subscriptions.insert(PlayerId::new(100), moneywar_domain::NewsTier::Free);
-    s.news_subscriptions.insert(PlayerId::new(101), moneywar_domain::NewsTier::Free);
+    s.news_subscriptions
+        .insert(PlayerId::new(1), moneywar_domain::NewsTier::Free);
+    s.news_subscriptions
+        .insert(PlayerId::new(100), moneywar_domain::NewsTier::Free);
+    s.news_subscriptions
+        .insert(PlayerId::new(101), moneywar_domain::NewsTier::Free);
 
     s
 }
@@ -128,10 +131,7 @@ fn twenty_tick_simulation_with_humans_and_npcs() {
         total_cash_after <= total_cash_before,
         "cash sadece azalabilir (caravan/factory sink)"
     );
-    assert!(
-        total_cash_after >= 0,
-        "kimse aşırı borca girmemeli"
-    );
+    assert!(total_cash_after >= 0, "kimse aşırı borca girmemeli");
     // NPC'ler hala stok gösteriyor (sıfıra inmedi mantıksızca).
     let npc_stock = state.players[&PlayerId::new(100)]
         .inventory

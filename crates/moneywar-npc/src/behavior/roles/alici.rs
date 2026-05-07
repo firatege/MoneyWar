@@ -123,9 +123,7 @@ const fn default_finished_price() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moneywar_domain::{
-        CityId, NpcKind, PlayerId, ProductKind, Role, RoomConfig, RoomId,
-    };
+    use moneywar_domain::{CityId, NpcKind, PlayerId, ProductKind, Role, RoomConfig, RoomId};
 
     fn alici_with_cash(lira: i64) -> (GameState, Player) {
         let s = GameState::new(RoomId::new(1), RoomConfig::hizli());
@@ -149,9 +147,7 @@ mod tests {
         // ama bu test fresh_state kullanıyor → baseline None → fallback fiyat).
         assert_eq!(cands.len(), 9);
         for cand in &cands {
-            let ActionCandidate::SubmitOrder {
-                side, product, ..
-            } = cand else {
+            let ActionCandidate::SubmitOrder { side, product, .. } = cand else {
                 panic!("Alıcı sadece SubmitOrder emit etmeli");
             };
             assert_eq!(*side, OrderSide::Buy);

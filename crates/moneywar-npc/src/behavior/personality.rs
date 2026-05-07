@@ -227,7 +227,11 @@ mod tests {
             NpcKind::Tuccar,
         ] {
             let w = for_kind_personality(Some(kind), None);
-            assert_ne!(w, Weights::ZERO, "{kind:?} göç etti, weights tanımlı olmalı");
+            assert_ne!(
+                w,
+                Weights::ZERO,
+                "{kind:?} göç etti, weights tanımlı olmalı"
+            );
         }
     }
 

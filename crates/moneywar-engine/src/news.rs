@@ -226,10 +226,11 @@ mod tests {
         let mut r2 = TickReport::new(Tick::new(1));
         charge_news_subscriptions(&mut s, &mut r2, Tick::new(1));
         assert_eq!(s.players[&pid].cash, Money::from_lira(960).unwrap());
-        assert!(r2.entries.iter().any(|e| matches!(
-            e.event,
-            crate::report::LogEvent::NewsTickCharged { .. }
-        )));
+        assert!(
+            r2.entries
+                .iter()
+                .any(|e| matches!(e.event, crate::report::LogEvent::NewsTickCharged { .. }))
+        );
     }
 
     #[test]
@@ -258,10 +259,11 @@ mod tests {
         assert!(s.news_payment_warned.contains(&pid));
         // Tier hâlâ Gold (henüz düşmedi).
         assert_eq!(s.news_subscriptions.get(&pid), Some(&NewsTier::Gold));
-        assert!(r2.entries.iter().any(|e| matches!(
-            e.event,
-            crate::report::LogEvent::NewsPaymentWarning { .. }
-        )));
+        assert!(
+            r2.entries
+                .iter()
+                .any(|e| matches!(e.event, crate::report::LogEvent::NewsPaymentWarning { .. }))
+        );
     }
 
     #[test]
@@ -277,10 +279,11 @@ mod tests {
         // Free'ye düştü — map'te artık Free olarak kayıtlı (silmek yerine).
         assert_eq!(s.news_subscriptions.get(&pid), Some(&NewsTier::Free));
         assert!(!s.news_payment_warned.contains(&pid));
-        assert!(r.entries.iter().any(|e| matches!(
-            e.event,
-            crate::report::LogEvent::NewsDowngraded { .. }
-        )));
+        assert!(
+            r.entries
+                .iter()
+                .any(|e| matches!(e.event, crate::report::LogEvent::NewsDowngraded { .. }))
+        );
     }
 
     #[test]

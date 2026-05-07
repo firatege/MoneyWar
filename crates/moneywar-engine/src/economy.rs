@@ -148,8 +148,9 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
     // Toplam wage havuzu — her Sanayici cebinden kesilir.
     let mut wage_pool_cents: i64 = 0;
     for (owner, count) in &factories_by_owner {
-        let wage_per_owner_cents =
-            WAGE_PER_FACTORY_LIRA.saturating_mul(i64::from(*count)).saturating_mul(100);
+        let wage_per_owner_cents = WAGE_PER_FACTORY_LIRA
+            .saturating_mul(i64::from(*count))
+            .saturating_mul(100);
         if let Some(p) = state.players.get_mut(owner) {
             let actual_cents = wage_per_owner_cents.min(p.cash.as_cents());
             if actual_cents <= 0 {
@@ -224,8 +225,9 @@ fn charge_factory_maintenance(state: &mut GameState, _report: &mut TickReport, _
         map
     };
     for (owner, count) in factories_by_owner {
-        let cost_cents =
-            MAINTENANCE_PER_FACTORY_LIRA.saturating_mul(i64::from(count)).saturating_mul(100);
+        let cost_cents = MAINTENANCE_PER_FACTORY_LIRA
+            .saturating_mul(i64::from(count))
+            .saturating_mul(100);
         if let Some(p) = state.players.get_mut(&owner) {
             let actual = cost_cents.min(p.cash.as_cents());
             if actual > 0 {
@@ -313,10 +315,8 @@ fn harvest_ciftci_stock(
             let actual_cost_cents = want_cost_cents.min(have_cents);
             let scale_num = actual_cost_cents.max(0);
             let actual_total = if want_cost_cents > 0 {
-                u32::try_from(
-                    i64::from(total_qty).saturating_mul(scale_num) / want_cost_cents,
-                )
-                .unwrap_or(total_qty)
+                u32::try_from(i64::from(total_qty).saturating_mul(scale_num) / want_cost_cents)
+                    .unwrap_or(total_qty)
             } else {
                 total_qty
             };
@@ -329,8 +329,7 @@ fn harvest_ciftci_stock(
             // 3 katmana orantılı dağıt (tam sayı bölmesi). prime + sec
             // hesaplanır, demand kalan = total - prime - sec.
             let actual_prime = u32::try_from(
-                u64::from(prime_qty).saturating_mul(u64::from(actual_total))
-                    / u64::from(total_qty),
+                u64::from(prime_qty).saturating_mul(u64::from(actual_total)) / u64::from(total_qty),
             )
             .unwrap_or(prime_qty);
             let actual_secondary = u32::try_from(
@@ -344,7 +343,13 @@ fn harvest_ciftci_stock(
 
             if actual_prime > 0 {
                 let _ = p.inventory.add(city, prime, actual_prime);
-                report.push(LogEntry::economy_harvest(tick, pid, city, prime, actual_prime));
+                report.push(LogEntry::economy_harvest(
+                    tick,
+                    pid,
+                    city,
+                    prime,
+                    actual_prime,
+                ));
             }
             if let Some(sec_raw) = secondary {
                 if actual_secondary > 0 {
@@ -442,11 +447,7 @@ fn tick_world_factories(state: &mut GameState, _report: &mut TickReport, tick: T
 /// vergi al, Alıcı'lara eşit dağıt. Şu an aktif değil — wages closed loop
 /// olduğu için. Gelecekte `tick_economy`'den çağrılabilir.
 #[allow(dead_code)]
-fn collect_and_redistribute_tax(
-    state: &mut GameState,
-    report: &mut TickReport,
-    tick: Tick,
-) {
+fn collect_and_redistribute_tax(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     let producer_ids: Vec<PlayerId> = state
         .players
         .iter()

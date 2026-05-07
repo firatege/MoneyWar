@@ -11,8 +11,7 @@ use moneywar_domain::{
 };
 
 /// İnsan oyuncu davranış scripti — her tick için komut listesi üretir.
-pub type HumanScript =
-    fn(state: &GameState, human_id: PlayerId, tick: Tick) -> Vec<Command>;
+pub type HumanScript = fn(state: &GameState, human_id: PlayerId, tick: Tick) -> Vec<Command>;
 
 /// Önceden tanımlı senaryolar.
 pub struct Scenario {
@@ -58,11 +57,7 @@ fn passive_script(_state: &GameState, _human_id: PlayerId, _tick: Tick) -> Vec<C
     Vec::new()
 }
 
-fn active_sanayici_script(
-    state: &GameState,
-    human_id: PlayerId,
-    tick: Tick,
-) -> Vec<Command> {
+fn active_sanayici_script(state: &GameState, human_id: PlayerId, tick: Tick) -> Vec<Command> {
     let t = tick.value();
     let mut cmds = Vec::new();
     let player = match state.players.get(&human_id) {
@@ -130,11 +125,7 @@ fn active_sanayici_script(
     cmds
 }
 
-fn active_tuccar_script(
-    state: &GameState,
-    human_id: PlayerId,
-    tick: Tick,
-) -> Vec<Command> {
+fn active_tuccar_script(state: &GameState, human_id: PlayerId, tick: Tick) -> Vec<Command> {
     let t = tick.value();
     let mut cmds = Vec::new();
 

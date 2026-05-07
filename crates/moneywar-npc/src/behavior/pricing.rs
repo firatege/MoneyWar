@@ -105,7 +105,10 @@ fn urgency_pct(state: &GameState, player: PlayerId, city: CityId, product: Produ
     let progress = state.season_progress().value(); // 0..=100
     let drift = i64::from(progress) * 15 / 100; // 0..=15
     let softener = i64::from(state.market_softener_pct).min(15);
-    patience.saturating_add(drift).saturating_add(softener).min(45)
+    patience
+        .saturating_add(drift)
+        .saturating_add(softener)
+        .min(45)
 }
 
 /// SELL emir için marketable fiyat hesabı (Çiftçi, Spek-ASK, Tüccar SELL).
@@ -226,15 +229,31 @@ mod tests {
 
     #[test]
     fn jitter_deterministic() {
-        let p1 = jitter_pct(Tick::new(42), CityId::Ankara, ProductKind::Pamuk, OrderSide::Buy);
-        let p2 = jitter_pct(Tick::new(42), CityId::Ankara, ProductKind::Pamuk, OrderSide::Buy);
+        let p1 = jitter_pct(
+            Tick::new(42),
+            CityId::Ankara,
+            ProductKind::Pamuk,
+            OrderSide::Buy,
+        );
+        let p2 = jitter_pct(
+            Tick::new(42),
+            CityId::Ankara,
+            ProductKind::Pamuk,
+            OrderSide::Buy,
+        );
         assert_eq!(p1, p2);
     }
 
     #[test]
     fn apply_jitter_preserves_order_of_magnitude() {
         let price = Money::from_cents(1000);
-        let jittered = apply_jitter(price, Tick::new(5), CityId::Izmir, ProductKind::Un, OrderSide::Sell);
+        let jittered = apply_jitter(
+            price,
+            Tick::new(5),
+            CityId::Izmir,
+            ProductKind::Un,
+            OrderSide::Sell,
+        );
         // ±3% → 970..=1030
         assert!(jittered.as_cents() >= 970);
         assert!(jittered.as_cents() <= 1030);

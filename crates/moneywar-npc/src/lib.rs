@@ -112,7 +112,9 @@ pub fn decide_all_npcs(
         // BuildFactory komutlarını shadow'a yansıt — sonraki NPC görür.
         for cmd in &next {
             if let moneywar_domain::Command::BuildFactory {
-                owner, city, product,
+                owner,
+                city,
+                product,
             } = cmd
             {
                 let next_id = shadow.counters.next_factory_id;

@@ -17,8 +17,7 @@
 //! - `competition -0.2` — rakip baskı varsa bekle
 
 use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, Player, ProductKind,
-    balance::TRANSACTION_TAX_PCT,
+    CityId, GameState, Money, OrderSide, Player, ProductKind, balance::TRANSACTION_TAX_PCT,
 };
 
 use crate::behavior::candidates::ActionCandidate;
@@ -41,24 +40,27 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         if qty == 0 {
             continue;
         }
-        let reference = state
-            .reference_price(city, product)
-            .unwrap_or_else(|| {
-                let lira = if product.is_finished() {
-                    moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
-                } else {
-                    moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
-                };
-                Money::from_lira(lira).unwrap_or(Money::ZERO)
-            });
+        let reference = state.reference_price(city, product).unwrap_or_else(|| {
+            let lira = if product.is_finished() {
+                moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+            } else {
+                moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+            };
+            Money::from_lira(lira).unwrap_or(Money::ZERO)
+        });
         // v8.18: SELL %100 → %98 (agresif). Önceki sürümde 63 SELL emir
         // match=0 oldu — Alıcı bid baseline'da, Esnaf %100+jitter Bid'in
         // üstünde kaldı. %98 + jitter = 95-101% → Alıcı bid 100% ile garanti
         // kesişme. BUY %95 + SELL %98 = brüt %3 marj (eski %5'ten az ama
         // hareket eden envanter > kâr marjı).
         let base_price = scale_pct(reference, 98);
-        let unit_price =
-            apply_jitter(base_price, state.current_tick, city, product, OrderSide::Sell);
+        let unit_price = apply_jitter(
+            base_price,
+            state.current_tick,
+            city,
+            product,
+            OrderSide::Sell,
+        );
         if unit_price.as_cents() <= 0 {
             continue;
         }
@@ -81,15 +83,18 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let bucket_cash = Money::from_cents((player.cash.as_cents() / 9).max(0));
     for city in CityId::ALL {
         for product in moneywar_domain::ProductKind::RAW_MATERIALS {
-            let reference = state
-                .reference_price(city, product)
-                .unwrap_or_else(|| {
-                    Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                        .unwrap_or(Money::ZERO)
-                });
+            let reference = state.reference_price(city, product).unwrap_or_else(|| {
+                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                    .unwrap_or(Money::ZERO)
+            });
             let base_price = scale_pct(reference, 95);
-            let unit_price =
-                apply_jitter(base_price, state.current_tick, city, product, OrderSide::Buy);
+            let unit_price = apply_jitter(
+                base_price,
+                state.current_tick,
+                city,
+                product,
+                OrderSide::Buy,
+            );
             if unit_price.as_cents() <= 0 {
                 continue;
             }
@@ -109,16 +114,13 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
     // 2) Mamul AL — Sanayici'den toptan, baseline'da. 9 BUY (3 şehir × 3 mamul).
     //    Esnaf'ın yeni perakendeci rolü: Sanayici → Esnaf → Alıcı zinciri.
-    let mamul_bucket_cash =
-        Money::from_cents((player.cash.as_cents() / 9).max(0));
+    let mamul_bucket_cash = Money::from_cents((player.cash.as_cents() / 9).max(0));
     for city in CityId::ALL {
         for product in ProductKind::FINISHED_GOODS {
-            let reference = state
-                .reference_price(city, product)
-                .unwrap_or_else(|| {
-                    Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
-                        .unwrap_or(Money::ZERO)
-                });
+            let reference = state.reference_price(city, product).unwrap_or_else(|| {
+                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
+                    .unwrap_or(Money::ZERO)
+            });
             // Toptan fiyat = reference (Sanayici'nin SAT fiyatı). Markdown yok
             // → Esnaf kâr marjını perakende SAT'tan kazanır.
             let unit_price =
@@ -207,8 +209,16 @@ mod tests {
         let lower = expected * 95 / 100;
         let upper = expected * 105 / 100;
         for c in &cands {
-            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
-                if !product.is_raw() { continue; }
+            if let ActionCandidate::SubmitOrder {
+                side: OrderSide::Buy,
+                product,
+                unit_price,
+                ..
+            } = c
+            {
+                if !product.is_raw() {
+                    continue;
+                }
                 let cents = unit_price.as_cents();
                 assert!(
                     (lower..=upper).contains(&cents),
@@ -223,7 +233,9 @@ mod tests {
         // Yeni tasarım: Esnaf perakendeci, mamul stoğunu Alıcı'ya markup'la satar.
         let s = fresh();
         let mut p = esnaf(0);
-        p.inventory.add(CityId::Istanbul, ProductKind::Kumas, 100).unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Kumas, 100)
+            .unwrap();
         let cands = enumerate(&s, &p);
         let sell_finished_count = cands
             .iter()
@@ -236,7 +248,9 @@ mod tests {
     fn raw_stock_yields_sell_candidate() {
         let s = fresh();
         let mut p = esnaf(50_000);
-        p.inventory.add(CityId::Ankara, ProductKind::Bugday, 100).unwrap();
+        p.inventory
+            .add(CityId::Ankara, ProductKind::Bugday, 100)
+            .unwrap();
         let cands = enumerate(&s, &p);
         let sell_raw_count = cands
             .iter()
@@ -251,12 +265,21 @@ mod tests {
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
-        let raw_baseline = Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA).unwrap();
+        let raw_baseline =
+            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA).unwrap();
         for c in &cands {
-            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
+            if let ActionCandidate::SubmitOrder {
+                side: OrderSide::Buy,
+                product,
+                unit_price,
+                ..
+            } = c
+            {
                 if product.is_raw() {
-                    assert!(unit_price.as_cents() < raw_baseline.as_cents(),
-                        "Esnaf raw BUY < baseline (%95 markdown)");
+                    assert!(
+                        unit_price.as_cents() < raw_baseline.as_cents(),
+                        "Esnaf raw BUY < baseline (%95 markdown)"
+                    );
                 }
             }
         }
@@ -268,12 +291,19 @@ mod tests {
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
-        let finished_baseline = Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA).unwrap();
+        let finished_baseline =
+            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA).unwrap();
         let lower = finished_baseline.as_cents() * 95 / 100;
         let upper = finished_baseline.as_cents() * 105 / 100;
         let mut found = false;
         for c in &cands {
-            if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
+            if let ActionCandidate::SubmitOrder {
+                side: OrderSide::Buy,
+                product,
+                unit_price,
+                ..
+            } = c
+            {
                 if product.is_finished() {
                     let cents = unit_price.as_cents();
                     assert!(
@@ -291,7 +321,9 @@ mod tests {
     fn deterministic_no_rng() {
         let s = fresh();
         let mut p = esnaf(50_000);
-        p.inventory.add(CityId::Izmir, ProductKind::Zeytin, 50).unwrap();
+        p.inventory
+            .add(CityId::Izmir, ProductKind::Zeytin, 50)
+            .unwrap();
         let a = enumerate(&s, &p);
         let b = enumerate(&s, &p);
         assert_eq!(a, b);

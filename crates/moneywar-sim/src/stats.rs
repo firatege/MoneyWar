@@ -96,13 +96,12 @@ impl PerRunMetrics {
             }
         }
 
-        let bankrupt_npcs = last
-            .map_or(0, |s| {
-                s.players
-                    .iter()
-                    .filter(|p| p.is_npc && p.cash_cents < 100 * 100)
-                    .count() as u32
-            });
+        let bankrupt_npcs = last.map_or(0, |s| {
+            s.players
+                .iter()
+                .filter(|p| p.is_npc && p.cash_cents < 100 * 100)
+                .count() as u32
+        });
 
         let human_pnl_lira = match (first, last) {
             (Some(f), Some(l)) => {
@@ -244,22 +243,10 @@ impl QualityScore {
         let efficiency = stats.match_efficiency_pct.mean;
         let _human_pnl = stats.human_pnl.mean;
         let stale_avg = stats.stale_orders_max.mean;
-        let spek_pnl = stats
-            .pnl_by_role
-            .get("Spekulator")
-            .map_or(0.0, |s| s.mean);
-        let alici_pnl = stats
-            .pnl_by_role
-            .get("Alici")
-            .map_or(0.0, |s| s.mean);
-        let san_pnl = stats
-            .pnl_by_role
-            .get("Sanayici")
-            .map_or(0.0, |s| s.mean);
-        let tuc_pnl = stats
-            .pnl_by_role
-            .get("Tuccar")
-            .map_or(0.0, |s| s.mean);
+        let spek_pnl = stats.pnl_by_role.get("Spekulator").map_or(0.0, |s| s.mean);
+        let alici_pnl = stats.pnl_by_role.get("Alici").map_or(0.0, |s| s.mean);
+        let san_pnl = stats.pnl_by_role.get("Sanayici").map_or(0.0, |s| s.mean);
+        let tuc_pnl = stats.pnl_by_role.get("Tuccar").map_or(0.0, |s| s.mean);
 
         // Threshold'lar v12 sim sonuçlarına göre gerçekçi:
         // - Easy: salak NPC tasarımı → düşük verim normal

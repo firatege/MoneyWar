@@ -240,7 +240,10 @@ fn run_parallel(
             })
         })
         .collect();
-    let mut out: Vec<SimResult> = handles.into_iter().map(|h| h.join().expect("thread")).collect();
+    let mut out: Vec<SimResult> = handles
+        .into_iter()
+        .map(|h| h.join().expect("thread"))
+        .collect();
     // Seed sırasına göre sırala (deterministik output).
     out.sort_by_key(|r| r.seed);
     out
@@ -276,7 +279,10 @@ fn render_aggregate_report(
     }
     let _ = writeln!(out);
 
-    let _ = writeln!(out, "## Genel Metrik İstatistikleri (mean ± std, [min, max])");
+    let _ = writeln!(
+        out,
+        "## Genel Metrik İstatistikleri (mean ± std, [min, max])"
+    );
     let _ = writeln!(out, "| Metrik | Mean | Std | Min | Max | Median |");
     let _ = writeln!(out, "|---|---|---|---|---|---|");
     for (name, s) in [

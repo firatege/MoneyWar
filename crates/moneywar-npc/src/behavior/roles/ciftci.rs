@@ -56,10 +56,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         // SELL fiyatı agresif düşür — pazar onu emsin. Aksi takdirde prime
         // şehir over-supply pattern'inde stok kilitlenir.
         let stock_floor_pct: i64 = match qty {
-            0..=199 => 100,         // taze stok → kâr maks
-            200..=499 => 90,        // hafif basınç
-            500..=999 => 80,        // orta basınç
-            _ => 65,                // 1000+ birim → kriz
+            0..=199 => 100,  // taze stok → kâr maks
+            200..=499 => 90, // hafif basınç
+            500..=999 => 80, // orta basınç
+            _ => 65,         // 1000+ birim → kriz
         };
         let stock_floor = Money::from_cents(
             reference
@@ -102,9 +102,7 @@ const fn default_raw_price(_product: ProductKind) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moneywar_domain::{
-        CityId, NpcKind, PlayerId, ProductKind, Role, RoomConfig, RoomId,
-    };
+    use moneywar_domain::{CityId, NpcKind, PlayerId, ProductKind, Role, RoomConfig, RoomId};
 
     fn ciftci_with_stock(stock: u32) -> (GameState, Player) {
         let s = GameState::new(RoomId::new(1), RoomConfig::hizli());

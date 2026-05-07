@@ -179,9 +179,7 @@ fn dispatch(
         Command::RepayLoan { player, loan_id } => {
             repay_loan_impl(state, report, tick, *player, *loan_id)
         }
-        Command::CreditNpcCash { player, amount } => {
-            credit_npc_cash_impl(state, *player, *amount)
-        }
+        Command::CreditNpcCash { player, amount } => credit_npc_cash_impl(state, *player, *amount),
     }
 }
 
@@ -199,16 +197,12 @@ fn credit_npc_cash_impl(
     })?;
     if !p.is_npc {
         return Err(EngineError::Domain(
-            moneywar_domain::DomainError::Validation(
-                "CreditNpcCash sadece NPC için".into(),
-            ),
+            moneywar_domain::DomainError::Validation("CreditNpcCash sadece NPC için".into()),
         ));
     }
     if amount.is_negative() || amount.is_zero() {
         return Err(EngineError::Domain(
-            moneywar_domain::DomainError::Validation(
-                "CreditNpcCash amount > 0 olmalı".into(),
-            ),
+            moneywar_domain::DomainError::Validation("CreditNpcCash amount > 0 olmalı".into()),
         ));
     }
     p.credit(amount)?;

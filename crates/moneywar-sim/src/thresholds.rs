@@ -223,7 +223,10 @@ pub fn audit_role(
 
     // 1. Yasaklı aksiyon yok.
     out.push(CheckResult {
-        label: format!("[{}] Yasak aksiyon yok ({})", contract.kind, contract.forbidden_label),
+        label: format!(
+            "[{}] Yasak aksiyon yok ({})",
+            contract.kind, contract.forbidden_label
+        ),
         passed: mix_total.forbidden_action_count == 0,
         detail: format!("forbidden_count={}", mix_total.forbidden_action_count),
     });
@@ -340,10 +343,7 @@ pub fn audit_game_with_runs(
         detail: format!("mean={:.0}", stats.matches.mean),
     });
     out.push(CheckResult {
-        label: format!(
-            "Match verimi ≥ {:.1}%",
-            thresholds.min_match_efficiency_pct
-        ),
+        label: format!("Match verimi ≥ {:.1}%", thresholds.min_match_efficiency_pct),
         passed: stats.match_efficiency_pct.mean >= thresholds.min_match_efficiency_pct,
         detail: format!("{:.2}%", stats.match_efficiency_pct.mean),
     });
@@ -353,7 +353,10 @@ pub fn audit_game_with_runs(
         detail: format!("mean={:.1}", stats.bankrupt_npcs.mean),
     });
     out.push(CheckResult {
-        label: format!("Stale order yaşı ≤ {:.0} tick", thresholds.max_stale_order_age),
+        label: format!(
+            "Stale order yaşı ≤ {:.0} tick",
+            thresholds.max_stale_order_age
+        ),
         passed: stats.stale_orders_max.mean <= thresholds.max_stale_order_age,
         detail: format!("max_avg={:.1}", stats.stale_orders_max.mean),
     });
@@ -402,7 +405,12 @@ pub fn render_threshold_report(
     let bank_loans_total: u32 = runs.iter().map(|r| r.bank_loans_issued).sum();
     let game_checks = audit_game_with_runs(thresholds, stats, bank_loans_total, runs);
     let game_passed = game_checks.iter().filter(|c| c.passed).count();
-    let _ = writeln!(out, "## Oyun Kapısı — {}/{} geçti", game_passed, game_checks.len());
+    let _ = writeln!(
+        out,
+        "## Oyun Kapısı — {}/{} geçti",
+        game_passed,
+        game_checks.len()
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "| Madde | Geçti | Detay |");
     let _ = writeln!(out, "|---|---|---|");
@@ -447,10 +455,7 @@ pub fn render_threshold_report(
 
     for contract in contracts {
         let mix = total_mix.get(contract.kind).cloned().unwrap_or_default();
-        let pnl_avg = stats
-            .pnl_by_role
-            .get(contract.kind)
-            .map_or(0.0, |s| s.mean);
+        let pnl_avg = stats.pnl_by_role.get(contract.kind).map_or(0.0, |s| s.mean);
         let n_npcs = *npc_count_per_kind.get(contract.kind).unwrap_or(&0);
         let checks = audit_role(contract, &mix, pnl_avg, n_npcs, n_seeds);
         let passed = checks.iter().filter(|c| c.passed).count();

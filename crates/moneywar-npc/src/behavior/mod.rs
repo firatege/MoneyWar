@@ -65,9 +65,7 @@ pub fn decide_behavior(
     }
 
     // Silence — tick atla.
-    if difficulty.silence_per_10 > 0
-        && rng.random_range(0u32..10) < difficulty.silence_per_10
-    {
+    if difficulty.silence_per_10 > 0 && rng.random_range(0u32..10) < difficulty.silence_per_10 {
         return Vec::new();
     }
 
@@ -116,10 +114,7 @@ pub fn decide_behavior(
 
 /// Player'ın `npc_kind`'ına göre aday üretici dispatch.
 /// Faz B: Çiftçi pilot. Faz C+'da diğer roller eklenecek.
-fn enumerate_for_kind(
-    state: &GameState,
-    player: &moneywar_domain::Player,
-) -> Vec<ActionCandidate> {
+fn enumerate_for_kind(state: &GameState, player: &moneywar_domain::Player) -> Vec<ActionCandidate> {
     match player.npc_kind {
         Some(NpcKind::Ciftci) => roles::ciftci::enumerate(state, player),
         Some(NpcKind::Alici) => roles::alici::enumerate(state, player),

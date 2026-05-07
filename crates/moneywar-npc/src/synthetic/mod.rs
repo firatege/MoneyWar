@@ -122,8 +122,16 @@ fn ciftci(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Ve
         }
         let half = (qty / 2).max(1).min(100);
         let price = baseline(state, city, product);
-        if let Some(c) = submit(player.id, tick, seq, OrderSide::Sell, city, product, half, price)
-        {
+        if let Some(c) = submit(
+            player.id,
+            tick,
+            seq,
+            OrderSide::Sell,
+            city,
+            product,
+            half,
+            price,
+        ) {
             cmds.push(c);
             seq = seq.saturating_add(1);
         }
@@ -141,8 +149,16 @@ fn alici(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec
         for product in ProductKind::FINISHED_GOODS {
             let price = baseline(state, city, product);
             let qty = affordable_qty(bucket_cash, price, 30);
-            if let Some(c) = submit(player.id, tick, seq, OrderSide::Buy, city, product, qty, price)
-            {
+            if let Some(c) = submit(
+                player.id,
+                tick,
+                seq,
+                OrderSide::Buy,
+                city,
+                product,
+                qty,
+                price,
+            ) {
                 cmds.push(c);
                 seq = seq.saturating_add(1);
             }
@@ -161,8 +177,16 @@ fn esnaf(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec
         for product in ProductKind::RAW_MATERIALS {
             let price = scale_pct(baseline(state, city, product), 95);
             let qty = affordable_qty(bucket_cash, price, 30);
-            if let Some(c) = submit(player.id, tick, seq, OrderSide::Buy, city, product, qty, price)
-            {
+            if let Some(c) = submit(
+                player.id,
+                tick,
+                seq,
+                OrderSide::Buy,
+                city,
+                product,
+                qty,
+                price,
+            ) {
                 cmds.push(c);
                 seq = seq.saturating_add(1);
             }
@@ -174,8 +198,16 @@ fn esnaf(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec
         }
         let half = (qty / 2).max(1).min(50);
         let price = scale_pct(baseline(state, city, product), 105);
-        if let Some(c) = submit(player.id, tick, seq, OrderSide::Sell, city, product, half, price)
-        {
+        if let Some(c) = submit(
+            player.id,
+            tick,
+            seq,
+            OrderSide::Sell,
+            city,
+            product,
+            half,
+            price,
+        ) {
             cmds.push(c);
             seq = seq.saturating_add(1);
         }
@@ -183,16 +215,16 @@ fn esnaf(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec
     cmds
 }
 
-fn sanayici(
-    player: &Player,
-    state: &moneywar_domain::GameState,
-    tick: Tick,
-) -> Vec<Command> {
+fn sanayici(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec<Command> {
     let mut cmds = Vec::new();
     let mut seq: u32 = 0;
 
     // İlk tick fab yoksa İstanbul-Kumaş kur.
-    let owned = state.factories.values().filter(|f| f.owner == player.id).count();
+    let owned = state
+        .factories
+        .values()
+        .filter(|f| f.owner == player.id)
+        .count();
     if owned == 0 && tick.value() <= 2 {
         cmds.push(Command::BuildFactory {
             owner: player.id,
@@ -208,8 +240,16 @@ fn sanayici(
         for product in ProductKind::RAW_MATERIALS {
             let price = scale_pct(baseline(state, city, product), 95);
             let qty = affordable_qty(bucket_cash, price, 30);
-            if let Some(c) = submit(player.id, tick, seq, OrderSide::Buy, city, product, qty, price)
-            {
+            if let Some(c) = submit(
+                player.id,
+                tick,
+                seq,
+                OrderSide::Buy,
+                city,
+                product,
+                qty,
+                price,
+            ) {
                 cmds.push(c);
                 seq = seq.saturating_add(1);
             }
@@ -223,8 +263,16 @@ fn sanayici(
         }
         let half = (qty / 2).max(1).min(50);
         let price = scale_pct(baseline(state, city, product), 105);
-        if let Some(c) = submit(player.id, tick, seq, OrderSide::Sell, city, product, half, price)
-        {
+        if let Some(c) = submit(
+            player.id,
+            tick,
+            seq,
+            OrderSide::Sell,
+            city,
+            product,
+            half,
+            price,
+        ) {
             cmds.push(c);
             seq = seq.saturating_add(1);
         }
@@ -232,11 +280,7 @@ fn sanayici(
     cmds
 }
 
-fn tuccar(
-    player: &Player,
-    state: &moneywar_domain::GameState,
-    tick: Tick,
-) -> Vec<Command> {
+fn tuccar(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec<Command> {
     // Arbitraj: her ürün için ucuz vs pahalı şehir karşılaştır. Spread > %20
     // ise ucuzda AL + pahalıda SAT (stoğu varsa).
     let mut cmds = Vec::new();
@@ -256,8 +300,7 @@ fn tuccar(
                 max_pair = Some((city, price));
             }
         }
-        let (Some((cheap_city, cheap_price)), Some((rich_city, rich_price))) =
-            (min_pair, max_pair)
+        let (Some((cheap_city, cheap_price)), Some((rich_city, rich_price))) = (min_pair, max_pair)
         else {
             continue;
         };
@@ -306,11 +349,7 @@ fn tuccar(
     cmds
 }
 
-fn spekulator(
-    player: &Player,
-    state: &moneywar_domain::GameState,
-    tick: Tick,
-) -> Vec<Command> {
+fn spekulator(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec<Command> {
     // Her bucket için BID × 0.95 ve (stokta varsa) ASK × 1.05.
     let mut cmds = Vec::new();
     let mut seq: u32 = 0;
@@ -323,8 +362,16 @@ fn spekulator(
             let ask = scale_pct(bp, 105);
             // BID
             let qty = affordable_qty(bucket_cash, bid, 15);
-            if let Some(c) = submit(player.id, tick, seq, OrderSide::Buy, city, product, qty, bid)
-            {
+            if let Some(c) = submit(
+                player.id,
+                tick,
+                seq,
+                OrderSide::Buy,
+                city,
+                product,
+                qty,
+                bid,
+            ) {
                 cmds.push(c);
                 seq = seq.saturating_add(1);
             }
@@ -433,7 +480,9 @@ mod tests {
     fn ciftci_with_stock_sells_half() {
         let mut s = fresh_state();
         let pid = add(&mut s, 100, NpcKind::Ciftci, 5_000);
-        s.players.get_mut(&pid).unwrap()
+        s.players
+            .get_mut(&pid)
+            .unwrap()
             .inventory
             .add(CityId::Istanbul, ProductKind::Pamuk, 200)
             .unwrap();
@@ -450,7 +499,9 @@ mod tests {
     fn deterministic_same_state_same_commands() {
         let mut s = fresh_state();
         let pid = add(&mut s, 100, NpcKind::Spekulator, 50_000);
-        s.players.get_mut(&pid).unwrap()
+        s.players
+            .get_mut(&pid)
+            .unwrap()
             .inventory
             .add(CityId::Istanbul, ProductKind::Pamuk, 100)
             .unwrap();
@@ -464,7 +515,9 @@ mod tests {
         let mut s = fresh_state();
         let pid = add(&mut s, 100, NpcKind::Sanayici, 50_000);
         let cmds = decide_synthetic(&s, pid, Tick::new(1));
-        let has_build = cmds.iter().any(|c| matches!(c, Command::BuildFactory { .. }));
+        let has_build = cmds
+            .iter()
+            .any(|c| matches!(c, Command::BuildFactory { .. }));
         assert!(has_build, "ilk tick'te fab kurmalı");
     }
 

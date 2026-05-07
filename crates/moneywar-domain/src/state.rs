@@ -575,6 +575,11 @@ mod tests {
             covered.insert((city, s.city_secondary[&city]));
             covered.insert((city, s.city_demand[&city]));
         }
-        assert_eq!(covered.len(), 9, "9 bucket'tan {} kapsanıyor", covered.len());
+        assert_eq!(
+            covered.len(),
+            9,
+            "9 bucket'tan {} kapsanıyor",
+            covered.len()
+        );
     }
 }

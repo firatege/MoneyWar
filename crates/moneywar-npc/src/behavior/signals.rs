@@ -82,7 +82,10 @@ pub fn compute_inputs(
     inputs.insert("urgency", progress);
 
     // 6. Arbitrage — şehirler arası max fark.
-    inputs.insert("arbitrage", arbitrage_signal(state, product).clamp(0.0, 1.0));
+    inputs.insert(
+        "arbitrage",
+        arbitrage_signal(state, product).clamp(0.0, 1.0),
+    );
 
     // 7. Event — aktif şok.
     inputs.insert("event", event_signal(state, city, product));
@@ -91,15 +94,16 @@ pub fn compute_inputs(
     inputs.insert("competition", competition_signal(state, city, product));
 
     // 9-15. BID/ASK ratio + bankruptcy + counts + season_remaining + rival.
-    let (bid_qty, ask_qty) = state
-        .order_book
-        .get(&(city, product))
-        .map_or((0u32, 0u32), |orders| {
-            orders.iter().fold((0, 0), |(b, a), o| match o.side {
-                OrderSide::Buy => (b + o.quantity, a),
-                OrderSide::Sell => (b, a + o.quantity),
-            })
-        });
+    let (bid_qty, ask_qty) =
+        state
+            .order_book
+            .get(&(city, product))
+            .map_or((0u32, 0u32), |orders| {
+                orders.iter().fold((0, 0), |(b, a), o| match o.side {
+                    OrderSide::Buy => (b + o.quantity, a),
+                    OrderSide::Sell => (b, a + o.quantity),
+                })
+            });
     let total_qty = bid_qty + ask_qty;
     let bid_ratio = if total_qty == 0 {
         0.5

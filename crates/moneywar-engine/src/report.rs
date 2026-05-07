@@ -368,12 +368,7 @@ impl LogEntry {
     }
 
     #[must_use]
-    pub fn news_payment_warning(
-        tick: Tick,
-        player: PlayerId,
-        tier: NewsTier,
-        owed: Money,
-    ) -> Self {
+    pub fn news_payment_warning(tick: Tick, player: PlayerId, tier: NewsTier, owed: Money) -> Self {
         Self {
             tick,
             actor: Some(player),
@@ -382,12 +377,7 @@ impl LogEntry {
     }
 
     #[must_use]
-    pub fn news_downgraded(
-        tick: Tick,
-        player: PlayerId,
-        from: NewsTier,
-        to: NewsTier,
-    ) -> Self {
+    pub fn news_downgraded(tick: Tick, player: PlayerId, from: NewsTier, to: NewsTier) -> Self {
         Self {
             tick,
             actor: Some(player),
@@ -926,10 +916,7 @@ pub enum LogEvent {
     },
 
     /// Ekonomi: Alıcı NPC maaş aldı.
-    EconomySalary {
-        player: PlayerId,
-        amount: Money,
-    },
+    EconomySalary { player: PlayerId, amount: Money },
 
     /// Ekonomi: Çiftçi NPC mahsul refill aldı.
     EconomyHarvest {

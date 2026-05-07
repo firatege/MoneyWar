@@ -15,10 +15,7 @@
 //! - `momentum +0.2`: trend yönüne pozisyon
 //! - `competition -0.1`: rakip baskıda hafif geri çekil
 
-use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, Player,
-    balance::TRANSACTION_TAX_PCT,
-};
+use moneywar_domain::{CityId, GameState, Money, OrderSide, Player, balance::TRANSACTION_TAX_PCT};
 
 use crate::behavior::candidates::ActionCandidate;
 use crate::behavior::pricing::apply_jitter;
@@ -36,13 +33,7 @@ use crate::behavior::pricing::apply_jitter;
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     // 3 prime_raw bucket → cash bölünür. Eski 18 → 3, bucket başı 6× cash.
-    let bucket_cash = Money::from_cents(
-        player
-            .cash
-            .as_cents()
-            .saturating_div(3)
-            .max(0),
-    );
+    let bucket_cash = Money::from_cents(player.cash.as_cents().saturating_div(3).max(0));
 
     for city in CityId::ALL {
         // Sadece prime ham — her şehrin uzmanlık ürünü.
@@ -61,8 +52,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
         // BID — reference × 0.99 + jitter (dar spread, v8.15 mantığı).
         let bid_base = scale_pct(reference, 99);
-        let bid_price =
-            apply_jitter(bid_base, state.current_tick, city, product, OrderSide::Buy);
+        let bid_price = apply_jitter(bid_base, state.current_tick, city, product, OrderSide::Buy);
         if bid_price.as_cents() > 0 {
             let qty = affordable_qty(bucket_cash, bid_price, 25);
             if qty > 0 {
@@ -81,13 +71,8 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let stock = player.inventory.get(city, product);
         if stock > 0 {
             let ask_base = scale_pct(reference, 101);
-            let ask_price = apply_jitter(
-                ask_base,
-                state.current_tick,
-                city,
-                product,
-                OrderSide::Sell,
-            );
+            let ask_price =
+                apply_jitter(ask_base, state.current_tick, city, product, OrderSide::Sell);
             if ask_price.as_cents() > 0 {
                 let qty = (stock / 2).max(1).min(25);
                 out.push(ActionCandidate::SubmitOrder {
@@ -128,7 +113,8 @@ mod tests {
     /// Standart specialty atama: Ist=Pamuk, Ank=Bugday, Izm=Zeytin.
     fn fresh_with_specialty() -> GameState {
         let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
-        s.city_specialty.insert(CityId::Istanbul, ProductKind::Pamuk);
+        s.city_specialty
+            .insert(CityId::Istanbul, ProductKind::Pamuk);
         s.city_specialty.insert(CityId::Ankara, ProductKind::Bugday);
         s.city_specialty.insert(CityId::Izmir, ProductKind::Zeytin);
         // baseline her bucket için (reference_price fallback için)
@@ -194,7 +180,15 @@ mod tests {
         let cands = enumerate(&s, &p);
         let asks = cands
             .iter()
-            .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Sell, .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    ActionCandidate::SubmitOrder {
+                        side: OrderSide::Sell,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(asks, 0);
     }
@@ -235,7 +229,15 @@ mod tests {
         let cands = enumerate(&s, &p);
         let asks = cands
             .iter()
-            .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Sell, .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    ActionCandidate::SubmitOrder {
+                        side: OrderSide::Sell,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(asks, 0, "Izm/Pamuk prime değil, ASK olmamalı");
     }
@@ -244,7 +246,9 @@ mod tests {
     fn bid_below_ask() {
         let s = fresh_with_specialty();
         let mut p = spek(40_000);
-        p.inventory.add(CityId::Istanbul, ProductKind::Pamuk, 20).unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Pamuk, 20)
+            .unwrap();
         let cands = enumerate(&s, &p);
         let bid = cands.iter().find_map(|c| match c {
             ActionCandidate::SubmitOrder {

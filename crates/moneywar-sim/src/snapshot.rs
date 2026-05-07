@@ -5,9 +5,7 @@
 //! kopyalamayız — sadece NPC/oyuncu davranışını görmek için yeterli kompakt
 //! özet. Order book toplam Σ + best ask/bid, envanter map, cash, role.
 
-use moneywar_domain::{
-    CityId, GameState, OrderSide, PlayerId, ProductKind, Tick,
-};
+use moneywar_domain::{CityId, GameState, OrderSide, PlayerId, ProductKind, Tick};
 use serde::{Deserialize, Serialize};
 
 /// Tek bir oyuncunun bu tick'teki kompakt durumu.
@@ -95,10 +93,9 @@ impl TickSnapshot {
                         price.saturating_mul(i64::from(qty))
                     })
                     .sum();
-                let factory_count = u32::try_from(
-                    state.factories.values().filter(|f| f.owner == *id).count(),
-                )
-                .unwrap_or(0);
+                let factory_count =
+                    u32::try_from(state.factories.values().filter(|f| f.owner == *id).count())
+                        .unwrap_or(0);
                 PlayerSnapshot {
                     id: id.value(),
                     name: p.name.clone(),

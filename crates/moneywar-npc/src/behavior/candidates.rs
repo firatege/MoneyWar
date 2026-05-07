@@ -7,7 +7,7 @@
 //! - Test yazılırken aday listesi assertion edilebilir.
 
 use moneywar_domain::{
-    CargoSpec, CaravanId, CityId, ContractId, ContractProposal, Money, OrderSide, ProductKind,
+    CaravanId, CargoSpec, CityId, ContractId, ContractProposal, Money, OrderSide, ProductKind,
 };
 
 /// Bir NPC'nin yapabileceği bir aksiyon önerisi. `Command`'a henüz çevrilmedi.

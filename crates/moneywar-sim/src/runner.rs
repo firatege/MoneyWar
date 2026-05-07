@@ -117,7 +117,11 @@ impl SimRunner {
 
         // Tick 0 snapshot (başlangıç).
         let initial_report = TickReport::new(Tick::ZERO);
-        snapshots.push(TickSnapshot::from_state(&state, &initial_report, Tick::ZERO));
+        snapshots.push(TickSnapshot::from_state(
+            &state,
+            &initial_report,
+            Tick::ZERO,
+        ));
 
         for t in 1..=self.ticks {
             let tick = Tick::new(t);
@@ -141,7 +145,8 @@ impl SimRunner {
                 let actor = match cmd {
                     Command::DispatchCaravan { caravan_id, .. } => state
                         .caravans
-                        .get(caravan_id).map_or_else(|| cmd.requester(), |c| c.owner),
+                        .get(caravan_id)
+                        .map_or_else(|| cmd.requester(), |c| c.owner),
                     _ => cmd.requester(),
                 };
                 let player = state.players.get(&actor);
@@ -220,9 +225,9 @@ fn record_action(cmd: &Command, kind_label: &str, mix: &mut RoleActionMix, _stat
             // Yasaklı kombinasyonlar (gate çalışıyor olmalı, çift kontrol):
             let forbidden = match kind_label {
                 "Ciftci" => is_buy || !is_raw, // Çiftçi sadece SELL raw
-                "Banka" => true,                // Banka komut emit etmemeli
-                "Alici" => is_buy && is_raw,    // Alıcı raw almasın
-                "Esnaf" => false,               // Yeni tasarım: Esnaf perakendeci, mamul de alır
+                "Banka" => true,               // Banka komut emit etmemeli
+                "Alici" => is_buy && is_raw,   // Alıcı raw almasın
+                "Esnaf" => false,              // Yeni tasarım: Esnaf perakendeci, mamul de alır
                 _ => false,
             };
             if forbidden {
@@ -311,7 +316,7 @@ fn build_state(runner: &SimRunner) -> GameState {
     //     * High talep (örn. İst-Kumas, Ank-Un) → 36₺
     //     * Normal talep                       → 28₺ (default)
     // Bu farklılaştırma Tüccar mamul arbitrajı için %25-30 spread yaratır.
-        for city in CityId::ALL {
+    for city in CityId::ALL {
         let cheap = city.cheap_raw();
         for product in ProductKind::ALL {
             let lira = if product.is_finished() {

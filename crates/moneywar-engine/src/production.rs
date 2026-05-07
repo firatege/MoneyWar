@@ -156,9 +156,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
             owner,
             fid,
             city,
-            format!(
-                "raw {raw} shortage at {city}: have={have_raw}, need={partial_min}"
-            ),
+            format!("raw {raw} shortage at {city}: have={have_raw}, need={partial_min}"),
         ));
         return;
     };
@@ -183,13 +181,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         units: batch_size,
     });
     report.push(LogEntry::production_started(
-        tick,
-        owner,
-        fid,
-        city,
-        product,
-        batch_size,
-        completion,
+        tick, owner, fid, city, product, batch_size, completion,
     ));
 }
 

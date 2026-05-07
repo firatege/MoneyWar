@@ -896,8 +896,18 @@ fn write_city_snapshot(f: &mut BufWriter<std::fs::File>, state: &GameState) {
             "t{:>3}  {:<22}  inv Pamuk={} Bugday={} Zeytin={} Kumas={} Un={} Zeytinyagi={} | last Pamuk={} Bugday={} Zeytin={} Kumas={} Un={} Zeytinyagi={}",
             tick,
             actor,
-            inv[0], inv[1], inv[2], inv[3], inv[4], inv[5],
-            last[0], last[1], last[2], last[3], last[4], last[5],
+            inv[0],
+            inv[1],
+            inv[2],
+            inv[3],
+            inv[4],
+            inv[5],
+            last[0],
+            last[1],
+            last[2],
+            last[3],
+            last[4],
+            last[5],
         );
     }
 }
@@ -1416,9 +1426,7 @@ impl App {
                         self.rejection_log.push_back(RejectionEntry {
                             tick: entry.tick.value(),
                             kind: RejectionKind::Fill,
-                            summary: format!(
-                                "{role} {city}/{product} ×{quantity}"
-                            ),
+                            summary: format!("{role} {city}/{product} ×{quantity}"),
                             reason: reason.clone(),
                         });
                     }
@@ -1968,11 +1976,7 @@ fn render_rejections_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" ❌  Reddedilen ({})  ", app.rejection_log.len()))
-        .border_style(
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-        );
+        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
@@ -2177,8 +2181,10 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
             text.lines.push(book_line);
 
             if matches!(tier, NewsTier::Gold) {
-                text.lines
-                    .push(Line::from(depth_span_for_gold(OrderSide::Sell, &ask_levels)));
+                text.lines.push(Line::from(depth_span_for_gold(
+                    OrderSide::Sell,
+                    &ask_levels,
+                )));
                 text.lines
                     .push(Line::from(depth_span_for_gold(OrderSide::Buy, &bid_levels)));
             }
@@ -2268,7 +2274,10 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
         Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
         Span::styled("alıcı (bid)", Style::default().fg(Color::LightGreen)),
         Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("⭐ kendi emrin · Esc kapat", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "⭐ kendi emrin · Esc kapat",
+            Style::default().fg(Color::DarkGray),
+        ),
     ]);
     let info = Paragraph::new(vec![
         Line::from(Span::styled(
@@ -2679,7 +2688,9 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Line::from(""),
         Line::from(Span::styled(
             "  Tick-tabanlı ekonomi simülasyonu",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )),
         Line::from(""),
         // Rol — şimdilik sadece Sanayici (Tüccar geliştirme aşamasında)
@@ -2705,12 +2716,11 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::styled("  Preset: ", Style::default().fg(Color::White)),
             Span::styled(
                 app.selected_preset.label(),
-                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                "  [p ile değiştir]",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled("  [p ile değiştir]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
             Span::styled("  Zorluk: ", Style::default().fg(Color::White)),
@@ -2751,7 +2761,13 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Line::from(""),
         // Tuş özeti
         Line::from(vec![
-            Span::styled(" Enter ", Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " Enter ",
+                Style::default()
+                    .bg(Color::Green)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" başla   "),
             Span::styled(" p ", Style::default().bg(Color::Magenta).fg(Color::White)),
             Span::raw(" preset   "),
@@ -2822,7 +2838,10 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ),
         help_kv("n", "Haber kutusu"),
         help_kv("e", "🔄 Son eşleşmeler (kim kime ne sattı)"),
-        help_kv("r", "📊 Pazar Verileri (ort. + ask/bid + tier'a göre depth)"),
+        help_kv(
+            "r",
+            "📊 Pazar Verileri (ort. + ask/bid + tier'a göre depth)",
+        ),
         help_kv("y", "📜 Kontratlar (pano + aktif + benim önerilerim)"),
         help_kv(
             "j",
@@ -3525,8 +3544,8 @@ fn wizard_preflight_blocks(app: &App, wizard: &Wizard) -> Vec<String> {
             let price_input: f64 = wizard.text_buf.replace(',', ".").parse().unwrap_or(0.0);
             if matches!(wizard.kind, ActionKind::Buy) && price_input > 0.0 && qty > 0 {
                 let total_cents = (price_input * qty as f64 * 100.0) as i64;
-                let with_tax = total_cents
-                    + total_cents * moneywar_domain::balance::TRANSACTION_TAX_PCT / 100;
+                let with_tax =
+                    total_cents + total_cents * moneywar_domain::balance::TRANSACTION_TAX_PCT / 100;
                 if player.cash.as_cents() < with_tax {
                     blocks.push(format!(
                         "Cash yetersiz: {} öde, {} var",
@@ -3898,7 +3917,9 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         "rakamlar + '.' veya ',' ile ondalık (örn 10000.50), Enter onay"
                     }
                     FieldKind::DurationTicks => "rakam tuşları → kaç tick, Enter onay",
-                    FieldKind::DeliveryTick => "kaç tick sonra teslim — örn 5 → şimdi+5 tick, Enter onay",
+                    FieldKind::DeliveryTick => {
+                        "kaç tick sonra teslim — örn 5 → şimdi+5 tick, Enter onay"
+                    }
                     FieldKind::OrderTtl => {
                         let b = app.state.config.balance;
                         hint_str = format!(
@@ -3977,11 +3998,8 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                             FieldValue::Number(n) => Some(*n),
                             _ => None,
                         }) {
-                            let price_input: f64 = wizard
-                                .text_buf
-                                .replace(',', ".")
-                                .parse()
-                                .unwrap_or(0.0);
+                            let price_input: f64 =
+                                wizard.text_buf.replace(',', ".").parse().unwrap_or(0.0);
                             if price_input > 0.0 && qty > 0 {
                                 let total_cents = (price_input * qty as f64 * 100.0) as i64;
                                 let tax_cents = total_cents
@@ -4086,7 +4104,11 @@ fn human_news_tier(state: &GameState) -> NewsTier {
     let subscribed = state.news_subscriptions.get(&HUMAN_ID).copied();
     let role_default = player.map_or(NewsTier::Free, |p| p.role.default_news_tier());
     let sub = subscribed.unwrap_or(NewsTier::Free);
-    if sub > role_default { sub } else { role_default }
+    if sub > role_default {
+        sub
+    } else {
+        role_default
+    }
 }
 
 /// Miktar etiketi — tier'a göre çözünürlük.
@@ -4161,7 +4183,6 @@ fn top_levels(
     levels
 }
 
-
 /// Money'i 5 kuruşa yuvarla (Silver çözünürlüğü).
 fn money_round_5_kurus(m: Money) -> Money {
     let cents = m.as_cents();
@@ -4177,11 +4198,7 @@ fn money_band_label(m: Money) -> String {
     // Kuruş cinsinden 50'ye yuvarla.
     let lo50 = (lo / 50) * 50;
     let hi50 = ((hi + 49) / 50) * 50;
-    format!(
-        "{}-{}",
-        Money::from_cents(lo50),
-        Money::from_cents(hi50)
-    )
+    format!("{}-{}", Money::from_cents(lo50), Money::from_cents(hi50))
 }
 
 /// Pazar overlay/wizard'da "ask·bid" satırını tier'a göre üret. Etiket yok —
@@ -4238,19 +4255,12 @@ fn book_span_for_tier<'a>(
         }
     };
     // Format: ask · bid (sırasıyla kırmızı / yeşil)
-    vec![
-        ask_span,
-        Span::styled(" · ", dim),
-        bid_span,
-    ]
+    vec![ask_span, Span::styled(" · ", dim), bid_span]
 }
 
 /// Gold tier'da gösterilen ek depth satırı: 2. ve 3. price level'lar
 /// (best'ten sonraki kademeler). Boş ise "—".
-fn depth_span_for_gold<'a>(
-    side: OrderSide,
-    levels: &[BookLevel],
-) -> Vec<Span<'a>> {
+fn depth_span_for_gold<'a>(side: OrderSide, levels: &[BookLevel]) -> Vec<Span<'a>> {
     let label_color = Style::default().fg(Color::DarkGray);
     let normal = Style::default().fg(if matches!(side, OrderSide::Sell) {
         Color::LightRed
@@ -5658,9 +5668,7 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .into_iter()
         .filter(|sc| {
             app.state.players.get(&sc.player_id).is_none_or(|p| {
-                !p.is_npc
-                    || p.has_npc_kind(NpcKind::Sanayici)
-                    || p.has_npc_kind(NpcKind::Tuccar)
+                !p.is_npc || p.has_npc_kind(NpcKind::Sanayici) || p.has_npc_kind(NpcKind::Tuccar)
             })
         })
         .collect();
@@ -5708,7 +5716,9 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     // yaratıyordu. Açıklama altta.
     lines.push(Line::from(Span::styled(
         "  PnL (Δ) = mevcut varlık (cash + stok + fab + escrow) - başlangıç sermayesi",
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -5871,10 +5881,7 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(
-            bar,
-            Style::default().fg(phase_color),
-        ),
+        Span::styled(bar, Style::default().fg(phase_color)),
         Span::raw("  "),
         Span::styled(
             format!("{phase_icon} {phase_label}"),
@@ -6361,16 +6368,27 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             // Yüzde son N tick'in ilk-son delta'sı.
             let spark_str = app.cached_sparklines.get(&key).cloned().unwrap_or_default();
             let pct_str = if let Some(hist) = history {
-                let last_n: Vec<i64> = hist.iter().rev().take(8).map(|(_, m)| m.as_cents()).collect();
+                let last_n: Vec<i64> = hist
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|(_, m)| m.as_cents())
+                    .collect();
                 if last_n.len() >= 2 {
                     let oldest = *last_n.last().unwrap();
                     let newest = *last_n.first().unwrap();
                     if oldest > 0 {
                         let pct = (newest - oldest) * 100 / oldest;
                         format!(" {:+}%", pct)
-                    } else { String::new() }
-                } else { String::new() }
-            } else { String::new() };
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
             let pct_color = if pct_str.starts_with(" +") {
                 Color::Green
             } else if pct_str.starts_with(" -") {
@@ -6379,10 +6397,7 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Color::DarkGray
             };
             let spark_line = Line::from(vec![
-                Span::styled(
-                    spark_str,
-                    Style::default().fg(Color::Rgb(150, 180, 220)),
-                ),
+                Span::styled(spark_str, Style::default().fg(Color::Rgb(150, 180, 220))),
                 Span::styled(pct_str, Style::default().fg(pct_color)),
             ]);
             let mut text = ratatui::text::Text::from(price_line);
@@ -6863,9 +6878,7 @@ fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App)
         .iter()
         .filter(|sc| {
             app.state.players.get(&sc.player_id).is_none_or(|p| {
-                !p.is_npc
-                    || p.has_npc_kind(NpcKind::Sanayici)
-                    || p.has_npc_kind(NpcKind::Tuccar)
+                !p.is_npc || p.has_npc_kind(NpcKind::Sanayici) || p.has_npc_kind(NpcKind::Tuccar)
             })
         })
         .collect();
@@ -6873,7 +6886,11 @@ fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App)
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("  Tick {} · {} oyuncu — sezon sonu reveal'la AYNI tablo", app.state.current_tick.value(), filtered.len()),
+        format!(
+            "  Tick {} · {} oyuncu — sezon sonu reveal'la AYNI tablo",
+            app.state.current_tick.value(),
+            filtered.len()
+        ),
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(""));
@@ -6887,7 +6904,9 @@ fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App)
 
     for (idx, sc) in filtered.iter().enumerate() {
         let player = app.state.players.get(&sc.player_id);
-        let name = player.map(|p| p.name.clone()).unwrap_or_else(|| format!("{}", sc.player_id));
+        let name = player
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("{}", sc.player_id));
         let role_label = player
             .map(|p| match p.npc_kind {
                 Some(kind) => kind.label(),
@@ -6948,11 +6967,15 @@ fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App)
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  PnL (Δ) = mevcut varlık (cash + stok + fab + escrow) - başlangıç sermayesi",
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(
         "  NPC değerleri ~5K yuvarlanmış (fog). Sezon sonunda exact açılır.",
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -7042,7 +7065,10 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ));
-                spans.push(Span::styled("   ·   ", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(
+                    "   ·   ",
+                    Style::default().fg(Color::DarkGray),
+                ));
             }
             spans.extend_from_slice(&[
                 hotkey("?"),
@@ -8240,11 +8266,7 @@ fn summarize_report(report: &moneywar_engine::TickReport, state: &GameState) -> 
 
     // NPC trafiği tek satır özet — dispatch'ler ayrı satır olmaz, burada sayılır.
     let npc_matches = total_matches.saturating_sub(human_matches);
-    if npc_matches > 0
-        || npc_production > 0
-        || npc_arrivals > 0
-        || npc_dispatches > 0
-    {
+    if npc_matches > 0 || npc_production > 0 || npc_arrivals > 0 || npc_dispatches > 0 {
         let mut npc_parts: Vec<String> = Vec::new();
         if npc_matches > 0 {
             npc_parts.push(format!("{npc_matches} match"));
