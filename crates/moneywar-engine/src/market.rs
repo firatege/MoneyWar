@@ -169,19 +169,31 @@ fn clear_bucket(
         if total > 0 {
             let imbalance =
                 (i64::from(submitted_buy_qty) - i64::from(submitted_sell_qty)) * 1000 / total;
-            // alpha = 0.005 → factor = 1 + 0.005 × (imb/1000) = 1 + imb/200000
-            // Cent math: factor_milli = 1000 + imb × 5 / 1000 → [-5, +5] = ±%0.5
-            let factor_milli = 1000 + imbalance * 5 / 1000;
+            // Tâtonnement: factor_milli = 1000 + imb × 5/1000 → [-5, +5] = ±%0.5
+            let mut factor_milli = 1000 + imbalance * 5 / 1000;
+
+            // v8.24 (C): Stok-bazlı aşağı drift. Bucket'ta toplam stok yüksekse
+            // "arz fazlası → fiyat düşer" mantığı — mevcut tâtonnement +0.5%
+            // monoton yukarı kayma (Alıcı 8 NPC sürekli BUY) doğal düşüş yapamaz.
+            // Bu term tüm fiyat trendini sezon boyu +60-99% kayma sorununu kırar.
+            let total_stock: u32 = state
+                .players
+                .values()
+                .map(|p| p.inventory.get(city, product))
+                .sum();
+            let high_threshold: u32 = if product.is_raw() { 800 } else { 200 };
+            if total_stock > high_threshold {
+                let excess = (total_stock - high_threshold).min(2000) as i64;
+                // -3..-7 milli: hafif başlar, stok arttıkça hızlanır.
+                let down = 3 + excess / 500; // 3..7
+                factor_milli -= down;
+            }
+
             if let Some(baseline) = state.price_baseline.get_mut(&key) {
                 let new_cents = baseline.as_cents().saturating_mul(factor_milli) / 1000;
-                // Clamp: kümülatif kaymayı aşırı tutma. Initial baseline genelde
-                // NPC_BASE_PRICE_RAW/FINISHED civarı (4-36₺); sezon başı sim/CLI
-                // 0.8-1.2× setup yapıyor. Mutlak sınır:
-                //   raw → max 200₺ (5x default 4₺), min 1₺
-                //   finished → max 200₺ (5.5x default 36₺), min 5₺
-                // Bu sezon başı varyasyonu ezmez ama runaway'i durdurur.
+                // Mutlak clamp: raw 1-200₺, finished 5-200₺.
                 let abs_min = if product.is_raw() { 100 } else { 500 };
-                let abs_max = 20_000; // 200₺ tabanlı tavan
+                let abs_max = 20_000;
                 let clamped = new_cents.max(abs_min).min(abs_max);
                 *baseline = Money::from_cents(clamped);
             }

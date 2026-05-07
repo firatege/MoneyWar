@@ -50,7 +50,10 @@ const MAINTENANCE_PER_FACTORY_LIRA: i64 = 250;
 /// tüketir (envanterden silinir). Vic3 pop needs inspiration.
 /// Mevcut sorun: Alıcı mamul alır ama tüketmez → varlık birikir → `PnL` pozitif.
 /// Tüketici negatif `PnL` için consume mekaniği şart.
-const CONSUME_PERIOD: u32 = 5;
+// v8.24: 5 → 8. Alıcı %38 daha az tüketir → BUY pressure düşer →
+// tâtonnement asimetrisi yumuşar (fiyatlar monoton artmaz). Bkz. fiyat
+// trend analizi: 18/18 bucket sezonda +50-99% kayıyordu.
+const CONSUME_PERIOD: u32 = 8;
 /// Alıcı'nın stoğundan her cycle ne yüzdesi tüketilsin.
 /// Faz E tuning: 50 → 25. Behavior'da Alıcı çok agresif alım, %50/5tick
 /// tüketim cash'i hızla erittirdi. %25 ile mamul daha uzun kalır, alım
