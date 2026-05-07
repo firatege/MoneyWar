@@ -6356,11 +6356,35 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Span::styled(format!(" {arrow}"), Style::default().fg(color)),
             ]);
             // Sparkline tick başında cache'lendi — render'da sadece okuma.
+            // v8.24: Yanına gerçek %delta yüzdesi (sparkline min-max normalize
+            // eder, dar aralık %4 olsa bile büyük dalga görünür → yanıltıcı).
+            // Yüzde son N tick'in ilk-son delta'sı.
             let spark_str = app.cached_sparklines.get(&key).cloned().unwrap_or_default();
-            let spark_line = Line::from(Span::styled(
-                spark_str,
-                Style::default().fg(Color::Rgb(150, 180, 220)),
-            ));
+            let pct_str = if let Some(hist) = history {
+                let last_n: Vec<i64> = hist.iter().rev().take(8).map(|(_, m)| m.as_cents()).collect();
+                if last_n.len() >= 2 {
+                    let oldest = *last_n.last().unwrap();
+                    let newest = *last_n.first().unwrap();
+                    if oldest > 0 {
+                        let pct = (newest - oldest) * 100 / oldest;
+                        format!(" {:+}%", pct)
+                    } else { String::new() }
+                } else { String::new() }
+            } else { String::new() };
+            let pct_color = if pct_str.starts_with(" +") {
+                Color::Green
+            } else if pct_str.starts_with(" -") {
+                Color::Red
+            } else {
+                Color::DarkGray
+            };
+            let spark_line = Line::from(vec![
+                Span::styled(
+                    spark_str,
+                    Style::default().fg(Color::Rgb(150, 180, 220)),
+                ),
+                Span::styled(pct_str, Style::default().fg(pct_color)),
+            ]);
             let mut text = ratatui::text::Text::from(price_line);
             text.lines.push(spark_line);
             cells.push(text);

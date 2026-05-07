@@ -194,16 +194,16 @@ fn clear_bucket(
                 factor_milli -= down;
             }
 
-            // v8.24 (B): Initial baseline'a göre sıkı clamp. Sezon başı
-            // çapasından %70 - %140 aralığı dışına çıkamaz. Tâtonnement +
-            // stok-drift bu aralıkta dengelenir; monoton +%80 kümülatif
-            // patlama imkansız. Initial yoksa (eski state) mutlak clamp.
+            // v8.24 (B): Initial baseline'a göre clamp. Sezon başı çapasından
+            // %60 - %160 aralığında. İlk versiyon %70-%140 çok sıkıydı (user:
+            // "aralıklar çok azaldı"); biraz daha geniş ama runaway durdurma
+            // korunur (max +%60 / -%40 sezon boyu).
             let initial = state.price_baseline_initial.get(&key).copied();
             if let Some(baseline) = state.price_baseline.get_mut(&key) {
                 let new_cents = baseline.as_cents().saturating_mul(factor_milli) / 1000;
                 let clamped = if let Some(init) = initial {
-                    let lower = init.as_cents() * 70 / 100;
-                    let upper = init.as_cents() * 140 / 100;
+                    let lower = init.as_cents() * 60 / 100;
+                    let upper = init.as_cents() * 160 / 100;
                     new_cents.max(lower).min(upper).max(1)
                 } else {
                     let abs_min = if product.is_raw() { 100 } else { 500 };
