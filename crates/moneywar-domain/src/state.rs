@@ -124,7 +124,20 @@ pub struct GameState {
 
     /// Deterministik ID üretimi için sayaçlar. Engine yeni entity kurduğunda bunları artırır.
     pub counters: IdCounters,
+
+    /// v8.20: Patience erosion sayacı — `(player, city, product)` için art arda
+    /// match olmadan geçen tick sayısı. Match olduğunda 0'lanır, her clearing'de
+    /// match yoksa +1. NPC pricing helper'ları bunu okuyup uyumsuzluk varsa
+    /// fiyatı yumuşatır → kilit-anti deadlock garantisi.
+    /// Cap MAX_NO_MATCH_STREAK (15) — sonsuz büyümez, jitter'ın hesabı
+    /// taşmaz, deterministic.
+    #[serde(default)]
+    pub no_match_streak: BTreeMap<(PlayerId, CityId, ProductKind), u32>,
 }
+
+/// Patience erosion'in üst sınırı — bu eşikten sonra %15 sabit yumuşama.
+/// 15 tick ≈ sezon'un %16'sı (90 tick), yeterince hızlı tepki.
+pub const MAX_NO_MATCH_STREAK: u32 = 15;
 
 /// Deterministik ID üretimi için monoton sayaçlar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -163,7 +176,19 @@ impl GameState {
             city_secondary: BTreeMap::new(),
             city_demand: BTreeMap::new(),
             counters: IdCounters::default(),
+            no_match_streak: BTreeMap::new(),
         }
+    }
+
+    /// `(player, city, product)` için art arda match olmadan geçen tick sayısı.
+    /// `MAX_NO_MATCH_STREAK`'a clamp'lenir. Engine clearing tarafından güncellenir.
+    #[must_use]
+    pub fn no_match_streak(&self, player: PlayerId, city: CityId, product: ProductKind) -> u32 {
+        self.no_match_streak
+            .get(&(player, city, product))
+            .copied()
+            .unwrap_or(0)
+            .min(MAX_NO_MATCH_STREAK)
     }
 
     /// Bu oyundaki "ucuz ham" eşleşmesini döner. State'te tanımlı ise onu,

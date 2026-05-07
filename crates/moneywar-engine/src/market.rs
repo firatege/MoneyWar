@@ -32,7 +32,7 @@
 //!      ile kalır (persistent order book).
 
 use moneywar_domain::{
-    CityId, GameState, MarketOrder, Money, ProductKind, Tick,
+    CityId, GameState, MarketOrder, Money, PlayerId, ProductKind, Tick,
     balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT, TRANSACTION_TAX_PCT},
 };
 
@@ -128,6 +128,31 @@ fn clear_bucket(
 
     // TTL persist: kalan emirler kitapta bekler.
     persist_leftover_orders(state, report, tick, key, leftover);
+
+    // v8.20: Patience erosion sayacını güncelle. Bu tick'te bu bucket'a emir
+    // veren her player için: match olduysa 0'la, olmadıysa +1. NPC pricing
+    // helper'ları bu sayacı okuyup uyumsuzluk varsa fiyatı yumuşatır.
+    {
+        use std::collections::BTreeSet;
+        let participants: BTreeSet<PlayerId> = orders.iter().map(|o| o.player).collect();
+        let matched: BTreeSet<PlayerId> = fills
+            .iter()
+            .flat_map(|f| [f.buyer, f.seller])
+            .collect();
+        for pid in &participants {
+            if matched.contains(pid) {
+                state.no_match_streak.insert((*pid, city, product), 0);
+            } else {
+                let entry = state
+                    .no_match_streak
+                    .entry((*pid, city, product))
+                    .or_insert(0);
+                *entry = entry
+                    .saturating_add(1)
+                    .min(moneywar_domain::MAX_NO_MATCH_STREAK);
+            }
+        }
+    }
 
     report.push(LogEntry::market_cleared(
         tick,
