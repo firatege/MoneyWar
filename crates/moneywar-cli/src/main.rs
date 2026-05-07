@@ -5408,20 +5408,23 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         lines.push(Line::from(""));
     }
 
-    // Detay tablo başlığı
+    // Detay tablo başlığı — Fab/Escrow gizli (genelde 0). Detay isteyene
+    // kalem dökümü m (Holdings) panelinde mevcut.
     lines.push(Line::from(Span::styled(
-        "  Sıra  Oyuncu              Nakit      Stok       Fabrika    Escrow     TOPLAM",
+        "  Sıra  Oyuncu              Rol          Nakit       Stok        TOPLAM",
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
     )));
     for (idx, sc) in board.iter().enumerate() {
-        let name = app
-            .state
-            .players
-            .get(&sc.player_id)
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
+        let player = app.state.players.get(&sc.player_id);
+        let name = player.map(|p| p.name.clone()).unwrap_or_default();
+        let role_label = player
+            .map(|p| match p.npc_kind {
+                Some(kind) => kind.label(),
+                None => p.role.display_name(),
+            })
+            .unwrap_or("?");
         let medal = match idx {
             0 => "🥇",
             1 => "🥈",
@@ -5442,13 +5445,12 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         };
         lines.push(Line::from(Span::styled(
             format!(
-                "  {medal} {:<2}   {:<18}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}",
+                "  {medal} {:<2}   {:<18}  {:<10}  {:>10}  {:>10}  {:>10}",
                 idx + 1,
                 name,
+                role_label,
                 format!("{}", sc.cash),
                 format!("{}", sc.stock_value),
-                format!("{}", sc.factory_value),
-                format!("{}", sc.escrow_value),
                 format!("{}", sc.total),
             ),
             row_style,
