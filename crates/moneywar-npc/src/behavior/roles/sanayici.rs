@@ -192,16 +192,20 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     // Cap: Sanayici aynı anda max 1 aktif buyer kontratı.
     out.extend(enumerate_contract_accepts(state, player, &needed_raws));
 
-    // v8.25: Sanayici mamul satış kontratı önerisi. "5 tick sonra fab
-    // şehrimde 30 Kumaş üreteceğim, sat" → Tüccar kabul edip başka şehre
-    // götürür ve satar. Bu yön Tüccar→Sanayici (ham) çiftini tamamlar.
-    out.extend(enumerate_contract_proposals(state, player));
+    // v8.26: NPC kontrat propose kapatıldı. Engine'de stok escrow yok →
+    // Sanayici 30 mamul stoklu kontrat açsa da aynı stoğu market'te satıyor
+    // → delivery_tick'te breach (%66-78 cay oranı). Sadece insan oyuncu
+    // propose etsin (manuel kontrol → %0 breach). NPC accept tarafında kalır.
+    // out.extend(enumerate_contract_proposals(state, player));
 
     out
 }
 
 /// Sanayici'nin mamul satış kontratı önerileri. Stok mamul varsa Public
 /// propose. Tüccar accept ederse 5 tick sonra teslim, kervan ile dağıtım.
+/// v8.26: Şu an çağrılmıyor (NPC propose kapalı). İleride stok escrow
+/// eklenirse tekrar açılabilir.
+#[allow(dead_code)]
 fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     use moneywar_domain::{ContractProposal, ContractState, ListingKind};
 

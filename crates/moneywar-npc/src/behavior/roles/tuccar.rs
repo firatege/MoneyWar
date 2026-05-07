@@ -217,10 +217,9 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let _ = rich_price;
     }
 
-    // v8.23: Forward kontrat propose — Tüccar arbitraj fırsatını taahhüt
-    // formuna çevirir. "5 tick sonra X şehrine 30 birim getireceğim" deyip
-    // Public listing açar. Sanayici kapıyorsa kâr garantili (escrow + delivery).
-    out.extend(enumerate_contract_proposals(state, player));
+    // v8.26: NPC kontrat propose kapatıldı (stok escrow eksikliği nedeniyle
+    // %78 breach). İnsan oyuncu manuel propose etsin. NPC accept kalır.
+    // out.extend(enumerate_contract_proposals(state, player));
 
     // v8.25: Sanayici mamul satış kontratlarını kabul et — fab şehrinden
     // mamul al, kervan ile başka şehre götür, market'te sat. İki yönlü
@@ -275,11 +274,8 @@ fn enumerate_contract_accepts(state: &GameState, player: &Player) -> Vec<ActionC
 }
 
 /// Tüccar'ın forward delivery kontratı önerileri.
-/// - En az 1 aktif open kontrat varsa pas (cap 1)
-/// - En geniş arbitraj fırsatını seç (richest - cheapest spread > %15)
-/// - Public listing, delivery_tick=current+5
-/// - unit_price = best_bid_in_dest × 0.95 (Tüccar margin)
-/// - seller_deposit = unit_price × qty × 0.05
+/// v8.26: Şu an çağrılmıyor (NPC propose kapalı). İleride stok escrow ile.
+#[allow(dead_code)]
 fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     use moneywar_domain::{ContractProposal, ContractState, ListingKind};
 
