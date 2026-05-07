@@ -29,17 +29,9 @@ const ARBITRAGE_SPREAD_PCT: i64 = 15;
 /// Bir (şehir, ürün) için açık order book'taki en yüksek BUY emir fiyatı.
 /// Tüccar'ın "buraya mal getirirsem hangi fiyata satabilirim" sorusunun
 /// cevabı — pay-as-bid clearing'de Tüccar'ın SELL'i bu bid ile eşleşir.
-/// reference_price'tan farklı: clearing yoksa book'ta yine bid olabilir
-/// (1703 BUY 0 SELL durumu = arbitraj fırsatı, ama reference_price baseline'a
-/// düşerdi). Book boşsa None.
+/// v8.20: state'in `best_bid` helper'ını çağırır, fiyat-only döner.
 fn best_bid_in_city(state: &GameState, city: CityId, product: ProductKind) -> Option<Money> {
-    state
-        .order_book
-        .get(&(city, product))?
-        .iter()
-        .filter(|o| matches!(o.side, OrderSide::Buy))
-        .map(|o| o.unit_price)
-        .max()
+    state.best_bid(city, product).map(|(p, _)| p)
 }
 
 #[must_use]

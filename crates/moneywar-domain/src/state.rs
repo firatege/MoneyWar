@@ -211,6 +211,42 @@ impl GameState {
         self.effective_baseline(city, product)
     }
 
+    /// Order book'ta `(city, product)` için en yüksek BUY fiyatı + miktarı.
+    /// v8.20: Tek doğru kaynak — Tüccar'ın eski lokal `best_bid_in_city`
+    /// helper'ı buraya taşındı. NPC pricing (Çiftçi cross, Sanayici cross,
+    /// Tüccar dispatch) hep buna bakar.
+    #[must_use]
+    pub fn best_bid(&self, city: CityId, product: ProductKind) -> Option<(Money, u32)> {
+        self.order_book
+            .get(&(city, product))?
+            .iter()
+            .filter(|o| matches!(o.side, crate::OrderSide::Buy))
+            .map(|o| (o.unit_price, o.quantity))
+            .max_by_key(|(p, _)| *p)
+    }
+
+    /// Order book'ta `(city, product)` için en düşük SELL fiyatı + miktarı.
+    #[must_use]
+    pub fn best_ask(&self, city: CityId, product: ProductKind) -> Option<(Money, u32)> {
+        self.order_book
+            .get(&(city, product))?
+            .iter()
+            .filter(|o| matches!(o.side, crate::OrderSide::Sell))
+            .map(|o| (o.unit_price, o.quantity))
+            .min_by_key(|(p, _)| *p)
+    }
+
+    /// Order book midpoint — iki taraf da varsa avg. NPC pricing'in
+    /// "spread'i adil paylaş" yaklaşımı için.
+    #[must_use]
+    pub fn midpoint(&self, city: CityId, product: ProductKind) -> Option<Money> {
+        let bid = self.best_bid(city, product)?.0;
+        let ask = self.best_ask(city, product)?.0;
+        Some(Money::from_cents(
+            bid.as_cents().saturating_add(ask.as_cents()) / 2,
+        ))
+    }
+
     /// Tick'e gelindiğinde expire olan tüm şokları temizler. Tick lifecycle'ın
     /// en başında çağrılır.
     pub fn clear_expired_shocks(&mut self, current: Tick) {
@@ -358,6 +394,83 @@ mod tests {
             .rolling_avg_price(CityId::Istanbul, ProductKind::Pamuk, 2)
             .unwrap();
         assert_eq!(avg, Money::from_cents(550));
+    }
+
+    fn order(side: crate::OrderSide, price_cents: i64, qty: u32) -> MarketOrder {
+        MarketOrder::new(
+            crate::OrderId::new(qty as u64),
+            crate::PlayerId::new(1),
+            CityId::Istanbul,
+            ProductKind::Pamuk,
+            side,
+            qty,
+            Money::from_cents(price_cents),
+            Tick::new(1),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn best_bid_returns_highest_buy() {
+        let mut s = empty_state();
+        s.order_book.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            vec![
+                order(crate::OrderSide::Buy, 100, 10),
+                order(crate::OrderSide::Buy, 150, 20),
+                order(crate::OrderSide::Sell, 200, 5),
+            ],
+        );
+        let (price, qty) = s.best_bid(CityId::Istanbul, ProductKind::Pamuk).unwrap();
+        assert_eq!(price.as_cents(), 150);
+        assert_eq!(qty, 20);
+    }
+
+    #[test]
+    fn best_ask_returns_lowest_sell() {
+        let mut s = empty_state();
+        s.order_book.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            vec![
+                order(crate::OrderSide::Sell, 200, 5),
+                order(crate::OrderSide::Sell, 180, 15),
+                order(crate::OrderSide::Buy, 100, 10),
+            ],
+        );
+        let (price, qty) = s.best_ask(CityId::Istanbul, ProductKind::Pamuk).unwrap();
+        assert_eq!(price.as_cents(), 180);
+        assert_eq!(qty, 15);
+    }
+
+    #[test]
+    fn best_bid_none_for_empty_book() {
+        let s = empty_state();
+        assert!(s.best_bid(CityId::Istanbul, ProductKind::Pamuk).is_none());
+        assert!(s.best_ask(CityId::Istanbul, ProductKind::Pamuk).is_none());
+    }
+
+    #[test]
+    fn midpoint_avg_of_bid_ask() {
+        let mut s = empty_state();
+        s.order_book.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            vec![
+                order(crate::OrderSide::Buy, 100, 10),
+                order(crate::OrderSide::Sell, 200, 5),
+            ],
+        );
+        let mid = s.midpoint(CityId::Istanbul, ProductKind::Pamuk).unwrap();
+        assert_eq!(mid.as_cents(), 150);
+    }
+
+    #[test]
+    fn midpoint_none_when_one_side_missing() {
+        let mut s = empty_state();
+        s.order_book.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            vec![order(crate::OrderSide::Buy, 100, 10)],
+        );
+        assert!(s.midpoint(CityId::Istanbul, ProductKind::Pamuk).is_none());
     }
 
     #[test]
