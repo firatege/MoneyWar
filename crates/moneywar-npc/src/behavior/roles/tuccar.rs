@@ -244,9 +244,11 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         return Vec::new();
     }
 
-    // En iyi arbitraj fırsatı: spread % maksimum
+    // En iyi arbitraj fırsatı: spread % maksimum.
+    // v8.25: Sadece HAM ürünler — Sanayici mamul kontratı accept etmiyor
+    // (raw_input listesi sadece ham). Eski mamul propose'lar 0 accept aldı.
     let mut best_opportunity: Option<(ProductKind, CityId, CityId, Money, Money, i64)> = None;
-    for product in ProductKind::ALL {
+    for product in ProductKind::RAW_MATERIALS {
         let Some((from_city, from_price)) = cheapest_city(state, product) else {
             continue;
         };
