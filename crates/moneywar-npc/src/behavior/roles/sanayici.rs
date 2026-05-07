@@ -217,15 +217,17 @@ fn enumerate_contract_accepts(
         return Vec::new();
     }
 
-    // Sanayici'nin fab kurmuş olduğu şehirler — kontrat delivery_city'si
-    // bunlardan biriyse uyumlu (ham yerinde teslim).
-    let fab_cities: std::collections::BTreeSet<CityId> = state
+    // v8.24: Fab şehri kısıtlaması GEVŞETİLDİ. Önceki sürüm
+    // delivery_city == fab_city istiyordu — Tüccar genelde "richest_city"
+    // seçer, Sanayici fab şehri farklı olabilir. Sonuçta 5 propose / 0
+    // accept. Yeni: fab varsa **herhangi bir şehirde** ham gelsin yeter,
+    // Sanayici sonra kervan ile lojistik yapar (Sanayici kervan kapasitesi
+    // 500'e çıktı v8.24).
+    let has_any_fab = state
         .factories
         .values()
-        .filter(|f| f.owner == player.id)
-        .map(|f| f.city)
-        .collect();
-    if fab_cities.is_empty() {
+        .any(|f| f.owner == player.id);
+    if !has_any_fab {
         return Vec::new();
     }
 
@@ -244,9 +246,6 @@ fn enumerate_contract_accepts(
             }
         }
         if !needed_raws.contains(&contract.product) {
-            continue;
-        }
-        if !fab_cities.contains(&contract.delivery_city) {
             continue;
         }
         // Buyer deposit affordable mı

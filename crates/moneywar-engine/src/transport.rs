@@ -240,13 +240,13 @@ mod tests {
     }
 
     #[test]
-    fn buy_caravan_sanayici_starter_zero_cost_capacity_200() {
+    fn buy_caravan_sanayici_starter_zero_cost_capacity_500() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         let c = s.caravans.values().next().unwrap();
-        assert_eq!(c.capacity, 200);
+        assert_eq!(c.capacity, 500);
     }
 
     #[test]

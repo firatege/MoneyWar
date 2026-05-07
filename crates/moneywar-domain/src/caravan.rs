@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn capacity_matches_role() {
-        assert_eq!(Caravan::capacity_for(Role::Sanayici), 200);
+        assert_eq!(Caravan::capacity_for(Role::Sanayici), 500);
         assert_eq!(Caravan::capacity_for(Role::Tuccar), 1200);
     }
 

@@ -69,8 +69,10 @@ pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 4_000, 10_000, 18_000, 30_000
 // =============================================================================
 
 /// Sanayici kervanı kapasitesi (§10).
-/// 20 → 200: hacim 10× ölçek revizyonu.
-pub const CARAVAN_CAPACITY_SANAYICI: u32 = 200;
+/// 20 → 200 → 500: Sanayici fab kurmuş ham/mamul taşıma için kervan kullanır;
+/// 200 yetersizdi (Tüccar 1200 ile karşılaştırıldığında 6× az). 500 ile fab
+/// destekleyici lojistik makul, Tüccar yine 2.4× büyük (rol farkı korunur).
+pub const CARAVAN_CAPACITY_SANAYICI: u32 = 500;
 
 /// Tüccar kervanı kapasitesi — daha büyük (§10).
 /// 50 → 500: hacim 10× ölçek revizyonu.

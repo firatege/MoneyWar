@@ -5701,10 +5701,16 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         lines.push(Line::from(""));
     }
 
-    // Detay tablo başlığı — Fab/Escrow gizli (genelde 0). Detay isteyene
-    // kalem dökümü m (Holdings) panelinde mevcut.
+    // v8.24: TOPLAM kolonunu "PnL (Δ)" olarak adlandır — başlangıç sermayesi
+    // çıkarılmış net kâr. Eski "TOPLAM" Nakit+Stok ≠ TOPLAM kafa karışıklığı
+    // yaratıyordu. Açıklama altta.
     lines.push(Line::from(Span::styled(
-        "  Sıra  Oyuncu              Rol          Nakit       Stok        TOPLAM",
+        "  PnL (Δ) = mevcut varlık (cash + stok + fab + escrow) - başlangıç sermayesi",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Sıra  Oyuncu              Rol          Nakit       Stok       PnL (Δ)",
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -6841,10 +6847,17 @@ fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App)
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("  Tick {} · {} oyuncu", app.state.current_tick.value(), filtered.len()),
+        format!("  Tick {} · {} oyuncu — sezon sonu reveal'la AYNI tablo", app.state.current_tick.value(), filtered.len()),
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(""));
+    // v8.24: Detay tablo başlığı — game_over_overlay ile aynı şema.
+    lines.push(Line::from(Span::styled(
+        "  Sıra  Oyuncu              Rol          Nakit       Stok       PnL (Δ)",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
 
     for (idx, sc) in filtered.iter().enumerate() {
         let player = app.state.players.get(&sc.player_id);
@@ -6862,35 +6875,59 @@ fn render_leaderboard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App)
             _ => "  ",
         };
         let is_human = sc.player_id == HUMAN_ID;
-        let role_color = match role_label {
-            "Sanayici" => Color::Rgb(210, 140, 80),
-            "Tüccar" => Color::Rgb(120, 180, 240),
-            _ => Color::White,
-        };
-        let name_style = if is_human {
+        let row_style = if is_human {
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
+        } else if idx == 0 {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(role_color)
+            Style::default().fg(Color::White)
         };
-        // Skor fog'u: insan açık, NPC 5K'ya yuvarlanır + `~` prefix.
-        let score_label = if is_human {
+        // Skor fog'u sadece live'da (oyun sonu açar). NPC değerleri ~5K yuvarlama.
+        let cash_str = if is_human {
+            format!("{}", sc.cash)
+        } else {
+            let rounded = (sc.cash.as_cents() / 100 / 5_000) * 5_000;
+            format!("~{}", Money::from_lira(rounded).unwrap_or(Money::ZERO))
+        };
+        let stock_str = if is_human {
+            format!("{}", sc.stock_value)
+        } else {
+            let rounded = (sc.stock_value.as_cents() / 100 / 5_000) * 5_000;
+            format!("~{}", Money::from_lira(rounded).unwrap_or(Money::ZERO))
+        };
+        let pnl_str = if is_human {
             format!("{}", sc.total)
         } else {
-            let lira = sc.total.as_cents() / 100;
-            let rounded_lira = (lira / 5_000) * 5_000;
-            let rounded = Money::from_lira(rounded_lira).unwrap_or(Money::ZERO);
-            format!("~{}", rounded)
+            let rounded = (sc.total.as_cents() / 100 / 5_000) * 5_000;
+            format!("~{}", Money::from_lira(rounded).unwrap_or(Money::ZERO))
         };
-        lines.push(Line::from(vec![
-            Span::raw(format!("  {medal} {:>2}.  ", idx + 1)),
-            Span::styled(format!("{:<20}", name), name_style),
-            Span::styled(format!(" [{}]  ", role_label), Style::default().fg(role_color)),
-            Span::styled(score_label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  {medal} {:<2}   {:<18}  {:<10}  {:>10}  {:>10}  {:>10}",
+                idx + 1,
+                name,
+                role_label,
+                cash_str,
+                stock_str,
+                pnl_str,
+            ),
+            row_style,
+        )));
     }
 
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  PnL (Δ) = mevcut varlık (cash + stok + fab + escrow) - başlangıç sermayesi",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  NPC değerleri ~5K yuvarlanmış (fog). Sezon sonunda exact açılır.",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+    )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  L / Esc / Enter — kapat",
