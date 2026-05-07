@@ -189,12 +189,22 @@ fn clear_bucket(
                 factor_milli -= down;
             }
 
+            // v8.24 (B): Initial baseline'a göre sıkı clamp. Sezon başı
+            // çapasından %70 - %140 aralığı dışına çıkamaz. Tâtonnement +
+            // stok-drift bu aralıkta dengelenir; monoton +%80 kümülatif
+            // patlama imkansız. Initial yoksa (eski state) mutlak clamp.
+            let initial = state.price_baseline_initial.get(&key).copied();
             if let Some(baseline) = state.price_baseline.get_mut(&key) {
                 let new_cents = baseline.as_cents().saturating_mul(factor_milli) / 1000;
-                // Mutlak clamp: raw 1-200₺, finished 5-200₺.
-                let abs_min = if product.is_raw() { 100 } else { 500 };
-                let abs_max = 20_000;
-                let clamped = new_cents.max(abs_min).min(abs_max);
+                let clamped = if let Some(init) = initial {
+                    let lower = init.as_cents() * 70 / 100;
+                    let upper = init.as_cents() * 140 / 100;
+                    new_cents.max(lower).min(upper).max(1)
+                } else {
+                    let abs_min = if product.is_raw() { 100 } else { 500 };
+                    let abs_max = 20_000;
+                    new_cents.max(abs_min).min(abs_max)
+                };
                 *baseline = Money::from_cents(clamped);
             }
         }

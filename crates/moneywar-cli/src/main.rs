@@ -1614,8 +1614,10 @@ fn seed_world(
             };
             let multiplier: u32 = rng.random_range(80..=120);
             let price_cents = base_lira.saturating_mul(100) * i64::from(multiplier) / 100;
-            s.price_baseline
-                .insert((city, product), Money::from_cents(price_cents));
+            let baseline = Money::from_cents(price_cents);
+            s.price_baseline.insert((city, product), baseline);
+            // v8.24: Initial snapshot — tâtonnement clamp için referans çapası.
+            s.price_baseline_initial.insert((city, product), baseline);
         }
     }
 

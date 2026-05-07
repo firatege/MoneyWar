@@ -325,8 +325,10 @@ fn build_state(runner: &SimRunner) -> GameState {
             } else {
                 7
             };
-            s.price_baseline
-                .insert((city, product), Money::from_lira(lira).unwrap());
+            let baseline = Money::from_lira(lira).unwrap();
+            s.price_baseline.insert((city, product), baseline);
+            // v8.24: Initial snapshot — tâtonnement clamp için.
+            s.price_baseline_initial.insert((city, product), baseline);
         }
     }
 

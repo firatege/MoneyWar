@@ -142,6 +142,14 @@ pub struct GameState {
     /// - 15 = cömert (Easy) — NPC fiyat marjları %15 human lehine kayar
     #[serde(default)]
     pub market_softener_pct: u32,
+
+    /// v8.24: Sezon başı orijinal fiyat çapaları — tâtonnement clamp için.
+    /// Tâtonnement her tick price_baseline'i ±%0.5 kaydırır; bu map sezon
+    /// başında snapshot tutar. Engine clamp'i `initial × [%70, %140]` aralığı
+    /// uygular → kümülatif fiyat patlaması yok. Sezon başında set edilir
+    /// (CLI/sim seed) ve sezon boyu sabit kalır.
+    #[serde(default)]
+    pub price_baseline_initial: BTreeMap<(CityId, ProductKind), Money>,
 }
 
 /// Patience erosion'in üst sınırı — bu eşikten sonra %15 sabit yumuşama.
@@ -187,6 +195,7 @@ impl GameState {
             counters: IdCounters::default(),
             no_match_streak: BTreeMap::new(),
             market_softener_pct: 0,
+            price_baseline_initial: BTreeMap::new(),
         }
     }
 
