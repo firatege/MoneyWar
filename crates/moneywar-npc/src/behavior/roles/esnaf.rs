@@ -22,11 +22,55 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::apply_jitter;
 
 /// Esnaf'ın bu tick için aday listesi.
+///
+/// **Sıralama: önce SAT, sonra AL** (v8.16). Behavior dispatcher Easy'de
+/// top_k=2 ile sınırlı, BUY ve SELL adayları aynı skor → tie-break enumerate
+/// sırasına göre. Eski sıralama BUY-önce idi → SELL hiç emit olmuyordu →
+/// Esnaf 18K stok birikti, -457K zarar. SAT-önce sıralaması Esnaf'ın
+/// stoğunu pazara çıkarır, kâr/zarar dengelenir.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
+
+    // 0) SAT — stoktaki her şey baseline × 1.00 (referansta sat).
+    //    En önce çünkü Easy top_k=2 BUY adaylarına yığılmasın.
+    for (city, product, qty) in player.inventory.entries() {
+        if qty == 0 {
+            continue;
+        }
+        let reference = state
+            .reference_price(city, product)
+            .unwrap_or_else(|| {
+                let lira = if product.is_finished() {
+                    moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+                } else {
+                    moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+                };
+                Money::from_lira(lira).unwrap_or(Money::ZERO)
+            });
+        // v8.18: SELL %100 → %98 (agresif). Önceki sürümde 63 SELL emir
+        // match=0 oldu — Alıcı bid baseline'da, Esnaf %100+jitter Bid'in
+        // üstünde kaldı. %98 + jitter = 95-101% → Alıcı bid 100% ile garanti
+        // kesişme. BUY %95 + SELL %98 = brüt %3 marj (eski %5'ten az ama
+        // hareket eden envanter > kâr marjı).
+        let base_price = scale_pct(reference, 98);
+        let unit_price =
+            apply_jitter(base_price, state.current_tick, city, product, OrderSide::Sell);
+        if unit_price.as_cents() <= 0 {
+            continue;
+        }
+        let quantity = (qty / 2).max(1).min(50);
+        out.push(ActionCandidate::SubmitOrder {
+            side: OrderSide::Sell,
+            city,
+            product,
+            quantity,
+            unit_price,
+        });
+    }
 
     // 1) Ham AL — gerçek toptancı: 3 şehir × 3 ham = 9 BUY.
     //    Tüm raw için %95 (toptan markdown). Tüccar SAT @ baseline (100%)
@@ -37,13 +81,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let bucket_cash = Money::from_cents((player.cash.as_cents() / 9).max(0));
     for city in CityId::ALL {
         for product in moneywar_domain::ProductKind::RAW_MATERIALS {
-            let baseline = state
-                .effective_baseline(city, product)
+            let reference = state
+                .reference_price(city, product)
                 .unwrap_or_else(|| {
                     Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
                         .unwrap_or(Money::ZERO)
                 });
-            let unit_price = scale_pct(baseline, 95);
+            let base_price = scale_pct(reference, 95);
+            let unit_price =
+                apply_jitter(base_price, state.current_tick, city, product, OrderSide::Buy);
             if unit_price.as_cents() <= 0 {
                 continue;
             }
@@ -67,15 +113,16 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         Money::from_cents((player.cash.as_cents() / 9).max(0));
     for city in CityId::ALL {
         for product in ProductKind::FINISHED_GOODS {
-            let baseline = state
-                .effective_baseline(city, product)
+            let reference = state
+                .reference_price(city, product)
                 .unwrap_or_else(|| {
                     Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                         .unwrap_or(Money::ZERO)
                 });
-            // Toptan fiyat = baseline (Sanayici'nin SAT fiyatı). Markdown yok
+            // Toptan fiyat = reference (Sanayici'nin SAT fiyatı). Markdown yok
             // → Esnaf kâr marjını perakende SAT'tan kazanır.
-            let unit_price = baseline;
+            let unit_price =
+                apply_jitter(reference, state.current_tick, city, product, OrderSide::Buy);
             if unit_price.as_cents() <= 0 {
                 continue;
             }
@@ -91,36 +138,6 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 unit_price,
             });
         }
-    }
-
-    // 3) SAT — stoktaki her şey baseline × 1.05 markup
-    //    (raw → Sanayici toptan, mamul → Alıcı perakende).
-    for (city, product, qty) in player.inventory.entries() {
-        if qty == 0 {
-            continue;
-        }
-        let baseline = state
-            .effective_baseline(city, product)
-            .unwrap_or_else(|| {
-                let lira = if product.is_finished() {
-                    moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
-                } else {
-                    moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
-                };
-                Money::from_lira(lira).unwrap_or(Money::ZERO)
-            });
-        let unit_price = scale_pct(baseline, 105);
-        if unit_price.as_cents() <= 0 {
-            continue;
-        }
-        let quantity = (qty / 2).max(1).min(50);
-        out.push(ActionCandidate::SubmitOrder {
-            side: OrderSide::Sell,
-            city,
-            product,
-            quantity,
-            unit_price,
-        });
     }
 
     out
@@ -180,17 +197,23 @@ mod tests {
 
     #[test]
     fn esnaf_raw_buy_at_95_pct_uniform() {
-        // Tüm raw BUY %95 markdown — Tüccar SAT 95%'i karşılayacak şekilde
-        // ayarlandı. Specialty/off-specialty fiyat farkı yok (gerçek toptancı).
+        // Tüm raw BUY %95 markdown ± jitter (±5% pricing noise, fiyat keşfi
+        // için). Beklenen değerin etrafında %10 toleransla check.
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
         let baseline_cents = moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA * 100;
         let expected = baseline_cents * 95 / 100;
+        let lower = expected * 95 / 100;
+        let upper = expected * 105 / 100;
         for c in &cands {
             if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
                 if !product.is_raw() { continue; }
-                assert_eq!(unit_price.as_cents(), expected, "Esnaf raw BUY %95");
+                let cents = unit_price.as_cents();
+                assert!(
+                    (lower..=upper).contains(&cents),
+                    "Esnaf raw BUY {cents} ∉ [{lower}, {upper}] (~%95 ± jitter)"
+                );
             }
         }
     }
@@ -241,18 +264,22 @@ mod tests {
 
     #[test]
     fn finished_buy_at_baseline() {
-        // Mamul BUY toptan baseline'da (Sanayici'den) — markdown yok, kâr
-        // perakende SAT'tan gelir.
+        // Mamul BUY toptan baseline'da ± jitter (±5% pricing noise).
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
         let finished_baseline = Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA).unwrap();
+        let lower = finished_baseline.as_cents() * 95 / 100;
+        let upper = finished_baseline.as_cents() * 105 / 100;
         let mut found = false;
         for c in &cands {
             if let ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, unit_price, .. } = c {
                 if product.is_finished() {
-                    assert_eq!(*unit_price, finished_baseline,
-                        "Esnaf mamul BUY = baseline (toptan)");
+                    let cents = unit_price.as_cents();
+                    assert!(
+                        (lower..=upper).contains(&cents),
+                        "Esnaf mamul BUY {cents} ∉ [{lower}, {upper}] (baseline ± jitter)"
+                    );
                     found = true;
                 }
             }

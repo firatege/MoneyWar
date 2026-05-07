@@ -24,6 +24,7 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::apply_jitter;
 
 /// Alıcı'nın bu tick için olası alım adayları (3 şehir × 3 mamul = 9 max).
 #[must_use]
@@ -33,16 +34,18 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
     for city in moneywar_domain::CityId::ALL {
         for product in ProductKind::FINISHED_GOODS {
-            let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+            let reference = state.reference_price(city, product).unwrap_or_else(|| {
                 Money::from_lira(default_finished_price()).unwrap_or(Money::ZERO)
             });
-            if baseline.as_cents() <= 0 {
+            if reference.as_cents() <= 0 {
                 continue;
             }
             // Dinamik rezerv fiyatı (Vic3 pop needs urgency).
             // Stoğu boşsa 110% verir, doluysa 100%. Sanayici 105% asking
             // → stok ortadayken (urgency 0.5) 105% Alıcı bid ile eşleşir.
-            let unit_price = bid_with_urgency(baseline, player, city, product);
+            let urgency_price = bid_with_urgency(reference, player, city, product);
+            let unit_price =
+                apply_jitter(urgency_price, state.current_tick, city, product, OrderSide::Buy);
             let quantity = affordable_qty(bucket_cash, unit_price, 30);
             if quantity == 0 {
                 continue;

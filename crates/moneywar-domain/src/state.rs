@@ -20,6 +20,14 @@ use crate::{
     Tick,
 };
 
+/// `ProductKind::RAW_MATERIALS` order'ında bir sonraki raw'ı döner.
+/// `seed_city_profiles` rotation'ı için yardımcı.
+fn next_raw(p: ProductKind) -> ProductKind {
+    let raws = ProductKind::RAW_MATERIALS;
+    let idx = raws.iter().position(|&r| r == p).unwrap_or(0);
+    raws[(idx + 1) % raws.len()]
+}
+
 /// Aktif piyasa şoku — bir olayın `(city, product)` üzerinde geçici fiyat
 /// etkisi. Pozitif `multiplier_pct` baseline'ı yukarı (kıtlık), negatif
 /// aşağı (bolluk) iter. `expires_at` tick'inden itibaren kaldırılır.
@@ -101,6 +109,19 @@ pub struct GameState {
     #[serde(default)]
     pub city_specialty: BTreeMap<CityId, ProductKind>,
 
+    /// Şehrin "ikincil" hamı — Çiftçi prime'ın ~%25'i kadar üretir, kendi
+    /// ihtiyacını karşılar ama dışarıya cılız ihraç eder. Seed sırasında
+    /// `city_specialty`'den farklı bir ham olarak atanır. Boş ise harvest
+    /// secondary'i atlar.
+    #[serde(default)]
+    pub city_secondary: BTreeMap<CityId, ProductKind>,
+
+    /// Şehrin "talep" hamı — üretim YOK, Alıcı bu üründe ağırlıklı BUY eder.
+    /// İthalat çekme noktası → Tüccar arbitrage doğal hedefi. Seed sırasında
+    /// `city_specialty` ve `city_secondary`'den farklı kalan tek raw atanır.
+    #[serde(default)]
+    pub city_demand: BTreeMap<CityId, ProductKind>,
+
     /// Deterministik ID üretimi için sayaçlar. Engine yeni entity kurduğunda bunları artırır.
     pub counters: IdCounters,
 }
@@ -139,6 +160,8 @@ impl GameState {
             relist_cooldown: BTreeMap::new(),
             active_shocks: BTreeMap::new(),
             city_specialty: BTreeMap::new(),
+            city_secondary: BTreeMap::new(),
+            city_demand: BTreeMap::new(),
             counters: IdCounters::default(),
         }
     }
@@ -172,6 +195,22 @@ impl GameState {
         Some(Money::from_cents(cents.max(1)))
     }
 
+    /// NPC karar referans fiyatı — fiyat keşfi (price discovery) için.
+    /// Son 5 clearing'in ortalamasını döndürür (rolling avg). Trade history
+    /// yoksa `effective_baseline`'a düşer (sezon başı durumu). Şok çarpımı
+    /// rolling_avg üzerine uygulanmaz çünkü clearing fiyatları zaten şoku
+    /// içerir; baseline fallback'inde ise effective_baseline şoku ekler.
+    /// Engine clearing path'i bu helper'ı KULLANMAZ — sadece NPC karar
+    /// mantığı içindir (engine `effective_baseline`'ı pay-as-bid için
+    /// kullanır, oraya dokunmuyoruz).
+    #[must_use]
+    pub fn reference_price(&self, city: CityId, product: ProductKind) -> Option<Money> {
+        if let Some(rolling) = self.rolling_avg_price(city, product, 5) {
+            return Some(rolling);
+        }
+        self.effective_baseline(city, product)
+    }
+
     /// Tick'e gelindiğinde expire olan tüm şokları temizler. Tick lifecycle'ın
     /// en başında çağrılır.
     pub fn clear_expired_shocks(&mut self, current: Tick) {
@@ -191,6 +230,22 @@ impl GameState {
     #[must_use]
     pub fn participant_count(&self) -> u8 {
         u8::try_from(self.players.len()).unwrap_or(u8::MAX)
+    }
+
+    /// Şehir profil slotlarını populate eder. `prime_per_city`: caller'ın
+    /// shuffle ettiği her şehrin **prime** hamı. Secondary ve demand rotation
+    /// ile türetilir (`ProductKind::RAW_MATERIALS` order: Pamuk→Bugday→Zeytin):
+    /// `secondary = prime'ın bir sonraki raw`, `demand = onun bir sonrası`.
+    /// Her şehirde 3 slot 3 farklı raw → 9 (şehir × ham) bucket'tan 9'u da
+    /// ekonomik anlamlı (3 prime, 3 secondary, 3 demand).
+    pub fn seed_city_profiles(&mut self, prime_per_city: [(CityId, ProductKind); 3]) {
+        for (city, prime) in prime_per_city {
+            let secondary = next_raw(prime);
+            let demand = next_raw(secondary);
+            self.city_specialty.insert(city, prime);
+            self.city_secondary.insert(city, secondary);
+            self.city_demand.insert(city, demand);
+        }
     }
 
     /// Belirli (şehir, ürün) için son N tick'in ortalama takas fiyatı.
@@ -323,5 +378,46 @@ mod tests {
         let s = empty_state();
         let back: GameState = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn seed_city_profiles_assigns_disjoint_slots_per_city() {
+        let mut s = empty_state();
+        // İstanbul prime=Pamuk → secondary=Bugday, demand=Zeytin
+        // Ankara prime=Bugday → secondary=Zeytin, demand=Pamuk
+        // İzmir prime=Zeytin → secondary=Pamuk, demand=Bugday
+        s.seed_city_profiles([
+            (CityId::Istanbul, ProductKind::Pamuk),
+            (CityId::Ankara, ProductKind::Bugday),
+            (CityId::Izmir, ProductKind::Zeytin),
+        ]);
+        for city in CityId::ALL {
+            let prime = s.city_specialty[&city];
+            let secondary = s.city_secondary[&city];
+            let demand = s.city_demand[&city];
+            // 3 slot 3 farklı raw — şehir başına bucket çakışması yok.
+            assert_ne!(prime, secondary, "{city}: prime/secondary aynı");
+            assert_ne!(prime, demand, "{city}: prime/demand aynı");
+            assert_ne!(secondary, demand, "{city}: secondary/demand aynı");
+        }
+    }
+
+    #[test]
+    fn seed_city_profiles_covers_all_nine_buckets() {
+        let mut s = empty_state();
+        s.seed_city_profiles([
+            (CityId::Istanbul, ProductKind::Pamuk),
+            (CityId::Ankara, ProductKind::Bugday),
+            (CityId::Izmir, ProductKind::Zeytin),
+        ]);
+        // Her ham × her slot kombinasyonu en az bir şehirde olmalı (tüm
+        // bucket'lar besleniyor: 3 prime + 3 secondary + 3 demand = 9).
+        let mut covered = std::collections::BTreeSet::new();
+        for city in CityId::ALL {
+            covered.insert((city, s.city_specialty[&city]));
+            covered.insert((city, s.city_secondary[&city]));
+            covered.insert((city, s.city_demand[&city]));
+        }
+        assert_eq!(covered.len(), 9, "9 bucket'tan {} kapsanıyor", covered.len());
     }
 }

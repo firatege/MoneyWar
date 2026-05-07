@@ -24,15 +24,14 @@ use rand_chacha::ChaCha8Rng;
 /// NPC zorluk seviyesi.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Difficulty {
-    /// Az aksiyon, sessiz, eşik yüksek — yumuşak rekabet.
-    Easy,
-    /// Default — dengeli rekabet.
+    /// Yumuşak rekabet — TUI default. Az aksiyon, sessiz, eşik yüksek.
     #[default]
+    Easy,
+    /// Dengeli rekabet. Sim eşik testleri için tutuluyor; TUI cycle'da yok.
     Medium,
     /// Agresif — tüm aday seti, sessizlik yok.
     Hard,
-    /// AI'sız sade kurallar — ekonomi mekaniği testi baseline'ı.
-    /// `crate::synthetic` dispatch eder. Tuning ve regresyon için kullanılır.
+    /// AI'sız sade kurallar — ekonomi mekaniği testi baseline'ı (sim only).
     Synthetic,
 }
 
@@ -40,20 +39,19 @@ impl Difficulty {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Easy => "Easy (yumuşak rekabet)",
+            Self::Easy => "Easy (yumuşak)",
             Self::Medium => "Medium (dengeli)",
             Self::Hard => "Hard (agresif)",
-            Self::Synthetic => "Synthetic (sade kurallar — ekonomi testi)",
+            Self::Synthetic => "Synthetic (sim baseline)",
         }
     }
 
+    /// TUI'de cycle: Easy ↔ Hard. Medium ve Synthetic sim'e özel, döngüde yok.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
-            Self::Easy => Self::Medium,
-            Self::Medium => Self::Hard,
-            Self::Hard => Self::Synthetic,
-            Self::Synthetic => Self::Easy,
+            Self::Easy => Self::Hard,
+            Self::Hard | Self::Medium | Self::Synthetic => Self::Easy,
         }
     }
 
@@ -86,10 +84,18 @@ pub fn decide_all_npcs(
     tick: Tick,
     difficulty: Difficulty,
 ) -> Vec<Command> {
+    let world_id = PlayerId::new(moneywar_domain::balance::WORLD_PLAYER_ID_VALUE);
     let npc_ids: Vec<PlayerId> = state
         .players
         .iter()
-        .filter_map(|(id, p)| if p.is_npc { Some(*id) } else { None })
+        .filter_map(|(id, p)| {
+            // World player engine-driven (tick_world_factories) — AI dispatch'e
+            // dahil değil, npc_kind None.
+            if *id == world_id {
+                return None;
+            }
+            if p.is_npc { Some(*id) } else { None }
+        })
         .collect();
     // Shadow state: NPC'ler sıralı işlenir, her birinin kararı bir sonrakine
     // görünür. Tick içi state immutable problemi çözülür → 5 Sanayici aynı

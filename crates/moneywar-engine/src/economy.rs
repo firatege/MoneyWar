@@ -11,7 +11,12 @@
 //! tamamen Sanayici cebinden çıkıyor (closed loop).
 
 use moneywar_domain::{
-    CityId, GameState, Money, NpcKind, PlayerId, ProductKind, Tick, balance::SEED_COST_PER_RAW_LIRA,
+    CityId, GameState, MarketOrder, Money, NpcKind, OrderId, OrderSide, PlayerId, ProductKind,
+    Tick,
+    balance::{
+        NPC_BASE_PRICE_FINISHED_LIRA, SEED_COST_PER_RAW_LIRA, WORLD_FAB_PERIOD,
+        WORLD_FAB_QTY_PER_PERIOD, WORLD_FAB_SELL_TTL, WORLD_PLAYER_ID_VALUE,
+    },
 };
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -55,11 +60,12 @@ const CONSUME_PCT: u32 = 25;
 /// Mahsul refill periyodu — her N tick'te Çiftçi'lere stok inject.
 const HARVEST_PERIOD: u32 = 8;
 /// Mahsul miktarı (birim) — her Çiftçi'ye specialty ürünü.
-/// Faz F3: 150-300 → 300-600 (2× artış). Sanayici fab-bazlı her şehirde
-/// raw arıyor; Çiftçi arzı 9× az kalıyordu → off-specialty bucket'lar ölüydü.
-/// Arz arttırılırsa Tüccar daha çok dağıtım yapar, ölü bucket'lar canlanır.
-const HARVEST_QTY_MIN: u32 = 300;
-const HARVEST_QTY_MAX: u32 = 600;
+/// v8.19 (A): 200-400 → 120-240. Esnaf emekli olunca ham BUY tarafı çöktü
+/// (Sanayici 5 + Spek 3 alıcı, Çiftçi 6 × 80 birim/tick = 480 ham/tick arz
+/// emilemiyor). Match eff %12-39, FactoryIdle 1260. Mahsul %40 düşürülür
+/// → Çiftçi sezon başına ~3500 birim üretir (eski 5800).
+const HARVEST_QTY_MIN: u32 = 120;
+const HARVEST_QTY_MAX: u32 = 240;
 
 /// Vergi periyodu — şu an aktif değil (wages closed loop yeterli).
 const TAX_PERIOD: u32 = 10;
@@ -94,6 +100,14 @@ pub(crate) fn tick_economy(
     // Mahsul — Çiftçi'lere ham madde inject
     if t > 0 && t % HARVEST_PERIOD == 0 {
         harvest_ciftci_stock(state, rng, report, tick);
+    }
+
+    // World fab — engine-driven baseline mamul üretim her şehir × her mamul.
+    // Sanayici NPC fab dağılımı 9 mamul bucket'ı kapsayamadığında (5 NPC ×
+    // 1-2 fab = 6-7 fab) kalan bucket'lara baseline arz garanti. World
+    // player yoksa (sim) no-op — TUI seed_world World'u oluşturur.
+    if t > 0 && t % WORLD_FAB_PERIOD == 0 {
+        tick_world_factories(state, report, tick);
     }
 
     // Vergi KALDIRILDI — wages ile çakışıyordu (çift gelir transferi).
@@ -212,9 +226,13 @@ fn charge_factory_maintenance(state: &mut GameState, _report: &mut TickReport, _
     }
 }
 
-/// Çiftçi NPC'lere uzmanlık ürünlerini ekle. Her Çiftçi'nin "specialty"
-/// ürünü `personality` veya başlangıç specialty'sinden alınır — basit
-/// versiyon: Çiftçi'nin envanterinde en çok hangi raw varsa o.
+/// Çiftçi NPC'lere periyodik mahsul üretir. **Şehir-tabanlı 2-katmanlı**
+/// (v8): her Çiftçi bir şehre atanır (PlayerId mod 3), o şehrin
+/// `city_specialty` (prime) hamından **full qty** ve `city_secondary` (az)
+/// hamından **qty/4** hasat yapar. Eski v6.5 PlayerId mod product yaklaşımı:
+/// 3 ham × 1 şehir = 3 bucket besliyordu; v8: 3 prime + 3 secondary = 6 bucket.
+/// `city_demand` slotu kasıtlı boş — Tüccar arbitrage ithalat hedefi.
+/// `city_specialty` populate edilmemişse `CityId::cheap_raw()` fallback'i.
 fn harvest_ciftci_stock(
     state: &mut GameState,
     rng: &mut ChaCha8Rng,
@@ -229,51 +247,178 @@ fn harvest_ciftci_stock(
         .collect();
 
     for pid in ciftci_ids {
-        // Çiftçi için specialty ürün — PlayerId mod 3 ile dağılım.
-        let products = [
-            ProductKind::Pamuk,
-            ProductKind::Bugday,
-            ProductKind::Zeytin,
-        ];
-        let product_idx = (pid.value() as usize) % products.len();
-        let product = products[product_idx];
+        // Çiftçi şehir ataması — PlayerId mod 3 ile 3 şehir.
+        let city_idx = (pid.value() as usize) % CityId::ALL.len();
+        let city = CityId::ALL[city_idx];
 
-        // BUG FIX (Tuning v6.5): Önceki kod state.city_specialty üzerinden
-        // şehir buluyordu ama bu BTreeMap hiç populate edilmiyor (state.rs
-        // boş init). Sonuç: tüm Çiftçi mahsulü Istanbul'a yığılıyor (fallback).
-        // Çözüm: CityId.cheap_raw() API'sını kullan — Pamuk→Istanbul, Bugday→Ankara,
-        // Zeytin→Izmir doğal eşleşmesi.
-        let city = CityId::ALL
-            .iter()
+        // 3-katmanlı hasat (v8.6 D adımı):
+        //   prime    : full qty             — şehrin uzmanlık hamı
+        //   secondary: qty/4 (~%25)          — az üretim
+        //   demand   : qty/8 (~%12.5)        — minimum, "az ihraç" sinyali
+        // Önceki sürümde demand katmanı YOKTU → 3 demand-bucket arz tarafı kuru,
+        // Tüccar arbitrage AI'sı doyuramıyordu (4 ölü bucket/oyun). v8.6:
+        // Çiftçi 9/9 ham bucket besler, profile sistemi tam çalışır.
+        let prime = state
+            .city_specialty
+            .get(&city)
             .copied()
-            .find(|c| c.cheap_raw() == product)
-            .unwrap_or(CityId::Istanbul);
+            .unwrap_or_else(|| city.cheap_raw());
+        let prime_qty = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
 
-        let qty = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+        let secondary = state.city_secondary.get(&city).copied();
+        let secondary_qty = secondary.map(|_| {
+            let base = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+            base / 4
+        });
+
+        let demand = state.city_demand.get(&city).copied();
+        let demand_qty = demand.map(|_| {
+            // v8.13: qty/6 → qty/4. Demand-bucket sec ile eşit; prime hâlâ 4×
+            // baskın (felsefe korunur) ama demand-bucket "kuru raf" değil.
+            // Tüccar arbitrage yetmediğinde demand-raw doğal akış sağlanır.
+            let base = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+            base / 4
+        });
+
+        // Tek pas — prime + sec + demand için ortak cash debit (tohum maliyeti
+        // toplam birim üzerinden orantılı).
+        let total_qty = prime_qty + secondary_qty.unwrap_or(0) + demand_qty.unwrap_or(0);
+        if total_qty == 0 {
+            continue;
+        }
+
         if let Some(p) = state.players.get_mut(&pid) {
             // Vic3 ilhamı: tohum/işçilik maliyeti. Para yetmiyorsa mahsul
             // orantılı azalır (kısmi hasat). Sıfır cash ise mahsul yok →
-            // Çiftçi geri dönmek için satması gerek (closed loop'a girer).
-            let want_cost_cents = i64::from(qty)
+            // Çiftçi satmadan geri dönemez (closed loop).
+            let want_cost_cents = i64::from(total_qty)
                 .saturating_mul(SEED_COST_PER_RAW_LIRA)
                 .saturating_mul(100);
             let have_cents = p.cash.as_cents();
             let actual_cost_cents = want_cost_cents.min(have_cents);
-            let actual_qty = if want_cost_cents > 0 {
+            let scale_num = actual_cost_cents.max(0);
+            let actual_total = if want_cost_cents > 0 {
                 u32::try_from(
-                    i64::from(qty).saturating_mul(actual_cost_cents) / want_cost_cents,
+                    i64::from(total_qty).saturating_mul(scale_num) / want_cost_cents,
                 )
-                .unwrap_or(qty)
+                .unwrap_or(total_qty)
             } else {
-                qty
+                total_qty
             };
             if actual_cost_cents > 0 {
                 let _ = p.debit(Money::from_cents(actual_cost_cents));
             }
-            if actual_qty > 0 {
-                let _ = p.inventory.add(city, product, actual_qty);
-                report.push(LogEntry::economy_harvest(tick, pid, city, product, actual_qty));
+            if actual_total == 0 {
+                continue;
             }
+            // 3 katmana orantılı dağıt (tam sayı bölmesi). prime + sec
+            // hesaplanır, demand kalan = total - prime - sec.
+            let actual_prime = u32::try_from(
+                u64::from(prime_qty).saturating_mul(u64::from(actual_total))
+                    / u64::from(total_qty),
+            )
+            .unwrap_or(prime_qty);
+            let actual_secondary = u32::try_from(
+                u64::from(secondary_qty.unwrap_or(0)).saturating_mul(u64::from(actual_total))
+                    / u64::from(total_qty),
+            )
+            .unwrap_or(0);
+            let actual_demand = actual_total
+                .saturating_sub(actual_prime)
+                .saturating_sub(actual_secondary);
+
+            if actual_prime > 0 {
+                let _ = p.inventory.add(city, prime, actual_prime);
+                report.push(LogEntry::economy_harvest(tick, pid, city, prime, actual_prime));
+            }
+            if let Some(sec_raw) = secondary
+                && actual_secondary > 0
+            {
+                let _ = p.inventory.add(city, sec_raw, actual_secondary);
+                report.push(LogEntry::economy_harvest(
+                    tick,
+                    pid,
+                    city,
+                    sec_raw,
+                    actual_secondary,
+                ));
+            }
+            if let Some(dem_raw) = demand
+                && actual_demand > 0
+            {
+                let _ = p.inventory.add(city, dem_raw, actual_demand);
+                report.push(LogEntry::economy_harvest(
+                    tick,
+                    pid,
+                    city,
+                    dem_raw,
+                    actual_demand,
+                ));
+            }
+        }
+    }
+}
+
+/// World Fabrikaları — her (şehir, mamul) için baseline mamul üretim ve
+/// SELL emir injection (v8.11). Sanayici NPC fab dağılımı yetersiz kaldığında
+/// (her oyunda 1-3 mamul bucket fab'sız) "1500+ BUY 0 SELL" ölü pazarı
+/// önler. World player (`PlayerId(0)`) yoksa (sim) no-op.
+///
+/// **Mekanik:**
+/// 1. Her periyotta her (city, finished_product) için World envanterine
+///    `WORLD_FAB_QTY_PER_PERIOD` birim ekle
+/// 2. Aynı miktarda SELL emrini direkt order_book'a inject et (process_submit
+///    by-pass, World relist cooldown'a tâbi değil)
+/// 3. Fiyat: `effective_baseline × 0.95` (markdown — hızlı eşleşme, baseline
+///    fair-value referansı)
+/// 4. TTL: kısa (3 tick), her periyotta yenilenir
+fn tick_world_factories(state: &mut GameState, _report: &mut TickReport, tick: Tick) {
+    let world_id = PlayerId::new(WORLD_PLAYER_ID_VALUE);
+    if !state.players.contains_key(&world_id) {
+        return; // sim'de World yok — engine fallback
+    }
+
+    for city in CityId::ALL {
+        for product in ProductKind::FINISHED_GOODS {
+            let qty = WORLD_FAB_QTY_PER_PERIOD;
+            // Stok ekle (World envanter sınırsız büyür, settle düşürür)
+            if let Some(p) = state.players.get_mut(&world_id) {
+                let _ = p.inventory.add(city, product, qty);
+            }
+
+            // Fiyat: effective_baseline × 0.95 — baseline fair-value, %5
+            // markdown ile fast match. Baseline yoksa hardcoded fallback.
+            let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+                Money::from_lira(NPC_BASE_PRICE_FINISHED_LIRA).unwrap_or(Money::ZERO)
+            });
+            let unit_price =
+                Money::from_cents(baseline.as_cents().saturating_mul(95).saturating_div(100));
+            if !unit_price.is_positive() {
+                continue;
+            }
+
+            let order_id = OrderId::new(state.counters.next_order_id);
+            state.counters.next_order_id = state.counters.next_order_id.saturating_add(1);
+
+            let Ok(order) = MarketOrder::new_with_ttl(
+                order_id,
+                world_id,
+                city,
+                product,
+                OrderSide::Sell,
+                qty,
+                unit_price,
+                tick,
+                WORLD_FAB_SELL_TTL,
+            ) else {
+                continue;
+            };
+
+            state
+                .order_book
+                .entry((city, product))
+                .or_default()
+                .push(order);
         }
     }
 }

@@ -28,6 +28,7 @@
 pub mod candidates;
 pub mod difficulty;
 pub mod personality;
+pub mod pricing;
 pub mod roles;
 pub mod scoring;
 pub mod signals;

@@ -23,8 +23,14 @@
 use moneywar_domain::{GameState, Money, OrderSide, Player, ProductKind};
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::apply_jitter;
 
 /// Çiftçi'nin bu tick için olası satış adayları.
+/// v8.19 (B): stok-baskısı agresifleştirildi (Esnaf emekli olunca ham BUY
+/// iştahı düştü). Eski %7-15 indirim yetmiyor — şimdi %0/%20/%35.
+/// Eski: 0-999=%100, 1000-1999=%93, 2000+=%85 (sezon ortası match eff %23).
+/// Yeni: 0-499=%100, 500-999=%80, 1000+=%65 — Sanayici BUY ile eşleşmesi
+/// kolaylaşır, ham birikimini erken eritir.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
@@ -33,10 +39,23 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).max(1).min(100);
-        let unit_price = state.effective_baseline(city, product).unwrap_or_else(|| {
+        let reference = state.reference_price(city, product).unwrap_or_else(|| {
             // Baseline yoksa fallback — sim her zaman init eder, prod CLI de.
             Money::from_lira(default_raw_price(product)).unwrap_or(Money::ZERO)
         });
+        // Stok-baskısı indirim: Çiftçi'nin bu (city, raw)'da stok'u büyükse
+        // SELL fiyatı agresif düşür — pazar onu emsin. Aksi takdirde prime
+        // şehir over-supply pattern'inde stok kilitlenir.
+        let stock_discount_pct = match qty {
+            0..=499 => 100,         // baz fiyat
+            500..=999 => 80,        // %20 indirim (orta stok)
+            _ => 65,                // %35 indirim (1000+ birim → kriz)
+        };
+        let discounted = Money::from_cents(
+            reference.as_cents().saturating_mul(stock_discount_pct).saturating_div(100),
+        );
+        let unit_price =
+            apply_jitter(discounted, state.current_tick, city, product, OrderSide::Sell);
         if unit_price.as_cents() <= 0 {
             continue;
         }

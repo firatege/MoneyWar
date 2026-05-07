@@ -16,88 +16,84 @@
 //! - `competition -0.1`: rakip baskıda hafif geri çekil
 
 use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, Player, ProductKind,
+    CityId, GameState, Money, OrderSide, Player,
     balance::TRANSACTION_TAX_PCT,
 };
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::apply_jitter;
 
-/// Spread daha düşük ise Spekülatör için arbitraj fırsat yok — pas.
-/// Şehirler arası fiyat farkı `(max - min) / min × 100` >= bu eşik ise emit.
-const SPREAD_OPPORTUNITY_PCT: i64 = 10;
+// SPREAD_OPPORTUNITY_PCT v8.14'te kaldırıldı — Spek artık arbitraj filtresine
+// bağlı değil, lokal market maker. Eski cheapest/richest helpers da silindi.
 
+/// v8.19: Spek **odaklı raw spekülatör** — sadece **prime_raw** bucket'larında
+/// BID + stok varsa ASK. Eski 18-bucket lokal market maker -271K zarar
+/// kasası (Esnafsız ham BUY iştahı düşünce Spek alıp satamadı, depoda 10K+
+/// ham çürüdü; 0 SELL match). Yeni: 3 bucket (her şehrin prime ham'ı)
+/// → cash konsantre, daha rekabetçi BID; ASK aynı bucket'ta SELL pressure
+/// ekler. Mamul tarafı zaten temiz, Spek karışmasın.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
-
-    let opportunity_products: Vec<ProductKind> = ProductKind::ALL
-        .iter()
-        .copied()
-        .filter(|product| has_arbitrage_opportunity(state, *product))
-        .collect();
-    if opportunity_products.is_empty() {
-        return out;
-    }
-
-    // Akıllı market maker: her fırsatlı ürün için **ucuz şehirde BID + pahalı
-    // şehirde ASK** (1 BID + 1 ASK/ürün). Önceki "3 şehirde BID + 3 ASK"
-    // ölü bucket'lara emir basıyordu (Ank-Pamuk gibi specialty olmayan
-    // yerlerde Çiftçi yok → BID boşa düşer). Akıllı strateji likidite verir
-    // sadece arbitraj çiftine.
-    let bid_cash = Money::from_cents(
+    // 3 prime_raw bucket → cash bölünür. Eski 18 → 3, bucket başı 6× cash.
+    let bucket_cash = Money::from_cents(
         player
             .cash
             .as_cents()
-            .saturating_div(opportunity_products.len() as i64)
+            .saturating_div(3)
             .max(0),
     );
 
-    for product in &opportunity_products {
-        let cheap = cheapest_city_for(state, *product);
-        let rich = richest_city_for(state, *product);
-        let (Some((cheap_city, cheap_price)), Some((rich_city, _rich_price))) = (cheap, rich)
-        else {
+    for city in CityId::ALL {
+        // Sadece prime ham — her şehrin uzmanlık ürünü.
+        let Some(&product) = state.city_specialty.get(&city) else {
             continue;
         };
-        if cheap_city == rich_city {
+        if !product.is_raw() {
+            continue;
+        }
+        let Some(reference) = state.reference_price(city, product) else {
+            continue;
+        };
+        if reference.as_cents() <= 0 {
             continue;
         }
 
-        // BID: ucuz şehirde, ucuz fiyatın %95'inde (alt al)
-        let bid_price = scale_pct(cheap_price, 95);
+        // BID — reference × 0.99 + jitter (dar spread, v8.15 mantığı).
+        let bid_base = scale_pct(reference, 99);
+        let bid_price =
+            apply_jitter(bid_base, state.current_tick, city, product, OrderSide::Buy);
         if bid_price.as_cents() > 0 {
-            let qty = affordable_qty(bid_cash, bid_price, 15);
+            let qty = affordable_qty(bucket_cash, bid_price, 25);
             if qty > 0 {
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Buy,
-                    city: cheap_city,
-                    product: *product,
+                    city,
+                    product,
                     quantity: qty,
                     unit_price: bid_price,
                 });
             }
         }
 
-        // ASK: pahalı şehirde, pahalı baseline × 105 (üstte sat). Stok varsa.
-        let stock = player.inventory.get(rich_city, *product);
+        // ASK — stok varsa, reference × 1.01 + jitter. Spek'in birikmiş
+        // stoğunu eritmek için %1 markup yeterli (v8.18'e göre).
+        let stock = player.inventory.get(city, product);
         if stock > 0 {
-            let rich_baseline = state
-                .effective_baseline(rich_city, *product)
-                .unwrap_or_else(|| {
-                    let lira = if product.is_finished() {
-                        moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
-                    } else {
-                        moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
-                    };
-                    Money::from_lira(lira).unwrap_or(Money::ZERO)
-                });
-            let ask_price = scale_pct(rich_baseline, 105);
-            let qty = (stock / 2).max(1).min(15);
+            let ask_base = scale_pct(reference, 101);
+            let ask_price = apply_jitter(
+                ask_base,
+                state.current_tick,
+                city,
+                product,
+                OrderSide::Sell,
+            );
             if ask_price.as_cents() > 0 {
+                let qty = (stock / 2).max(1).min(25);
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Sell,
-                    city: rich_city,
-                    product: *product,
+                    city,
+                    product,
                     quantity: qty,
                     unit_price: ask_price,
                 });
@@ -105,42 +101,6 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
     }
     out
-}
-
-fn cheapest_city_for(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {
-    CityId::ALL
-        .iter()
-        .copied()
-        .filter_map(|city| state.effective_baseline(city, product).map(|p| (city, p)))
-        .min_by_key(|(_, p)| p.as_cents())
-}
-
-fn richest_city_for(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {
-    CityId::ALL
-        .iter()
-        .copied()
-        .filter_map(|city| state.effective_baseline(city, product).map(|p| (city, p)))
-        .max_by_key(|(_, p)| p.as_cents())
-}
-
-/// Bu ürün için şehirler arası max-min fiyat farkı `SPREAD_OPPORTUNITY_PCT`
-/// eşiğini aşıyor mu? Aşıyorsa Spekülatör için arbitraj fırsatı var.
-fn has_arbitrage_opportunity(state: &GameState, product: ProductKind) -> bool {
-    let mut prices: Vec<i64> = Vec::new();
-    for city in CityId::ALL {
-        if let Some(p) = state.effective_baseline(city, product) {
-            prices.push(p.as_cents());
-        }
-    }
-    if prices.len() < 2 {
-        return false;
-    }
-    let min = *prices.iter().min().unwrap_or(&0);
-    let max = *prices.iter().max().unwrap_or(&0);
-    if min <= 0 {
-        return false;
-    }
-    (max - min) * 100 / min >= SPREAD_OPPORTUNITY_PCT
 }
 
 fn scale_pct(price: Money, pct: i64) -> Money {
@@ -165,8 +125,20 @@ mod tests {
     use super::*;
     use moneywar_domain::{NpcKind, PlayerId, ProductKind, Role, RoomConfig, RoomId};
 
-    fn fresh() -> GameState {
-        GameState::new(RoomId::new(1), RoomConfig::hizli())
+    /// Standart specialty atama: Ist=Pamuk, Ank=Bugday, Izm=Zeytin.
+    fn fresh_with_specialty() -> GameState {
+        let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        s.city_specialty.insert(CityId::Istanbul, ProductKind::Pamuk);
+        s.city_specialty.insert(CityId::Ankara, ProductKind::Bugday);
+        s.city_specialty.insert(CityId::Izmir, ProductKind::Zeytin);
+        // baseline her bucket için (reference_price fallback için)
+        for city in CityId::ALL {
+            for product in ProductKind::ALL {
+                s.price_baseline
+                    .insert((city, product), Money::from_lira(10).unwrap());
+            }
+        }
+        s
     }
 
     fn spek(cash: i64) -> Player {
@@ -181,53 +153,43 @@ mod tests {
         .with_kind(NpcKind::Spekulator)
     }
 
-    fn fresh_with_spread(product: ProductKind, prices: [i64; 3]) -> GameState {
-        let mut s = fresh();
-        for (city, lira) in CityId::ALL.iter().zip(prices.iter()) {
-            s.price_baseline
-                .insert((*city, product), Money::from_lira(*lira).unwrap());
-        }
-        s
+    #[test]
+    fn no_specialty_no_emit() {
+        // city_specialty boşsa hiçbir bucket prime değil → Spek pas geçer.
+        let s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        let p = spek(40_000);
+        let cands = enumerate(&s, &p);
+        assert!(cands.is_empty(), "specialty yoksa emit yok");
     }
 
     #[test]
-    fn no_arbitrage_no_emit() {
-        // fresh_state'te price_baseline boş → her şehir aynı default → spread 0
-        // → arbitrage yok → Spekülatör pas geçer.
-        let s = fresh();
-        let p = spek(40_000);
+    fn emits_bid_only_in_prime_raw_buckets() {
+        // 3 prime_raw bucket: Ist/Pamuk, Ank/Bugday, Izm/Zeytin. Diğer 15
+        // bucket pas.
+        let s = fresh_with_specialty();
+        let p = spek(60_000);
         let cands = enumerate(&s, &p);
-        assert!(
-            cands.is_empty(),
-            "spread yoksa Spekülatör emit etmemeli"
-        );
-    }
-
-    #[test]
-    fn arbitrage_opportunity_yields_bid_in_cheap_city() {
-        // Pamuk: İst 4₺, Ank 6₺, Izm 8₺ → spread %100 → fırsat.
-        // Yeni: ucuz şehirde tek BID (Ist), ölü bucket'lara emir basmaz.
-        let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
-        let p = spek(40_000);
-        let cands = enumerate(&s, &p);
-        let bid_cities: Vec<_> = cands
+        let bid_buckets: std::collections::BTreeSet<_> = cands
             .iter()
             .filter_map(|c| match c {
                 ActionCandidate::SubmitOrder {
                     side: OrderSide::Buy,
                     city,
-                    product: ProductKind::Pamuk,
+                    product,
                     ..
-                } => Some(*city),
+                } => Some((*city, *product)),
                 _ => None,
             })
             .collect();
-        assert_eq!(bid_cities, vec![CityId::Istanbul], "BID sadece ucuz şehirde");
+        assert_eq!(bid_buckets.len(), 3, "tam 3 prime_raw BID");
+        assert!(bid_buckets.contains(&(CityId::Istanbul, ProductKind::Pamuk)));
+        assert!(bid_buckets.contains(&(CityId::Ankara, ProductKind::Bugday)));
+        assert!(bid_buckets.contains(&(CityId::Izmir, ProductKind::Zeytin)));
     }
 
     #[test]
     fn no_stock_no_asks() {
-        let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
+        let s = fresh_with_specialty();
         let p = spek(40_000);
         let cands = enumerate(&s, &p);
         let asks = cands
@@ -238,39 +200,56 @@ mod tests {
     }
 
     #[test]
-    fn stock_in_rich_city_yields_ask() {
-        // Pamuk: İst 4₺, Izm 8₺ → en pahalı Izm. Spek stok Izm'de varsa ASK.
-        let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
+    fn stock_in_prime_city_yields_ask() {
+        // Spek Izm'de Zeytin stoklu → Izm prime_raw → ASK emit.
+        let s = fresh_with_specialty();
         let mut p = spek(40_000);
         p.inventory
-            .add(CityId::Izmir, ProductKind::Pamuk, 30)
+            .add(CityId::Izmir, ProductKind::Zeytin, 30)
             .unwrap();
         let cands = enumerate(&s, &p);
-        let ask_cities: Vec<_> = cands
+        let asks: Vec<_> = cands
             .iter()
             .filter_map(|c| match c {
                 ActionCandidate::SubmitOrder {
                     side: OrderSide::Sell,
                     city,
-                    product: ProductKind::Pamuk,
+                    product,
                     ..
-                } => Some(*city),
+                } => Some((*city, *product)),
                 _ => None,
             })
             .collect();
-        assert_eq!(ask_cities, vec![CityId::Izmir], "ASK sadece pahalı şehirde");
+        assert_eq!(asks, vec![(CityId::Izmir, ProductKind::Zeytin)]);
+    }
+
+    #[test]
+    fn stock_in_non_prime_bucket_skipped() {
+        // Spek Izm'de Pamuk stoklu (Izm prime=Zeytin değil Pamuk değil) →
+        // Pamuk prime sadece Istanbul → Izm/Pamuk prime değil → ASK yok.
+        let s = fresh_with_specialty();
+        let mut p = spek(40_000);
+        p.inventory
+            .add(CityId::Izmir, ProductKind::Pamuk, 30)
+            .unwrap();
+        let cands = enumerate(&s, &p);
+        let asks = cands
+            .iter()
+            .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Sell, .. }))
+            .count();
+        assert_eq!(asks, 0, "Izm/Pamuk prime değil, ASK olmamalı");
     }
 
     #[test]
     fn bid_below_ask() {
-        // BID ucuz şehirde (Ist 4×0.95), ASK pahalı şehirde (Izm 8×1.05).
-        let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
+        let s = fresh_with_specialty();
         let mut p = spek(40_000);
-        p.inventory.add(CityId::Izmir, ProductKind::Pamuk, 10).unwrap();
+        p.inventory.add(CityId::Istanbul, ProductKind::Pamuk, 20).unwrap();
         let cands = enumerate(&s, &p);
         let bid = cands.iter().find_map(|c| match c {
             ActionCandidate::SubmitOrder {
                 side: OrderSide::Buy,
+                city: CityId::Istanbul,
                 product: ProductKind::Pamuk,
                 unit_price,
                 ..
@@ -280,6 +259,7 @@ mod tests {
         let ask = cands.iter().find_map(|c| match c {
             ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,
+                city: CityId::Istanbul,
                 product: ProductKind::Pamuk,
                 unit_price,
                 ..
@@ -290,17 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn small_spread_below_threshold_no_emit() {
-        // %5 spread < SPREAD_OPPORTUNITY_PCT eşiği → fırsat yok
-        let s = fresh_with_spread(ProductKind::Pamuk, [10, 10, 10]);
-        let p = spek(40_000);
-        let cands = enumerate(&s, &p);
-        assert!(cands.is_empty());
-    }
-
-    #[test]
     fn deterministic_no_rng() {
-        let s = fresh_with_spread(ProductKind::Pamuk, [4, 6, 8]);
+        let s = fresh_with_specialty();
         let p = spek(40_000);
         let a = enumerate(&s, &p);
         let b = enumerate(&s, &p);

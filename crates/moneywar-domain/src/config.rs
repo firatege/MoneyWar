@@ -42,17 +42,21 @@ impl std::fmt::Display for Preset {
     }
 }
 
-/// NPC kompozisyonu — kaç Sanayici + Tüccar + Alıcı + Esnaf + Spekülatör
-/// spawn edilsin.
+/// NPC kompozisyonu — kaç Sanayici + Tüccar + Alıcı + Esnaf + Spekülatör +
+/// Çiftçi + Banka spawn edilsin.
 ///
 /// - **Sanayici**: fabrika kurar, ham → finished üretir
 /// - **Tüccar**: arbitraj (al-sat şehirler arası)
 /// - **Alıcı**: saf alıcı — sadece buy emri (`AliciNpc` davranışı)
-/// - **Esnaf**: saf satıcı — sadece sell emri (`EsnafNpc` davranışı),
-///   dükkanda duran, devasa stok, arz tarafı dengeliyor
+/// - **Esnaf**: toptancı (eski adı), aracı katman — Çiftçi'den ham al,
+///   Sanayici/Alıcı'ya sat
 /// - **Spekülatör**: her tick aynı (city, product) için hem bid hem ask
 ///   emir verir. Market making — spread daraltır, "mallar bekliyor" sorununu
 ///   doğrudan çözer.
+/// - **Çiftçi**: hammadde üreticisi (v4). Periyodik mahsul + SELL only —
+///   Sanayici fabrikalarının ham kaynağı. Bu olmadan Pamuk/Buğday/Zeytin
+///   pazarları sezon ortasında ölür.
+/// - **Banka**: likidite (v4). Komut emit etmez; loan akışı engine'de.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NpcComposition {
@@ -62,21 +66,39 @@ pub struct NpcComposition {
     pub esnaf: u8,
     #[serde(default)]
     pub spekulator: u8,
+    /// v4 hammadde üreticisi. Eski configlerde yok → field-level default ile
+    /// `default_const().ciftci`'ye düşer (yoksa pazar sezon ortasında ölür).
+    #[serde(default = "default_ciftci")]
+    pub ciftci: u8,
+    /// v4 likidite sağlayıcı. Eski configlerde yok → field-level default.
+    #[serde(default = "default_banka")]
+    pub banka: u8,
+}
+
+const fn default_ciftci() -> u8 {
+    NpcComposition::default_const().ciftci
+}
+const fn default_banka() -> u8 {
+    NpcComposition::default_const().banka
 }
 
 impl NpcComposition {
-    /// Default: 2 Sanayici, 2 Tüccar, 3 Alıcı, 3 Esnaf, 2 Spekülatör = 12 NPC.
-    /// Eski 2 Esnaf yetmiyordu (sezon-içi arz çöküşü). 3 Esnaf, büyütülmüş
-    /// başlangıç stoğu ve `BumperHarvest` dinamik refresh ile sezon boyu
-    /// pazar likit kalır.
+    /// Default: 5 Sanayici, 4 Tüccar, 8 Alıcı, 0 Esnaf, 3 Spekülatör,
+    /// 6 Çiftçi (2/ham), 3 Banka = 29 NPC. v8.19: Esnaf emekli edildi —
+    /// matematik paradoksu (60K cash ama 429K BUY accept; engine
+    /// `settle_segment` buyer_ok bypass'ı), tedarik zinciri Çiftçi (ham) →
+    /// Sanayici (mamul) → Alıcı (tüketim) zaten net. Esnaf middleman
+    /// katmanı oyun mantığı katmıyordu, sadece para sızıntısı + gürültü.
     #[must_use]
     pub const fn default_const() -> Self {
         Self {
-            sanayici: 2,
-            tuccar: 2,
-            alici: 3,
-            esnaf: 3,
-            spekulator: 2,
+            sanayici: 5,
+            tuccar: 4,
+            alici: 8,
+            esnaf: 0,
+            spekulator: 3,
+            ciftci: 6,
+            banka: 3,
         }
     }
 
@@ -87,6 +109,8 @@ impl NpcComposition {
             .saturating_add(self.alici)
             .saturating_add(self.esnaf)
             .saturating_add(self.spekulator)
+            .saturating_add(self.ciftci)
+            .saturating_add(self.banka)
     }
 }
 
@@ -206,7 +230,7 @@ impl RoomConfig {
     /// İnsan oyuncu üst sınırı (v1 ölçeği).
     pub const MAX_HUMAN_PLAYERS: u8 = 5;
     /// NPC üst sınırı (piyasa likiditesi için makul).
-    pub const MAX_NPC: u8 = 20;
+    pub const MAX_NPC: u8 = 40;
 
     /// Hızlı preset — 2-3 arkadaş 1.5 saatte sezon oynar.
     #[must_use]
@@ -403,7 +427,7 @@ mod tests {
 
     #[test]
     fn custom_rejects_excessive_npcs() {
-        let err = RoomConfig::custom(60, 100, 21, 5).expect_err("too many npc");
+        let err = RoomConfig::custom(60, 100, 41, 5).expect_err("too many npc");
         assert!(matches!(err, DomainError::Validation(_)));
     }
 
@@ -470,19 +494,24 @@ mod tests {
             alici: 4,
             esnaf: 2,
             spekulator: 1,
+            ciftci: 1,
+            banka: 1,
         };
-        assert_eq!(c.total(), 11);
+        assert_eq!(c.total(), 13);
     }
 
     #[test]
-    fn npc_composition_default_is_2_2_3_3_2() {
+    fn npc_composition_default_is_sim_aligned_29_npc() {
+        // v8.19: Esnaf emekli (esnaf=0). Toplam 35 → 29.
         let c = NpcComposition::default_const();
-        assert_eq!(c.sanayici, 2);
-        assert_eq!(c.tuccar, 2);
-        assert_eq!(c.alici, 3);
-        assert_eq!(c.esnaf, 3);
-        assert_eq!(c.spekulator, 2);
-        assert_eq!(c.total(), 12);
+        assert_eq!(c.sanayici, 5);
+        assert_eq!(c.tuccar, 4);
+        assert_eq!(c.alici, 8);
+        assert_eq!(c.esnaf, 0);
+        assert_eq!(c.spekulator, 3);
+        assert_eq!(c.ciftci, 6);
+        assert_eq!(c.banka, 3);
+        assert_eq!(c.total(), 29);
     }
 
     #[test]
@@ -492,12 +521,15 @@ mod tests {
             max_order_ttl: 10,
             cancel_penalty_pct: 2,
             relist_cooldown_ticks: 2,
+            // Toplam 41 > MAX_NPC=40 → reject.
             npcs: NpcComposition {
                 sanayici: 10,
                 tuccar: 10,
                 alici: 10,
                 esnaf: 5,
-                spekulator: 5,
+                spekulator: 6,
+                ciftci: 0,
+                banka: 0,
             },
         };
         assert!(b.validate().is_err());

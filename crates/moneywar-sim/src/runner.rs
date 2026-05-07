@@ -5,8 +5,8 @@
 //! insan tarafı senaryo scripti ile.
 
 use moneywar_domain::{
-    CityId, Command, DemandLevel, GameState, Money, NewsTier, Personality, Player, PlayerId,
-    ProductKind, Role, RoomConfig, RoomId, Tick,
+    CityId, Command, DemandLevel, GameState, Money, NewsTier, NpcComposition, Personality, Player,
+    PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{TickReport, advance_tick, rng_for};
 use moneywar_npc::{Difficulty, decide_all_npcs};
@@ -68,41 +68,13 @@ pub struct SimRunner {
     pub include_npcs: NpcComposition,
 }
 
-/// NPC kompozisyonu — v4 tek-görev tasarımı: 24 NPC.
-#[derive(Debug, Clone, Copy)]
-pub struct NpcComposition {
-    pub tuccar: u8,
-    pub sanayici: u8,
-    pub esnaf: u8, // = Toptancı (revize)
-    pub spekulator: u8,
-    pub alici: u8,
-    pub ciftci: u8, // yeni v4 (3 ürün × 1 = 3 Çiftçi)
-    pub banka: u8,  // yeni v4 (3 şehir × 1 = 3 Banka)
-}
-
-impl Default for NpcComposition {
-    fn default() -> Self {
-        // v6 ölçek + ham arz boost: 4T/5S/4Top/6Ç/8A/3Sp/3B = 33 NPC.
-        // Çiftçi 4→6: ham arzı +%50 (15 fabrika talebini doyurmak için).
-        // Tüccar mamul BUY (314 emit) Sanayici SELL (205 emit) arz/talep
-        // dengesizliği match verimini %4.6'da tutuyordu — kök neden ham yetersizliği.
-        Self {
-            tuccar: 4,
-            sanayici: 5,
-            esnaf: 6,
-            spekulator: 3,
-            alici: 8,
-            ciftci: 6,
-            banka: 3,
-        }
-    }
-}
-
 const HUMAN_ID: PlayerId = PlayerId::new(1);
 
 impl SimRunner {
     #[must_use]
     pub fn new(seed: u64, scenario: &'static Scenario) -> Self {
+        // NpcComposition::default() artık sim ile aynı (4T/5S/6E/3Sp/8A/6Ç/3B
+        // = 35 NPC). TUI default_const da bunu kullanır → tek kompozisyon kaynağı.
         Self {
             seed,
             ticks: 90,
@@ -358,6 +330,24 @@ fn build_state(runner: &SimRunner) -> GameState {
         }
     }
 
+    // city_specialty/secondary/demand profili — CLI ile aynı 3-tier rotasyon.
+    // v8.19: Spek prime_raw kontrolü için zorunlu; eskiden boş kalırdı, sim'de
+    // Spek hiç emit etmiyordu.
+    {
+        use rand::Rng;
+        let mut raws = ProductKind::RAW_MATERIALS;
+        for i in (1..raws.len()).rev() {
+            let j = rng.random_range(0..=i);
+            raws.swap(i, j);
+        }
+        let prime_per_city: [(CityId, ProductKind); 3] = [
+            (CityId::Istanbul, raws[0]),
+            (CityId::Ankara, raws[1]),
+            (CityId::Izmir, raws[2]),
+        ];
+        s.seed_city_profiles(prime_per_city);
+    }
+
     // İnsan oyuncu
     let mut human = Player::new(
         HUMAN_ID,
@@ -421,24 +411,7 @@ fn build_state(runner: &SimRunner) -> GameState {
         next_id += 1;
     }
 
-    // NPC-Esnaf (Toptancı) — Tuning v6: boş raf, sezon başı Çiftçi'den ham
-    // almaya başlasın. 50K/5K başlangıç stoğu fuzzy `stock` signal'i hep
-    // "yuksek" yapıp BUY skorunu baskılıyordu.
-    for _ in 0..runner.include_npcs.esnaf {
-        let npc = Player::new(
-            PlayerId::new(next_id),
-            format!("Esnaf-{next_id}"),
-            Role::Tuccar,
-            Money::from_lira(10_000).unwrap(),
-            true,
-        )
-        .unwrap()
-        .with_kind(moneywar_domain::NpcKind::Esnaf);
-        s.news_subscriptions
-            .insert(PlayerId::new(next_id), NewsTier::Free);
-        s.players.insert(npc.id, npc);
-        next_id += 1;
-    }
+    // v8.19: Esnaf emekli edildi — bkz. domain config `default_const`.
 
     // NPC-Spekulator — 8K başlangıç stoğu hep "stock yuksek" yapıp SELL spam'ı
     // tetikliyordu (BUY:SELL = 1:3 asimetrisi). 2K'ya indirildi: piyasaya

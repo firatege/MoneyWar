@@ -155,14 +155,19 @@ const fn tuccar_default() -> Weights {
 }
 
 /// Esnaf default ağırlıkları — toptancı, ham mal aracısı.
-/// - `cash +0.5`: cash varsa al (BUY ana sürücü)
-/// - `arbitrage +0.3`: şehirler arası fark fırsat
+/// v8.18: BUY/SELL dengesi için cash 0.5→0.2, stock 0.6→1.0. Esnaf 5014 BUY
+/// vs 63 SELL emir basıyordu (-394K zarar). Cash düşer → BUY iştahı azalır;
+/// stock yüksek → stoklu bucket'larda SELL skoru BUY skorundan üstün.
+/// - `cash +0.2`: cash varsa hafif al (eski 0.5)
+/// - `stock +1.0`: stok varsa SAT (eski 0.6) — Esnaf'ın ana sürücüsü
+/// - `arbitrage +0.3`: şehirler arası fark
 /// - `urgency +0.2`: sezon basıncı
 /// - `competition -0.2`: rakip baskı
 /// - `local_raw_advantage +0.2`: uzmanlık şehir önceliği
 const fn esnaf_default() -> Weights {
     Weights {
-        cash: 0.5,
+        cash: 0.2,
+        stock: 1.0,
         arbitrage: 0.3,
         urgency: 0.2,
         local_raw_advantage: 0.2,

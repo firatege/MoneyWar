@@ -23,6 +23,7 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::apply_jitter;
 
 /// Yeni fabrika kurma eşiği — Sanayici en az bu kadar fab istemeli.
 const TARGET_FACTORIES: usize = 3;
@@ -64,11 +65,13 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let bucket_cash = Money::from_cents((player.cash.as_cents() / 6).max(0));
         for city in CityId::ALL {
             let product = city.cheap_raw();
-            let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+            let reference = state.reference_price(city, product).unwrap_or_else(|| {
                 Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
                     .unwrap_or(Money::ZERO)
             });
-            let unit_price = scale_pct(baseline, 95);
+            let base_price = scale_pct(reference, 95);
+            let unit_price =
+                apply_jitter(base_price, state.current_tick, city, product, OrderSide::Buy);
             if unit_price.as_cents() <= 0 {
                 continue;
             }
@@ -92,11 +95,18 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let bucket_cash = Money::from_cents(player.cash.as_cents() / 2 / bucket_count);
         for city in CityId::ALL {
             for &product in &needed_raws {
-                let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
+                let reference = state.reference_price(city, product).unwrap_or_else(|| {
                     Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
                         .unwrap_or(Money::ZERO)
                 });
-                let unit_price = scale_pct(baseline, 95);
+                let base_price = scale_pct(reference, 95);
+                let unit_price = apply_jitter(
+                    base_price,
+                    state.current_tick,
+                    city,
+                    product,
+                    OrderSide::Buy,
+                );
                 if unit_price.as_cents() <= 0 {
                     continue;
                 }
@@ -122,13 +132,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).max(1).min(50);
-        let baseline = state
-            .effective_baseline(city, product)
+        let reference = state
+            .reference_price(city, product)
             .unwrap_or_else(|| {
                 Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                     .unwrap_or(Money::ZERO)
             });
-        let unit_price = scale_pct(baseline, 95);
+        let base_price = scale_pct(reference, 95);
+        let unit_price =
+            apply_jitter(base_price, state.current_tick, city, product, OrderSide::Sell);
         if unit_price.as_cents() <= 0 {
             continue;
         }
@@ -174,7 +186,12 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
         .map(|f| (f.city, f.product))
         .collect();
 
-    // Boş aday listesi
+    // Boş aday listesi. v8.6'da denenen "demand-bucket'a fab kurma" filtresi
+    // (B1) talep tarafını da boğuyordu — fab yasaklanan şehirde mamul SELL
+    // emri olmuyor → o (city, mamul) bucket'ta 1500+ BUY 0 SELL ölü pazar.
+    // v8.7: filtre kaldırıldı. Çiftçi demand qty/8 üretir → fab kısmi ham
+    // bulur (~%27 zaman üretim). Geri kalan FactoryIdle, ama mamul SELL
+    // emirleri çıkar → mamul bucket aktif kalır.
     let candidates: Vec<(CityId, ProductKind)> = CityId::ALL
         .iter()
         .flat_map(|c| ProductKind::FINISHED_GOODS.iter().map(move |p| (*c, *p)))
@@ -221,11 +238,11 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
         .into_iter()
         .max_by_key(|(city, product)| {
             let mamul_cents = state
-                .effective_baseline(*city, *product)
+                .reference_price(*city, *product)
                 .map_or(0, |m| m.as_cents());
             let raw_cents = product
                 .raw_input()
-                .and_then(|raw| state.effective_baseline(*city, raw))
+                .and_then(|raw| state.reference_price(*city, raw))
                 .map_or(0, |m| m.as_cents());
             let margin = (mamul_cents - raw_cents).max(0);
 

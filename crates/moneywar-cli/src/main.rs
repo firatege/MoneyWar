@@ -202,22 +202,8 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         Mode::Startup => match code {
             // Yalnız `q` kapatır — Esc yanlışlıkla çıkış yapmasın.
             KeyCode::Char('q') => return Ok(true),
-            KeyCode::Char('1') => {
-                app.selected_role = Role::Sanayici;
-                app.start_game(Role::Sanayici);
-            }
-            KeyCode::Char('2') => {
-                app.selected_role = Role::Tuccar;
-                app.start_game(Role::Tuccar);
-            }
-            // Tab → seçili rolü değiştir (önizleme); Enter → mevcut seçimle başlat.
-            KeyCode::Tab => {
-                app.selected_role = match app.selected_role {
-                    Role::Sanayici => Role::Tuccar,
-                    Role::Tuccar => Role::Sanayici,
-                };
-            }
-            KeyCode::Enter => app.start_game(app.selected_role),
+            // Tüccar şimdilik kapalı — Enter ile sadece Sanayici başlatılır.
+            KeyCode::Enter => app.start_game(Role::Sanayici),
             KeyCode::Char('p') => {
                 app.selected_preset = app.selected_preset.next();
             }
@@ -753,6 +739,7 @@ struct App {
     /// ile aynı değer; App burda startup ekranı için tutuyor.
     balance: GameBalance,
     /// TOML dosyası başarıyla yüklendi mi (UI göstergesi için).
+    #[allow(dead_code)]
     balance_loaded: bool,
     /// Tick başında hesaplanmış leaderboard. Render hot-path'i bunu okur,
     /// her render'da yeniden hesaplamaz. Auto-sim 300ms'de render'da
@@ -764,8 +751,9 @@ struct App {
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
     player_name_input: String,
-    /// Startup'ta Tab ile değiştirilebilen seçili rol. Enter ile başlatma için.
-    /// `1`/`2` direkt seçim akışı korunur — bu sadece alternatif.
+    /// Startup'ta seçili rol. Şimdilik Sanayici-only — Tüccar geliştirme
+    /// aşamasında. Field korunuyor (Tüccar açıldığında geri etkin olur).
+    #[allow(dead_code)]
     selected_role: Role,
     /// NPC söylenti akışı — son CHATTER_WINDOW satır. Engine'e dokunmaz, UI-only.
     chatter_log: VecDeque<ChatterEntry>,
@@ -842,6 +830,39 @@ fn random_room_id() -> RoomId {
     RoomId::new(if nanos == 0 { 1 } else { nanos })
 }
 
+/// Tick sonrası şehir bazlı stok + son fiyat snapshot'u. "Hangi şehirde
+/// satış az / hiç yok" sorusunu çözmek için: bid/ask zaten `MarketCleared`
+/// event'inde var, ama oyuncuların fiziksel envanteri yoktu — bu satırlar
+/// onu kapatır. (city, product) başına: tüm oyuncuların toplam stoğu +
+/// `price_history`'deki son takas fiyatı (yoksa "-"). 3 şehir = 3 satır/tick.
+fn write_city_snapshot(f: &mut BufWriter<std::fs::File>, state: &GameState) {
+    let tick = state.current_tick.value();
+    for city in CityId::ALL {
+        let mut inv: [u64; 6] = [0; 6];
+        for player in state.players.values() {
+            for (i, product) in ProductKind::ALL.iter().enumerate() {
+                inv[i] = inv[i].saturating_add(u64::from(player.inventory.get(city, *product)));
+            }
+        }
+        let last: [String; 6] = std::array::from_fn(|i| {
+            state
+                .price_history
+                .get(&(city, ProductKind::ALL[i]))
+                .and_then(|h| h.last().map(|(_, p)| format!("{p:?}")))
+                .unwrap_or_else(|| "-".into())
+        });
+        let actor = format!("<snap-{city}>");
+        let _ = writeln!(
+            f,
+            "t{:>3}  {:<22}  inv Pamuk={} Bugday={} Zeytin={} Kumas={} Un={} Zeytinyagi={} | last Pamuk={} Bugday={} Zeytin={} Kumas={} Un={} Zeytinyagi={}",
+            tick,
+            actor,
+            inv[0], inv[1], inv[2], inv[3], inv[4], inv[5],
+            last[0], last[1], last[2], last[3], last[4], last[5],
+        );
+    }
+}
+
 /// `./debug/moneywar-{epoch}.log` dosyası açar. Klasör yoksa oluşturur.
 /// Başarısız olursa sessiz — debug opsiyoneldir, oyunu kırmasın.
 fn open_debug_file(balance: GameBalance) -> Option<BufWriter<std::fs::File>> {
@@ -863,13 +884,21 @@ fn open_debug_file(balance: GameBalance) -> Option<BufWriter<std::fs::File>> {
     );
     let _ = writeln!(
         w,
-        "# npcs: sanayici={} tuccar={} alici={} (total={})",
+        "# npcs: sanayici={} tuccar={} alici={} esnaf={} spekulator={} ciftci={} banka={} (total={})",
         balance.npcs.sanayici,
         balance.npcs.tuccar,
         balance.npcs.alici,
+        balance.npcs.esnaf,
+        balance.npcs.spekulator,
+        balance.npcs.ciftci,
+        balance.npcs.banka,
         balance.npcs.total()
     );
     let _ = writeln!(w, "# format: t{{tick}}  {{actor:<20}}  {{event:?}}");
+    let _ = writeln!(
+        w,
+        "# snapshot: tick sonunda her şehir için bir satır — `<snap-{{city}}>` actor, body=stok+son fiyat (Money cents)"
+    );
     let _ = writeln!(w, "# ---");
     let _ = w.flush();
     Some(w)
@@ -1338,6 +1367,9 @@ impl App {
                     entry.event
                 );
             }
+            // Tick'in event'leri yazıldıktan sonra şehir bazlı stok + son
+            // fiyat dump'ı — "neden bu şehirde satış yok" analizi için.
+            write_city_snapshot(f, &self.state);
             let _ = f.flush();
         }
     }
@@ -1460,19 +1492,24 @@ fn seed_world(
     // Aynı room_id → aynı dünya (reproducibility için debug log'da tutulur).
     let mut rng = ChaCha8Rng::seed_from_u64(room_id.value());
 
-    // ŞEHİR UZMANLAŞMASI — her oyun farklı.
-    // 3 ham maddeyi 3 şehre rastgele dağıt (Fisher-Yates shuffle).
-    // Bu sezon İstanbul Buğday üretebilir, sonraki oyunda Zeytin → "ezbere
-    // strateji" sorunu çözülür, oyuncu her sezon haritayı keşfeder.
+    // ŞEHİR PROFİLİ — her oyun farklı, 3-katmanlı:
+    //   prime    : bol üretim (Çiftçi specialty)
+    //   secondary: az üretim (~%25 prime)
+    //   demand   : üretim yok, BUY ağırlıklı → ithalat noktası
+    // 3 ham × 3 slot × 3 şehir = 9 bucket'ın 9'u da ekonomik anlamlı.
+    // Caller sadece prime'ı shuffle eder; secondary/demand rotation ile türer.
     {
         let mut raws = ProductKind::RAW_MATERIALS;
         for i in (1..raws.len()).rev() {
             let j = rng.random_range(0..=i);
             raws.swap(i, j);
         }
-        for (city, raw) in CityId::ALL.iter().zip(raws.iter()) {
-            s.city_specialty.insert(*city, *raw);
-        }
+        let prime_per_city: [(CityId, ProductKind); 3] = [
+            (CityId::Istanbul, raws[0]),
+            (CityId::Ankara, raws[1]),
+            (CityId::Izmir, raws[2]),
+        ];
+        s.seed_city_profiles(prime_per_city);
     }
 
     // İsim çakışmasını önlemek için kullanılan isimleri takip et.
@@ -1527,6 +1564,20 @@ fn seed_world(
     }
     s.players.insert(human.id, human);
 
+    // World player (PlayerId 0) — engine-driven baseline mamul üretici.
+    // Her tick'te tick_world_factories() çağrılır → 9 (city, mamul) bucket'a
+    // küçük arz garanti (15 birim/2 tick). Sanayici NPC fab dağılımı yetersiz
+    // kalsa bile mamul tarafı ölü pazar oluşmaz. UI'da görünmez (filtrelenir).
+    let world = Player::new(
+        PlayerId::new(moneywar_domain::balance::WORLD_PLAYER_ID_VALUE),
+        "Dünya Üretim",
+        Role::Tuccar,
+        Money::from_lira(0).unwrap(),
+        true,
+    )
+    .unwrap();
+    s.players.insert(world.id, world);
+
     // NPC ID ofseti: 100, 101, 102, ... Her tip için ardışık.
     let mut next_id: u64 = 100;
 
@@ -1547,7 +1598,7 @@ fn seed_world(
         .with_kind(NpcKind::Tuccar)
         .with_personality(personality);
         // v3: hammadde açığını kapatmak için Tüccar başlangıç stoğu 5k → 8k.
-        distribute_inventory(&mut npc, &mut rng, 8_000);
+        distribute_inventory(&mut npc, &mut rng, &s, 8_000);
         let npc_id = npc.id;
         s.players.insert(npc_id, npc);
         if matches!(personality, Personality::EventTrader) {
@@ -1559,6 +1610,8 @@ fn seed_world(
     // NPC-Sanayici(ler) — fabrika kurar, ham → bitmiş üretir.
     // Başlangıç stoğu: 1 şehirde karışık ham + hafif finished. Böylece
     // t1'de fabrika kurdugunda raw stoğu var, hemen üretime başlayabilir.
+    // Cash 50K (sim ile hizalı): kuruluş 0+8K+15K=23K + ham alma + maintenance
+    // için ~27K rezerv. Eski 30K bankruptcy_risk fuzzy "yuksek" tetikliyordu.
     for _ in 0..composition.sanayici {
         let name = pick_npc_name(&mut rng, NpcKind::Sanayici, &mut used_names);
         let personality = Personality::ALL[rng.random_range(0..Personality::ALL.len())];
@@ -1566,7 +1619,7 @@ fn seed_world(
             PlayerId::new(next_id),
             name,
             Role::Sanayici,
-            Money::from_lira(30_000).unwrap(),
+            Money::from_lira(50_000).unwrap(),
             true,
         )
         .unwrap()
@@ -1615,28 +1668,15 @@ fn seed_world(
         next_id += 1;
     }
 
-    // NPC-Esnaf(lar) — saf satıcı (dükkan). Devasa stok (~5000 birim
-    // dengeli dağıtım), Hasat fazında daha aktif. Eski 3000 sezon ortası
-    // tükeniyordu, 5000 ile sezon boyu rezerv yeterli.
-    for _ in 0..composition.esnaf {
-        let name = pick_npc_name(&mut rng, NpcKind::Esnaf, &mut used_names);
-        let mut npc = Player::new(
-            PlayerId::new(next_id),
-            name,
-            Role::Tuccar,
-            Money::from_lira(10_000).unwrap(),
-            true,
-        )
-        .unwrap()
-        .with_kind(NpcKind::Esnaf);
-        distribute_inventory(&mut npc, &mut rng, 50_000);
-        s.players.insert(npc.id, npc);
-        next_id += 1;
-    }
+    // v8.19: Esnaf emekli edildi — config'de esnaf=0, tedarik zinciri
+    // Çiftçi → Sanayici → Alıcı zaten net. Eski matematik paradoksu (60K
+    // cash ama 429K BUY accept) için bkz. `config.rs::default_const`.
 
     // NPC-Spekülatör(ler) — market maker. Hem alış hem satış emri verir,
-    // spread'i daraltır → mallar bekleyici kalmasın diye. Orta sermaye +
-    // dengeli başlangıç stoğu (~8000 birim weighted) — iki yöne de likidite.
+    // spread'i daraltır → mallar bekleyici kalmasın diye. Sim ile hizalı:
+    // 2K stok (eski 8K hep "stock yuksek" yapıp SELL spam'ı tetikliyordu,
+    // BUY:SELL = 1:3 asimetrisi). 2K ile market maker kâr ettikçe BUY-SELL
+    // dengeli kalır.
     for _ in 0..composition.spekulator {
         let name = pick_npc_name(&mut rng, NpcKind::Spekulator, &mut used_names);
         let mut npc = Player::new(
@@ -1648,7 +1688,44 @@ fn seed_world(
         )
         .unwrap()
         .with_kind(NpcKind::Spekulator);
-        distribute_inventory(&mut npc, &mut rng, 8_000);
+        distribute_inventory(&mut npc, &mut rng, &s, 2_000);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
+
+    // NPC-Çiftçi (v4) — hammadde üreticisi. Periyodik mahsul + SELL only.
+    // Bu olmadan Sanayici fabrikalar ham bulamaz, sezon ortasında Pamuk/
+    // Buğday/Zeytin pazarları ölür (TUI'de eski default'ta yoktu, sezon
+    // boyunca FactoryIdle 496/0 üretim — sim ile büyük kompozisyon farkı).
+    for _ in 0..composition.ciftci {
+        let name = pick_npc_name(&mut rng, NpcKind::Ciftci, &mut used_names);
+        let npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Tuccar,
+            Money::from_lira(8_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Ciftci);
+        s.news_subscriptions.insert(npc.id, NewsTier::Free);
+        s.players.insert(npc.id, npc);
+        next_id += 1;
+    }
+
+    // NPC-Banka (v4) — likidite. Komut emit etmez; loan akışı engine'de.
+    for _ in 0..composition.banka {
+        let name = pick_npc_name(&mut rng, NpcKind::Banka, &mut used_names);
+        let npc = Player::new(
+            PlayerId::new(next_id),
+            name,
+            Role::Tuccar,
+            Money::from_lira(200_000).unwrap(),
+            true,
+        )
+        .unwrap()
+        .with_kind(NpcKind::Banka);
+        s.news_subscriptions.insert(npc.id, NewsTier::Free);
         s.players.insert(npc.id, npc);
         next_id += 1;
     }
@@ -1657,18 +1734,49 @@ fn seed_world(
 }
 
 /// Bir NPC'ye `total_budget` kadar birim stoğu, (şehir × ürün) bucket'larına
-/// weighted random olarak dağıtır. Her bucket için 0-10 arası ağırlık çekilir,
-/// ağırlıklar toplamına göre orantılı miktar verilir. Determinism: caller
-/// aynı RNG state'ini geçerse aynı sonuç.
-fn distribute_inventory(player: &mut Player, rng: &mut ChaCha8Rng, total_budget: u32) {
+/// weighted random olarak dağıtır. Determinism: caller aynı RNG state'ini
+/// geçerse aynı sonuç.
+///
+/// **Profile çarpanı (state.city_specialty/secondary/demand populated ise):**
+/// Oran 4:2:2 (prime:secondary:demand) — v8.4 ölçümü gösterdi 8:2:1 demand
+/// çarpanı (1) demand-bucket'ı pratik olarak kuruluyor (3 ölü pazar/oyun)
+/// → match verim sim'in %9.5'inden TUI'de %3.1'e düşüyor. v8.5: demand 1→2
+/// (secondary ile aynı), prime 8→4 (gradient yumuşar). Prime hâlâ 2× üstün.
+/// - prime ham (ihracat)         → ağırlık ×4
+/// - secondary ham               → ağırlık ×2
+/// - demand ham (ithalat sinyali) → ağırlık ×2 (eski 1, kuru raf önlendi)
+/// - finished goods              → ağırlık ×2 (uniform, profil dışı)
+///
+/// Profile haritası boş ise eski uniform davranışa düşer (geriye uyumlu).
+fn distribute_inventory(
+    player: &mut Player,
+    rng: &mut ChaCha8Rng,
+    state: &GameState,
+    total_budget: u32,
+) {
     let buckets: Vec<(CityId, ProductKind)> = CityId::ALL
         .iter()
         .flat_map(|c| ProductKind::ALL.iter().map(move |p| (*c, *p)))
         .collect();
 
-    // Her bucket için 0-10 arası ağırlık. Bazı bucket'lar ağırlıklı (specialist).
-    let weights: Vec<u32> = (0..buckets.len())
-        .map(|_| rng.random_range(0u32..=10))
+    let weights: Vec<u32> = buckets
+        .iter()
+        .map(|(city, product)| {
+            let base = rng.random_range(0u32..=10);
+            if !product.is_raw() {
+                return base * 2; // Bitmiş ürün — uniform (profil dışı).
+            }
+            let mult = if state.city_specialty.get(city) == Some(product) {
+                4 // prime: bol başlangıç stoğu (v8.5 8→4)
+            } else if state.city_secondary.get(city) == Some(product) {
+                2 // secondary: orta
+            } else if state.city_demand.get(city) == Some(product) {
+                2 // demand: orta (v8.5 1→2, kuru raf önlendi)
+            } else {
+                2 // profile populate edilmemiş → eski uniform
+            };
+            base * mult
+        })
         .collect();
     let total_weight: u32 = weights.iter().sum();
     if total_weight == 0 {
@@ -2379,11 +2487,11 @@ fn render_mp_disconnected(f: &mut ratatui::Frame<'_>, area: Rect, reason: &str) 
 }
 
 fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let popup = centered_rect(80, 90, area);
+    let popup = centered_rect(70, 70, area);
 
     let title_block = Block::default()
         .borders(Borders::ALL)
-        .title(" 💰  MoneyWar  —  Yeni Sezon  💰 ")
+        .title(" 💰  MoneyWar  ")
         .border_style(
             Style::default()
                 .fg(Color::Yellow)
@@ -2392,128 +2500,68 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let inner = title_block.inner(popup);
     f.render_widget(title_block, popup);
 
+    let diff_color = match app.difficulty {
+        Difficulty::Easy => Color::Green,
+        Difficulty::Hard => Color::Red,
+        // Medium ve Synthetic TUI'de gösterilmez ama enum'da var (sim için).
+        _ => Color::Yellow,
+    };
+
     let lines = vec![
-        Line::from(Span::styled(
-            "  ╔══════════════════════════════════════════════════════════╗",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(Span::styled(
-            "  ║  tick-tabanlı ekonomi simülasyonu  —  2-5 oyuncu ölçeği  ║",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(Span::styled(
-            "  ╚══════════════════════════════════════════════════════════╝",
-            Style::default().fg(Color::Yellow),
-        )),
         Line::from(""),
         Line::from(Span::styled(
-            "  Rolünü seç:",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            "  Tick-tabanlı ekonomi simülasyonu",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
         )),
         Line::from(""),
+        // Rol — şimdilik sadece Sanayici (Tüccar geliştirme aşamasında)
         Line::from(vec![
-            Span::raw("  "),
+            Span::styled("  Rol: ", Style::default().fg(Color::White)),
             Span::styled(
-                "🏭  1) Sanayici",
+                "🏭 Sanayici",
                 Style::default()
                     .fg(Color::Rgb(210, 140, 80))
                     .add_modifier(Modifier::BOLD),
             ),
-        ]),
-        Line::from("      • Fabrika kurar — ham maddeyi bitmiş ürüne çevirir (tekel)"),
-        Line::from("      • Başlangıç: 50.000₺ + İstanbul'da 100 pamuk"),
-        Line::from("      • Kervan kapasite: 20 (küçük, yakın mesafe)"),
-        Line::from("      • Oynayış: pasif gelir, üretim + yavaş büyüme"),
-        Line::from(""),
-        Line::from(vec![
-            Span::raw("  "),
             Span::styled(
-                "🚚  2) Tüccar",
+                "  (Tüccar yakında)",
                 Style::default()
-                    .fg(Color::Rgb(120, 180, 240))
-                    .add_modifier(Modifier::BOLD),
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
             ),
         ]),
-        Line::from("      • Arbitraj — ucuz şehirden al, pahalı şehirde sat"),
-        Line::from("      • Başlangıç: 80.000₺ (kervan + sermaye)"),
-        Line::from("      • Kervan kapasite: 50 (büyük, uzak mesafe)"),
-        Line::from("      • Haber Gümüş bedava — bilgi avantajı"),
-        Line::from("      • Oynayış: aktif, fırsatçı, hızlı karar"),
+        Line::from("      Fabrika kurar — ham maddeyi mamule çevirir, satar."),
         Line::from(""),
+        // Preset + difficulty tek satır kompakt
         Line::from(vec![
-            Span::styled("  ⚙️   Preset: ", Style::default().fg(Color::White)),
+            Span::styled("  Preset: ", Style::default().fg(Color::White)),
             Span::styled(
                 app.selected_preset.label(),
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
             ),
-            Span::raw("   ("),
             Span::styled(
-                "p",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                "  [p ile değiştir]",
+                Style::default().fg(Color::DarkGray),
             ),
-            Span::raw(" ile değiştir)"),
         ]),
         Line::from(vec![
-            Span::styled("  🤖  NPC zorluğu: ", Style::default().fg(Color::White)),
+            Span::styled("  Zorluk: ", Style::default().fg(Color::White)),
             Span::styled(
                 app.difficulty.label(),
-                Style::default()
-                    .fg(match app.difficulty {
-                        Difficulty::Easy => Color::Green,
-                        Difficulty::Medium => Color::Yellow,
-                        Difficulty::Hard => Color::Red,
-                        Difficulty::Synthetic => Color::Gray,
-                    })
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(diff_color).add_modifier(Modifier::BOLD),
             ),
-            Span::raw("   ("),
             Span::styled(
-                "d",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" ile değiştir)"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  📄  Config: ", Style::default().fg(Color::White)),
-            Span::styled(
-                if app.balance_loaded {
-                    "moneywar.toml yüklendi"
-                } else {
-                    "moneywar.toml yok — default balance"
-                },
-                Style::default().fg(if app.balance_loaded {
-                    Color::Green
-                } else {
-                    Color::DarkGray
-                }),
-            ),
-            Span::raw("   "),
-            Span::styled(
-                format!(
-                    "TTL default={} max={}  cooldown={}t  ceza=%{}",
-                    app.balance.default_order_ttl,
-                    app.balance.max_order_ttl,
-                    app.balance.relist_cooldown_ticks,
-                    app.balance.cancel_penalty_pct,
-                ),
+                "  [d ile değiştir: Easy ↔ Hard]",
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
         Line::from(""),
+        // İsim
         Line::from(vec![
-            Span::styled("  📝  Adın: ", Style::default().fg(Color::White)),
+            Span::styled("  Adın: ", Style::default().fg(Color::White)),
             Span::styled(
                 if app.player_name_input.is_empty() {
-                    "(harf yaz, Backspace ile sil)".to_string()
+                    "(harf yaz)".to_string()
                 } else {
                     app.player_name_input.clone()
                 },
@@ -2532,83 +2580,18 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .add_modifier(Modifier::RAPID_BLINK),
             ),
         ]),
-        Line::from(Span::styled(
-            "      (boş bırakırsan \"Sen\" olarak başlar)",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        )),
         Line::from(""),
-        Line::from(Span::styled(
-            "  Skor = Nakit + Stok × ort.fiyat + Fabrika × 0.5 + Aktif escrow",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(Span::styled(
-            "  Hedef: sezon sonunda leaderboard'da #1",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(""),
+        // Tuş özeti
         Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                " 1 ",
-                Style::default()
-                    .bg(Color::Rgb(210, 140, 80))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                if matches!(app.selected_role, Role::Sanayici) {
-                    " Sanayici ◄    "
-                } else {
-                    " Sanayici      "
-                },
-                if matches!(app.selected_role, Role::Sanayici) {
-                    Style::default()
-                        .fg(Color::Rgb(210, 140, 80))
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Gray)
-                },
-            ),
-            Span::styled(
-                " 2 ",
-                Style::default()
-                    .bg(Color::Rgb(120, 180, 240))
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                if matches!(app.selected_role, Role::Tuccar) {
-                    " Tüccar ◄    "
-                } else {
-                    " Tüccar      "
-                },
-                if matches!(app.selected_role, Role::Tuccar) {
-                    Style::default()
-                        .fg(Color::Rgb(120, 180, 240))
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Gray)
-                },
-            ),
-            Span::styled(
-                " p ",
-                Style::default()
-                    .bg(Color::Magenta)
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" preset    "),
+            Span::styled(" Enter ", Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)),
+            Span::raw(" başla   "),
+            Span::styled(" p ", Style::default().bg(Color::Magenta).fg(Color::White)),
+            Span::raw(" preset   "),
+            Span::styled(" d ", Style::default().bg(Color::Yellow).fg(Color::Black)),
+            Span::raw(" zorluk   "),
             Span::styled(" q ", Style::default().bg(Color::DarkGray).fg(Color::White)),
             Span::raw(" çık"),
         ]),
-        Line::from(Span::styled(
-            "  Tab → rol değiştir   ·   Enter → seçili rol ile başla   ·   1/2 → direkt başla",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        )),
     ];
 
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });

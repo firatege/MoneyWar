@@ -84,11 +84,15 @@ pub fn score_player(state: &GameState, player_id: PlayerId) -> PlayerScore {
 
 /// Tüm oyuncular için skor hesapla, toplamdan büyüğe sırala.
 /// Tie-break: `player_id` ASC (deterministik).
+/// World player (`PlayerId(0)`) — engine-driven baseline mamul üretici —
+/// leaderboard'da görünmez (gerçek rakip değil, "dünya ekonomisi" rolü).
 #[must_use]
 pub fn leaderboard(state: &GameState) -> Vec<PlayerScore> {
+    let world_id = PlayerId::new(moneywar_domain::balance::WORLD_PLAYER_ID_VALUE);
     let mut scores: Vec<PlayerScore> = state
         .players
         .keys()
+        .filter(|&&pid| pid != world_id)
         .map(|&pid| score_player(state, pid))
         .collect();
     scores.sort_by(|a, b| {

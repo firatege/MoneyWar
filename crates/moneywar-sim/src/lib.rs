@@ -27,7 +27,8 @@ pub mod thresholds;
 pub mod trace;
 
 pub use report::render_markdown;
-pub use runner::{NpcComposition, RoleActionMix, SimResult, SimRunner};
+pub use moneywar_domain::NpcComposition;
+pub use runner::{RoleActionMix, SimResult, SimRunner};
 pub use scenario::Scenario;
 pub use snapshot::{ClearingSnapshot, OrderBookSummary, PlayerSnapshot, TickSnapshot};
 pub use stats::{PerRunMetrics, QualityScore, Stats, Summary};

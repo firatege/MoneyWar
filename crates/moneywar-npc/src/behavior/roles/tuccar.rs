@@ -19,27 +19,57 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::apply_jitter;
 
 /// Arbitraj eşiği — bu yüzdeden az spread varsa arbitraj kârsız.
 /// Faz F tuning: 20 → 15. Demand_for matrisi mamul baseline farkını
 /// %25-28 yaratıyor; ham specialty farkı %14-75 (çoğunlukla yeterli).
 const ARBITRAGE_SPREAD_PCT: i64 = 15;
 
+/// Bir (şehir, ürün) için açık order book'taki en yüksek BUY emir fiyatı.
+/// Tüccar'ın "buraya mal getirirsem hangi fiyata satabilirim" sorusunun
+/// cevabı — pay-as-bid clearing'de Tüccar'ın SELL'i bu bid ile eşleşir.
+/// reference_price'tan farklı: clearing yoksa book'ta yine bid olabilir
+/// (1703 BUY 0 SELL durumu = arbitraj fırsatı, ama reference_price baseline'a
+/// düşerdi). Book boşsa None.
+fn best_bid_in_city(state: &GameState, city: CityId, product: ProductKind) -> Option<Money> {
+    state
+        .order_book
+        .get(&(city, product))?
+        .iter()
+        .filter(|o| matches!(o.side, OrderSide::Buy))
+        .map(|o| o.unit_price)
+        .max()
+}
+
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     let bucket_cash = bucket_buy_budget(player);
 
-    // 0. Multi-caravan filo: hedef 4 kervan (3 şehir + 1 fazlalık).
-    //    F5 buff: Sanayici tekeli karşı Tüccar'ı güçlendir. 4 caravan/Tüccar
-    //    × 4 NPC = 16 kervan filosu → daha çok şehirler arası dağıtım.
-    const TARGET_CARAVANS: usize = 4;
+    // 0. Dinamik kervan filosu (v8.12 C): sabit limit yok. Tüccar nakit +
+    //    arbitraj sinyali olduğu sürece kervan satın alır.
+    //    Formül: arbitraj_fırsatı_var (en az 1 ürün > %15 spread) AND
+    //            sonraki kervan maliyeti ≤ cash / 3 (rezerv: 1/3 ham BUY için)
+    //    Her tick max 1 kervan satın alma — patlama önler.
     let owned_caravans = state
         .caravans
         .values()
         .filter(|c| c.owner == player.id)
         .count();
-    if owned_caravans < TARGET_CARAVANS {
+    let any_arbitrage = ProductKind::ALL.iter().any(|prod| {
+        let Some((_, cheap_p)) = cheapest_city(state, *prod) else { return false; };
+        let Some((_, rich_p)) = richest_city(state, *prod) else { return false; };
+        let cheap_c = cheap_p.as_cents();
+        if cheap_c <= 0 { return false; }
+        (rich_p.as_cents() - cheap_c) * 100 / cheap_c >= ARBITRAGE_SPREAD_PCT
+    });
+    let next_cost = moneywar_domain::Caravan::buy_cost(
+        player.role,
+        u32::try_from(owned_caravans).unwrap_or(0),
+    );
+    let cash_reserve_threshold = Money::from_cents(player.cash.as_cents() / 3);
+    if any_arbitrage && next_cost <= cash_reserve_threshold {
         let starting_city = CityId::ALL[owned_caravans % CityId::ALL.len()];
         out.push(ActionCandidate::BuyCaravan { starting_city });
     }
@@ -65,16 +95,25 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 continue;
             }
             let from_price = state
-                .effective_baseline(cur_city, product)
+                .reference_price(cur_city, product)
                 .map(|m| m.as_cents())
                 .unwrap_or(0);
             for to_city in CityId::ALL {
                 if to_city == cur_city {
                     continue;
                 }
-                let to_price = state
-                    .effective_baseline(to_city, product)
+                // to_price: önce hedef şehirdeki açık BUY emirlerinin en yüksek
+                // bid'i (Tüccar bu fiyata satabileceğini bilir), o yoksa
+                // reference_price (rolling avg / baseline). Bu, "1703 BUY 0
+                // SELL" gibi devasa talep sinyallerini yakalar — eskiden
+                // reference_price baseline'a düşüp arbitraj görünmez oluyordu.
+                let to_price = best_bid_in_city(state, to_city, product)
                     .map(|m| m.as_cents())
+                    .or_else(|| {
+                        state
+                            .reference_price(to_city, product)
+                            .map(|m| m.as_cents())
+                    })
                     .unwrap_or(0);
                 let profit_per_unit = to_price - from_price;
                 if profit_per_unit <= 0 {
@@ -123,15 +162,22 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
 
-        // AL ucuzda
-        let buy_qty = affordable_qty(bucket_cash, cheap_price, 25);
+        // AL ucuzda + jitter
+        let buy_price = apply_jitter(
+            cheap_price,
+            state.current_tick,
+            cheap_city,
+            product,
+            OrderSide::Buy,
+        );
+        let buy_qty = affordable_qty(bucket_cash, buy_price, 25);
         if buy_qty > 0 {
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Buy,
                 city: cheap_city,
                 product,
                 quantity: buy_qty,
-                unit_price: cheap_price,
+                unit_price: buy_price,
             });
         }
 
@@ -147,14 +193,25 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if stock == 0 {
                 continue;
             }
-            let to_baseline = state
-                .effective_baseline(to_city, product)
+            // SELL hedef fiyat: önce o şehirdeki en yüksek bid (Tüccar
+            // doğrudan o bid ile eşleşir), o yoksa reference_price.
+            // %95 markdown → bid'in altına gel, garanti eşleşme. Talep
+            // baskılı bucket'larda (1703 BUY 0 SELL) bu fiyat doğal yüksek.
+            let to_target = best_bid_in_city(state, to_city, product)
                 .map(|m| m.as_cents())
+                .or_else(|| state.reference_price(to_city, product).map(|m| m.as_cents()))
                 .unwrap_or(0);
-            if to_baseline <= cheap_price.as_cents() {
+            if to_target <= cheap_price.as_cents() {
                 continue;
             }
-            let sell_price = Money::from_cents(to_baseline.saturating_mul(95) / 100);
+            let sell_base = Money::from_cents(to_target.saturating_mul(95) / 100);
+            let sell_price = apply_jitter(
+                sell_base,
+                state.current_tick,
+                to_city,
+                product,
+                OrderSide::Sell,
+            );
             let sell_qty = stock.min(25);
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,
@@ -180,16 +237,26 @@ fn cheapest_city(state: &GameState, product: ProductKind) -> Option<(CityId, Mon
 }
 
 fn richest_city(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {
+    // "Richest" = Tüccar oraya mal götürürse hangi fiyatı alabileceğinin ölçütü.
+    // Önce best_bid (açık BUY emri varsa Tüccar'ın gerçek satabileceği fiyat),
+    // o yoksa reference_price'a düşer. Bu sayede "1809 BUY 0 SELL" gibi yoğun
+    // talep buradan görünür ve arbitraj sinyali tetiklenir — eski reference
+    // tabanlı tespit clearing yokken baseline'a düştüğü için spread sıfır
+    // görünüyor, Tüccar fırsat algılamıyordu.
     CityId::ALL
         .iter()
         .copied()
-        .map(|city| (city, baseline_or_default(state, city, product)))
+        .map(|city| {
+            let signal = best_bid_in_city(state, city, product)
+                .unwrap_or_else(|| baseline_or_default(state, city, product));
+            (city, signal)
+        })
         .filter(|(_, p)| p.as_cents() > 0)
         .max_by_key(|(_, p)| p.as_cents())
 }
 
 fn baseline_or_default(state: &GameState, city: CityId, product: ProductKind) -> Money {
-    state.effective_baseline(city, product).unwrap_or_else(|| {
+    state.reference_price(city, product).unwrap_or_else(|| {
         let lira = if product.is_finished() {
             moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
         } else {
@@ -294,11 +361,20 @@ mod tests {
 
     #[test]
     fn no_caravan_emits_buy_caravan_candidate() {
-        let s = fresh();
+        // v8.12 (C): Tüccar arbitraj sinyali + cash rezerv yeterli olunca
+        // BuyCaravan emit eder. fresh state'te baseline boş → arbitraj yok.
+        // Test için baseline doldur (fiyat farkı %15+ → arbitraj sinyali var).
+        let mut s = fresh();
+        s.price_baseline
+            .insert((CityId::Istanbul, ProductKind::Pamuk), Money::from_lira(4).unwrap());
+        s.price_baseline
+            .insert((CityId::Ankara, ProductKind::Pamuk), Money::from_lira(8).unwrap());
+        s.price_baseline
+            .insert((CityId::Izmir, ProductKind::Pamuk), Money::from_lira(6).unwrap());
         let p = tuccar(15_000);
         let cands = enumerate(&s, &p);
         let has_buy_caravan = cands.iter().any(|c| matches!(c, ActionCandidate::BuyCaravan { .. }));
-        assert!(has_buy_caravan, "kervan yoksa BuyCaravan emit etmeli");
+        assert!(has_buy_caravan, "arbitraj sinyali + cash varsa BuyCaravan emit etmeli");
     }
 
     #[test]

@@ -263,6 +263,28 @@ pub const NPC_BUY_MARKDOWN_PCT: i64 = 90;
 /// NPC `OrderId` ofseti — insan oyuncu havuzu ile çakışmasın.
 pub const NPC_ORDER_ID_OFFSET: u64 = 10_000_000_000;
 
+// =============================================================================
+// World Fabrikaları (v8.11)
+// =============================================================================
+
+/// "Dünya Üretim" pseudo-player — engine-driven baseline mamul üretici.
+/// Sanayici NPC fab dağılımı 9 mamul bucket'ı kapsayamadığında (5 NPC × 1-2
+/// fab = 6-7 fab) 2-3 bucket fab'sız kalıyordu → talep var arz yok ölü pazar.
+/// World Fab her tick periyodik olarak her (city, mamul) için küçük arz koyar
+/// → 9/9 mamul bucket garanti.
+pub const WORLD_PLAYER_ID_VALUE: u64 = 0;
+
+/// World Fab'ı kaç tickte bir üretim yapar.
+pub const WORLD_FAB_PERIOD: u32 = 2;
+
+/// World Fab her periyotta her (city, mamul) için bu kadar birim üretir.
+/// Sanayici NPC fab batch=100/3tick ≈ 33/tick. World fab daha küçük (15)
+/// → "baseline güvence" rolü, NPC fab'larını rakip etmez.
+pub const WORLD_FAB_QTY_PER_PERIOD: u32 = 15;
+
+/// World Fab SELL emir TTL — 3 tick (kısa, sürekli yenilenir).
+pub const WORLD_FAB_SELL_TTL: u32 = 3;
+
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]
 mod tests {
