@@ -154,6 +154,35 @@ fn clear_bucket(
         }
     }
 
+    // v8.21: Walras tâtonnement — baseline talep/arz dengesine göre kayar.
+    // Klasik "donmuş mamul fiyatı" sorununun fix'i: Cross eden Alıcı sabit
+    // Sanayici ASK'ına yetişiyor → clearing aynı fiyatta → rolling_avg
+    // self-reinforcing → fiyat donar. Tâtonnement baseline'ı her tick %2'ye
+    // kadar kaydırır → reference_price hareket eder → NPC pricing kıpırdar
+    // → fiyat keşfi açılır.
+    //
+    // Formül: imbalance = (BUY - SELL) / (BUY + SELL), [-1, +1].
+    //         factor = 1 + 0.02 × imbalance, [%98, %102].
+    //         new_baseline = baseline × factor.
+    //
+    // Mamul: BUY > SELL → fiyat yukarı (kıtlık sinyali). Ham: SELL > BUY → fiyat
+    // aşağı (arz fazlası). Şoklar üst katman, baseline taban olarak kayar.
+    {
+        let total = i64::from(submitted_buy_qty) + i64::from(submitted_sell_qty);
+        if total > 0 {
+            let imbalance =
+                (i64::from(submitted_buy_qty) - i64::from(submitted_sell_qty)) * 1000 / total;
+            // imbalance in [-1000, +1000]. factor cents = 1000 + 0.02 × imbalance
+            // = baseline × (1000 + imbalance × 2 / 100) / 1000 = (1000 + 0.02 × imb) / 1000
+            // Direkt cent çarpımı: factor_milli = 1000 + (imbalance × 20 / 1000)
+            let factor_milli = 1000 + imbalance * 20 / 1000; // [-20, +20] → ±%2
+            if let Some(baseline) = state.price_baseline.get_mut(&key) {
+                let new_cents = baseline.as_cents().saturating_mul(factor_milli) / 1000;
+                *baseline = Money::from_cents(new_cents.max(1));
+            }
+        }
+    }
+
     report.push(LogEntry::market_cleared(
         tick,
         city,
