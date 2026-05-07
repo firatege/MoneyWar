@@ -320,30 +320,41 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
             best_opportunity = Some((product, from_city, to_city, from_price, to_price, spread_pct));
         }
     }
-    let Some((product, _from_city, to_city, _, to_price, _)) = best_opportunity else {
+    let Some((product, _from_city, _, _, _, _)) = best_opportunity else {
         return Vec::new();
     };
 
-    // v8.25 fix2: Stok şartı 30 → 50 (qty × 1.66). Tüccar 8 tick'te
-    // sat+dispatch ile 30'u eritebiliyor → breach. 50 buffer ile teslim
-    // garantisi.
-    let total_stock: u32 = CityId::ALL
-        .iter()
-        .map(|&city| player.inventory.get(city, product))
-        .sum();
-    if total_stock < 50 {
+    // v8.25 fix3: Tüccar **stoğunun olduğu şehri** delivery_city olarak seç.
+    // Eski mantık: delivery_city = richest_city (best_bid) → Tüccar'ın stoğu
+    // olmayan şehir → kervan ile transit → 8 tick'te varış riski → breach.
+    // Yeni: Tüccar bu ürünün stoğunun olduğu şehirden direkt teslim
+    // (transit yok, breach yok). Fiyat o şehrin best_bid × 0.95 ile makul.
+    let mut best_stock_city: Option<(CityId, u32)> = None;
+    for &city in CityId::ALL.iter() {
+        let stock = player.inventory.get(city, product);
+        if stock < 50 {
+            continue;
+        }
+        if best_stock_city.is_none_or(|(_, s)| stock > s) {
+            best_stock_city = Some((city, stock));
+        }
+    }
+    let Some((to_city, _)) = best_stock_city else {
+        return Vec::new();
+    };
+    // Bu şehrin best_bid'ı ya da reference fiyatı
+    let to_price = best_bid_in_city(state, to_city, product)
+        .unwrap_or_else(|| {
+            state
+                .reference_price(to_city, product)
+                .unwrap_or(Money::ZERO)
+        });
+    if to_price.as_cents() <= 0 {
         return Vec::new();
     }
 
-    // v8.25 fix: Tüccar kervan-yeterli kontrolü. En az 1 kervan owned + idle
-    // olmalı, aksi halde 8 tick içinde mal taşıyamaz → breach.
-    let has_idle_caravan = state
-        .caravans
-        .values()
-        .any(|c| c.owner == player.id && c.is_idle());
-    if !has_idle_caravan {
-        return Vec::new();
-    }
+    // Kervan zorunluluk kalktı — stok zaten teslim şehrinde.
+    // (Has_idle_caravan kontrolü kaldırıldı, transit yok)
 
     // unit_price = to_city BID × 0.95 (Tüccar margin), qty=30
     let quantity = 30u32;
