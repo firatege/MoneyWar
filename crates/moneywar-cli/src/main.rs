@@ -660,7 +660,7 @@ impl FieldKind {
             Self::PriceLira => "Birim fiyat (₺)",
             Self::AmountLira => "Tutar (₺)",
             Self::DurationTicks => "Vade (tick)",
-            Self::DeliveryTick => "Teslimat tick'i",
+            Self::DeliveryTick => "Teslimat (kaç tick sonra)",
             Self::OrderTtl => "Emir TTL (kaç tick kitapta kalsın)",
             Self::NewsTier_ => "Tier",
             Self::OrderId_ => "Açık emir seç",
@@ -3896,7 +3896,7 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         "rakamlar + '.' veya ',' ile ondalık (örn 10000.50), Enter onay"
                     }
                     FieldKind::DurationTicks => "rakam tuşları → kaç tick, Enter onay",
-                    FieldKind::DeliveryTick => "rakam tuşları → teslimat tick'i, Enter onay",
+                    FieldKind::DeliveryTick => "kaç tick sonra teslim — örn 5 → şimdi+5 tick, Enter onay",
                     FieldKind::OrderTtl => {
                         let b = app.state.config.balance;
                         hint_str = format!(
@@ -3923,7 +3923,7 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         let label = match field {
                             FieldKind::QtyU32 => "stoğum",
                             FieldKind::PriceLira => "piyasa × 1.05",
-                            FieldKind::DeliveryTick => "şimdi + 5 tick",
+                            FieldKind::DeliveryTick => "5 tick sonra",
                             _ => "",
                         };
                         lines.push(Line::from(Span::styled(
@@ -4407,9 +4407,8 @@ fn offer_default_for(state: &GameState, wizard: &Wizard, field: FieldKind) -> Op
             u64::try_from(suggested).ok().filter(|n| *n > 0)
         }
         FieldKind::DeliveryTick => {
-            // Wizard build sırasında `tick = current.next()` kullanılıyor;
-            // teslim tick'i bunun en az +5 sonrası olsun.
-            Some(u64::from(state.current_tick.value().saturating_add(6)))
+            // v8.23: Göreceli — kaç tick sonra teslim. Default 5.
+            Some(5)
         }
         _ => None,
     }
@@ -7455,8 +7454,16 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
             let price_cents = i64::try_from(pick_number(2)?).map_err(|_| "fiyat")?;
             let unit_price = Money::from_cents(price_cents);
             let city = pick_city(3)?;
-            let delivery_n = u32::try_from(pick_number(4)?).map_err(|_| "delivery_tick")?;
-            let delivery_tick = Tick::new(delivery_n);
+            // v8.23: DeliveryTick artık göreceli (kaç tick sonra). Kullanıcı
+            // "5" yazınca current_tick + 5 olarak yorumlanır. Eski mutlak
+            // tick semantiği kafa karıştırıcıydı.
+            let delivery_offset = u32::try_from(pick_number(4)?).map_err(|_| "delivery_tick")?;
+            if delivery_offset == 0 {
+                return Err("delivery: en az 1 tick sonra olmalı".to_string());
+            }
+            let delivery_tick = tick
+                .checked_add(delivery_offset)
+                .map_err(|_| "delivery_tick taşması")?;
             if !tick.is_before(delivery_tick) {
                 return Err(format!(
                     "delivery_tick ({}) şu andan (tick {}) sonra olmalı",
