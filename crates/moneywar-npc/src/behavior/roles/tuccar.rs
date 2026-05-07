@@ -324,6 +324,16 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         return Vec::new();
     };
 
+    // v8.25 fix: Tüccar kervan-yeterli kontrolü. En az 1 kervan owned + idle
+    // olmalı, aksi halde 8 tick içinde mal taşıyamaz → breach.
+    let has_idle_caravan = state
+        .caravans
+        .values()
+        .any(|c| c.owner == player.id && c.is_idle());
+    if !has_idle_caravan {
+        return Vec::new();
+    }
+
     // unit_price = to_city BID × 0.95 (Tüccar margin), qty=30
     let quantity = 30u32;
     let unit_price_cents = to_price.as_cents().saturating_mul(95) / 100;
@@ -338,7 +348,9 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         return Vec::new(); // Tüccar deposit ödeyemiyor
     }
 
-    let delivery_tick = match state.current_tick.checked_add(5) {
+    // v8.25: 5 → 8 tick. Tüccar BUY → kervan dispatch → varış için zaman
+    // gerek (3+ tick yol). 5 tick yetersizdi → breach.
+    let delivery_tick = match state.current_tick.checked_add(8) {
         Ok(t) => t,
         Err(_) => return Vec::new(),
     };

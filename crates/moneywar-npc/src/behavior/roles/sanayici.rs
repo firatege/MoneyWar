@@ -217,9 +217,12 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
     }
 
     // En çok stok mamul nerede? (city, product, qty) bul.
+    // v8.25 fix: Stok ≥ qty × 2 (60 birim) olmalı. Tek qty kontrolü
+    // yetersizdi → 5 tick içinde stok satılır → breach. Buffer ile
+    // teslim garantisi.
     let mut best_stock: Option<(CityId, ProductKind, u32)> = None;
     for (city, product, qty) in player.inventory.entries() {
-        if !product.is_finished() || qty < 30 {
+        if !product.is_finished() || qty < 60 {
             continue;
         }
         if best_stock.is_none_or(|(_, _, q)| qty > q) {
@@ -247,7 +250,10 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
     if player.cash.as_cents() < seller_deposit.as_cents() {
         return Vec::new();
     }
-    let delivery_tick = match state.current_tick.checked_add(5) {
+    // v8.25: 5 → 8 tick. Sanayici 5 tick içinde satılan mamulü teslim
+    // edemiyordu (breach). 8 tick buffer + stok≥60 kontrolü ile breach %67
+    // azalmalı.
+    let delivery_tick = match state.current_tick.checked_add(8) {
         Ok(t) => t,
         Err(_) => return Vec::new(),
     };
