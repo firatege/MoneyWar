@@ -138,9 +138,12 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
     }
 
-    // 3) Mamul SAT — toptan iskonto: baseline × 0.95 (sürekli akış).
-    //    PASSIVE policy: best_bid'a in MAZ — Sanayici sabırlı satıcı, alıcılar
-    //    (Alıcı CROSS) gelir. urgency_pct ile yine yumuşar (deadlock-proof).
+    // 3) Mamul SAT — stok-baskılı pricing (donmuş mamul fiyatı sorununun fix'i).
+    //    Eski `baseline × 0.95 sabit` → fiyat 80+ tick boyunca kıpırdamıyordu
+    //    (rolling avg self-reinforcing). Yeni tier: stok birikince ASK düşer,
+    //    fiyat keşfi açılır.
+    //    PASSIVE policy korunur: Sanayici cross etmez (Alıcı CROSS yetişir).
+    //    Stok>150 → CROSS (mamul çürümez ama cash kilitlenir, hızlı erit).
     for (city, product, qty) in player.inventory.entries() {
         if !product.is_finished() || qty == 0 {
             continue;
@@ -152,14 +155,26 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                     .unwrap_or(Money::ZERO)
             });
-        let stock_floor = scale_pct(reference, 95);
+        let stock_floor_pct: i64 = match qty {
+            0..=49 => 95,           // taze mamul → kâr maks
+            50..=149 => 88,         // orta basınç
+            150..=299 => 78,        // ağır basınç → fiyat aşağı kay
+            _ => 70,                // 300+ kriz, agresif erit
+        };
+        let stock_floor = scale_pct(reference, stock_floor_pct);
+        // Stok>150 ise CROSS (alıcıya yetiş, depoyu boşalt).
+        let policy = if qty >= 150 {
+            CrossPolicy::Cross
+        } else {
+            CrossPolicy::Passive
+        };
         let Some(unit_price) = marketable_ask(
             state,
             player.id,
             city,
             product,
             stock_floor,
-            CrossPolicy::Passive,
+            policy,
             state.current_tick,
         ) else {
             continue;
