@@ -346,29 +346,29 @@ fn harvest_ciftci_stock(
                 let _ = p.inventory.add(city, prime, actual_prime);
                 report.push(LogEntry::economy_harvest(tick, pid, city, prime, actual_prime));
             }
-            if let Some(sec_raw) = secondary
-                && actual_secondary > 0
-            {
-                let _ = p.inventory.add(city, sec_raw, actual_secondary);
-                report.push(LogEntry::economy_harvest(
-                    tick,
-                    pid,
-                    city,
-                    sec_raw,
-                    actual_secondary,
-                ));
+            if let Some(sec_raw) = secondary {
+                if actual_secondary > 0 {
+                    let _ = p.inventory.add(city, sec_raw, actual_secondary);
+                    report.push(LogEntry::economy_harvest(
+                        tick,
+                        pid,
+                        city,
+                        sec_raw,
+                        actual_secondary,
+                    ));
+                }
             }
-            if let Some(dem_raw) = demand
-                && actual_demand > 0
-            {
-                let _ = p.inventory.add(city, dem_raw, actual_demand);
-                report.push(LogEntry::economy_harvest(
-                    tick,
-                    pid,
-                    city,
-                    dem_raw,
-                    actual_demand,
-                ));
+            if let Some(dem_raw) = demand {
+                if actual_demand > 0 {
+                    let _ = p.inventory.add(city, dem_raw, actual_demand);
+                    report.push(LogEntry::economy_harvest(
+                        tick,
+                        pid,
+                        city,
+                        dem_raw,
+                        actual_demand,
+                    ));
+                }
             }
         }
     }
