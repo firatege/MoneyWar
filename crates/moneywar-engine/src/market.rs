@@ -169,14 +169,15 @@ fn clear_bucket(
         if total > 0 {
             let imbalance =
                 (i64::from(submitted_buy_qty) - i64::from(submitted_sell_qty)) * 1000 / total;
-            // v8.24: Asimetrik tâtonnement — yukarı kayma yavaş, aşağı hızlı.
-            // Alıcı 8 NPC sürekli BUY > SELL → imbalance hep pozitif. Simetrik
-            // formül her tick yukarı kaydırırdı. Asimetri: yukarı %0.3, aşağı
-            // %0.7 → reel piyasa "fiyat hızla düşer, yavaş yükselir" davranışı.
+            // v8.25: Asimetri agresifleştirildi — yukarı %0.3 → %0.2,
+            // aşağı %0.7 → %1.0. 150 tick sezonda 18↑/0↓ tek yönlü artış
+            // sorununa yanıt. Sezon boyu kümülatif net etki düşüşe doğru
+            // dengelenir. Reel piyasa "fiyat hızla düşer (panik), yavaş
+            // yükselir (talep)" davranışı amplify edildi.
             let mut factor_milli = if imbalance > 0 {
-                1000 + imbalance * 3 / 1000  // +%0.3/tick
+                1000 + imbalance * 2 / 1000  // +%0.2/tick
             } else {
-                1000 + imbalance * 7 / 1000  // -%0.7/tick
+                1000 + imbalance * 10 / 1000 // -%1.0/tick
             };
 
             // v8.24 (C): Stok-bazlı aşağı drift — threshold düşürüldü

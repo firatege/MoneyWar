@@ -324,6 +324,17 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
         return Vec::new();
     };
 
+    // v8.25 ek: Bu ürün için Tüccar elinde stok varsa kontrat propose. Stok
+    // yoksa 8 tick'te BUY+dispatch+varış chain'i oturmuyor → breach. Eski
+    // %50 Tüccar breach bu kontrol ile düşmeli.
+    let total_stock: u32 = CityId::ALL
+        .iter()
+        .map(|&city| player.inventory.get(city, product))
+        .sum();
+    if total_stock < 30 {
+        return Vec::new();
+    }
+
     // v8.25 fix: Tüccar kervan-yeterli kontrolü. En az 1 kervan owned + idle
     // olmalı, aksi halde 8 tick içinde mal taşıyamaz → breach.
     let has_idle_caravan = state
