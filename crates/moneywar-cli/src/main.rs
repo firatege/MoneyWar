@@ -290,6 +290,11 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 // kaldırıldı (sığmıyordu).
                 app.mode = Mode::Leaderboard;
             }
+            KeyCode::Char('F') => {
+                // v8.23: Reddedilenler overlay — son CommandRejected/FillRejected
+                // kayıtları. Kullanıcı emirlerinin neden başarısız olduğunu görür.
+                app.mode = Mode::Rejections;
+            }
             KeyCode::Char('N') => {
                 // Büyük N: HABER abonelik (küçük 'n' news inbox için).
                 app.mode = Mode::Wizard {
@@ -386,9 +391,14 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         | Mode::CaravanPanel
         | Mode::Contracts
         | Mode::Chatter
-        | Mode::Leaderboard => match code {
+        | Mode::Leaderboard
+        | Mode::Rejections => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('L') => {
+            KeyCode::Esc
+            | KeyCode::Enter
+            | KeyCode::Char(' ')
+            | KeyCode::Char('L')
+            | KeyCode::Char('F') => {
                 app.mode = Mode::Normal;
             }
             _ => {}
@@ -542,6 +552,24 @@ enum Mode {
     /// Leaderboard overlay — `L` ile açılır. Sadece insan + Sanayici + Tüccar.
     /// Eski alt satır barı kaldırıldı (sığmıyordu).
     Leaderboard,
+    /// v8.23: Reddedilenler overlay — `F` ile açılır. Son CommandRejected +
+    /// FillRejected sebebi, kullanıcı emirinin neden başarısız olduğunu görür.
+    Rejections,
+}
+
+/// Tek bir reddedilme kaydı — TUI rejection_log buffer'ında tutulur.
+#[derive(Debug, Clone)]
+struct RejectionEntry {
+    pub tick: u32,
+    pub kind: RejectionKind,
+    pub summary: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RejectionKind {
+    Command,
+    Fill,
 }
 
 // ---------------------------------------------------------------------------
@@ -758,6 +786,8 @@ struct App {
     /// güncelle, render'da olduğu gibi kullan. Auto-sim'de 21 hücre × 4
     /// alloc/render sayısı sıfıra iner.
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
+    /// v8.23: Reddedilen komut + fill kayıtları — son 50. F tuşu overlay açar.
+    rejection_log: VecDeque<RejectionEntry>,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
     player_name_input: String,
     /// Startup'ta seçili rol. Şimdilik Sanayici-only — Tüccar geliştirme
@@ -938,6 +968,7 @@ impl App {
             balance_loaded,
             cached_leaderboard: Vec::new(),
             cached_sparklines: std::collections::BTreeMap::new(),
+            rejection_log: VecDeque::with_capacity(50),
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
             chatter_log: VecDeque::with_capacity(CHATTER_WINDOW),
@@ -1357,6 +1388,47 @@ impl App {
     fn harvest_debug_log(&mut self, report: &moneywar_engine::TickReport) {
         for entry in &report.entries {
             self.debug_log.push(entry.clone());
+            // v8.23: Sadece insan oyuncunun reddedilmiş emirlerini ayrı log'a al.
+            // NPC reject'leri zaten kullanıcıyı ilgilendirmiyor.
+            let human_id = self.mp_player_id.unwrap_or(HUMAN_ID);
+            match &entry.event {
+                LogEvent::CommandRejected { command, reason } => {
+                    if command.requester() == human_id {
+                        self.rejection_log.push_back(RejectionEntry {
+                            tick: entry.tick.value(),
+                            kind: RejectionKind::Command,
+                            summary: describe_command_short(command),
+                            reason: reason.clone(),
+                        });
+                    }
+                }
+                LogEvent::FillRejected {
+                    city,
+                    product,
+                    quantity,
+                    buyer,
+                    seller,
+                    reason,
+                    ..
+                } => {
+                    if *buyer == human_id || *seller == human_id {
+                        let role = if *buyer == human_id { "BUY" } else { "SELL" };
+                        self.rejection_log.push_back(RejectionEntry {
+                            tick: entry.tick.value(),
+                            kind: RejectionKind::Fill,
+                            summary: format!(
+                                "{role} {city}/{product} ×{quantity}"
+                            ),
+                            reason: reason.clone(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Reject buffer 50 cap.
+        while self.rejection_log.len() > 50 {
+            self.rejection_log.pop_front();
         }
         if self.debug_log.len() > DEBUG_LOG_WINDOW {
             let drop_count = self.debug_log.len() - DEBUG_LOG_WINDOW;
@@ -1881,8 +1953,81 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::DebugLog { scroll } => render_debug_log_overlay(f, area, app, scroll),
         Mode::GameOver => render_game_over_overlay(f, area, app),
         Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
+        Mode::Rejections => render_rejections_overlay(f, area, app),
         _ => {}
     }
+}
+
+/// v8.23: Reddedilen komut/fill kayıtları overlay. F tuşu açar.
+/// Her satır: tick + tip + özet + sebep. Son 50, en yeni en üstte.
+fn render_rejections_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(75, 80, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" ❌  Reddedilen ({})  ", app.rejection_log.len()))
+        .border_style(
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if app.rejection_log.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Henüz reddedilen emir yok ✓",
+            Style::default().fg(Color::Green),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Emirlerin hepsi kabul edildi.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Tick   Tip      Emir                                         Sebep",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )));
+        // En yeni üstte
+        for entry in app.rejection_log.iter().rev() {
+            let kind_label = match entry.kind {
+                RejectionKind::Command => "KOMUT  ",
+                RejectionKind::Fill => "FILL   ",
+            };
+            let kind_color = match entry.kind {
+                RejectionKind::Command => Color::Yellow,
+                RejectionKind::Fill => Color::Magenta,
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  t{:<4}  ", entry.tick),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(kind_label, Style::default().fg(kind_color)),
+                Span::styled(
+                    format!("  {:<43}", entry.summary),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!(" {}", entry.reason),
+                    Style::default().fg(Color::Red),
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  F / Esc / Enter — kapat",
+        Style::default().fg(Color::DarkGray),
+    )));
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 /// Pazar intel overlay — `r` ile açılır. Her (şehir × ürün) için:
@@ -3720,6 +3865,51 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                                 format!("  ⚡ {hint}"),
                                 Style::default().fg(Color::Magenta),
                             )));
+                        }
+                        // v8.23: Net maliyet/kâr hesabı — text_buf'taki fiyatla canlı.
+                        if let Some(qty) = wizard.fields.get(2).and_then(|fv| match fv {
+                            FieldValue::Number(n) => Some(*n),
+                            _ => None,
+                        }) {
+                            let price_input: f64 = wizard
+                                .text_buf
+                                .replace(',', ".")
+                                .parse()
+                                .unwrap_or(0.0);
+                            if price_input > 0.0 && qty > 0 {
+                                let total_cents = (price_input * qty as f64 * 100.0) as i64;
+                                let tax_cents = total_cents
+                                    * moneywar_domain::balance::TRANSACTION_TAX_PCT
+                                    / 100;
+                                let with_tax = total_cents + tax_cents;
+                                let total = Money::from_cents(total_cents);
+                                let with_tax_money = Money::from_cents(with_tax);
+                                let label = match wizard.kind {
+                                    ActionKind::Buy => format!(
+                                        "  💰 {} × {}₺ = {}  +  %{} tax  →  {} öde",
+                                        qty,
+                                        price_input,
+                                        total,
+                                        moneywar_domain::balance::TRANSACTION_TAX_PCT,
+                                        with_tax_money
+                                    ),
+                                    ActionKind::Sell => format!(
+                                        "  💰 {} × {}₺ = {}  -  %{} tax  →  {} al",
+                                        qty,
+                                        price_input,
+                                        total,
+                                        moneywar_domain::balance::TRANSACTION_TAX_PCT,
+                                        Money::from_cents(total_cents - tax_cents)
+                                    ),
+                                    _ => String::new(),
+                                };
+                                if !label.is_empty() {
+                                    lines.push(Line::from(Span::styled(
+                                        label,
+                                        Style::default().fg(Color::Yellow),
+                                    )));
+                                }
+                            }
                         }
                     }
                 }
@@ -6676,6 +6866,19 @@ fn render_footer(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 hotkey("L"),
                 Span::styled(" liderlik", Style::default().fg(Color::Gray)),
                 Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
+            ]);
+            // v8.23: Reddedilenler sayacı — varsa kırmızı rozet.
+            if !app.rejection_log.is_empty() {
+                spans.push(Span::styled(
+                    format!(" [F] ❌ {} ", app.rejection_log.len()),
+                    Style::default()
+                        .bg(Color::Red)
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled("   ·   ", Style::default().fg(Color::DarkGray)));
+            }
+            spans.extend_from_slice(&[
                 hotkey("?"),
                 Span::styled(" tüm tuşlar", Style::default().fg(Color::Gray)),
                 Span::styled("   ·   ", Style::default().fg(Color::DarkGray)),
