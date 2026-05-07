@@ -155,30 +155,35 @@ fn clear_bucket(
     }
 
     // v8.21: Walras tâtonnement — baseline talep/arz dengesine göre kayar.
-    // Klasik "donmuş mamul fiyatı" sorununun fix'i: Cross eden Alıcı sabit
-    // Sanayici ASK'ına yetişiyor → clearing aynı fiyatta → rolling_avg
-    // self-reinforcing → fiyat donar. Tâtonnement baseline'ı her tick %2'ye
-    // kadar kaydırır → reference_price hareket eder → NPC pricing kıpırdar
-    // → fiyat keşfi açılır.
+    // İlk versiyon (alpha=0.02) baseline'i 90 tick'te 3.7× şişirdi (mamul
+    // BUY > SELL sürekli pozitif imbalance → kümülatif patlama). Şimdi:
+    //   - alpha 0.02 → 0.005 (%0.5/tick max, kümülatif max ~50%/sezon)
+    //   - clamp: baseline orijinal × [%50, %200] (cumulative_initial saklanmaz,
+    //     state'te yok — onun yerine **initial_baseline** approximation: ilk
+    //     gözlemlenen baseline 0.5x..2x sınırı)
     //
-    // Formül: imbalance = (BUY - SELL) / (BUY + SELL), [-1, +1].
-    //         factor = 1 + 0.02 × imbalance, [%98, %102].
-    //         new_baseline = baseline × factor.
-    //
-    // Mamul: BUY > SELL → fiyat yukarı (kıtlık sinyali). Ham: SELL > BUY → fiyat
-    // aşağı (arz fazlası). Şoklar üst katman, baseline taban olarak kayar.
+    // Bu hafif kayma + clamp ile mamul fiyatı sezon boyunca makul aralıkta
+    // hareket eder, donmaz da patlamaz da.
     {
         let total = i64::from(submitted_buy_qty) + i64::from(submitted_sell_qty);
         if total > 0 {
             let imbalance =
                 (i64::from(submitted_buy_qty) - i64::from(submitted_sell_qty)) * 1000 / total;
-            // imbalance in [-1000, +1000]. factor cents = 1000 + 0.02 × imbalance
-            // = baseline × (1000 + imbalance × 2 / 100) / 1000 = (1000 + 0.02 × imb) / 1000
-            // Direkt cent çarpımı: factor_milli = 1000 + (imbalance × 20 / 1000)
-            let factor_milli = 1000 + imbalance * 20 / 1000; // [-20, +20] → ±%2
+            // alpha = 0.005 → factor = 1 + 0.005 × (imb/1000) = 1 + imb/200000
+            // Cent math: factor_milli = 1000 + imb × 5 / 1000 → [-5, +5] = ±%0.5
+            let factor_milli = 1000 + imbalance * 5 / 1000;
             if let Some(baseline) = state.price_baseline.get_mut(&key) {
                 let new_cents = baseline.as_cents().saturating_mul(factor_milli) / 1000;
-                *baseline = Money::from_cents(new_cents.max(1));
+                // Clamp: kümülatif kaymayı aşırı tutma. Initial baseline genelde
+                // NPC_BASE_PRICE_RAW/FINISHED civarı (4-36₺); sezon başı sim/CLI
+                // 0.8-1.2× setup yapıyor. Mutlak sınır:
+                //   raw → max 200₺ (5x default 4₺), min 1₺
+                //   finished → max 200₺ (5.5x default 36₺), min 5₺
+                // Bu sezon başı varyasyonu ezmez ama runaway'i durdurur.
+                let abs_min = if product.is_raw() { 100 } else { 500 };
+                let abs_max = 20_000; // 200₺ tabanlı tavan
+                let clamped = new_cents.max(abs_min).min(abs_max);
+                *baseline = Money::from_cents(clamped);
             }
         }
     }
