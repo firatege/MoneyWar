@@ -23,14 +23,23 @@
 use moneywar_domain::{GameState, Money, OrderSide, Player, ProductKind};
 
 use crate::behavior::candidates::ActionCandidate;
-use crate::behavior::pricing::apply_jitter;
+use crate::behavior::pricing::{CrossPolicy, marketable_ask};
 
 /// Çiftçi'nin bu tick için olası satış adayları.
-/// v8.19 (B): stok-baskısı agresifleştirildi (Esnaf emekli olunca ham BUY
-/// iştahı düştü). Eski %7-15 indirim yetmiyor — şimdi %0/%20/%35.
-/// Eski: 0-999=%100, 1000-1999=%93, 2000+=%85 (sezon ortası match eff %23).
-/// Yeni: 0-499=%100, 500-999=%80, 1000+=%65 — Sanayici BUY ile eşleşmesi
-/// kolaylaşır, ham birikimini erken eritir.
+/// v8.20: Order-book aware pricing — `marketable_ask` üzerinden geçer.
+///
+/// Rol kimliği: **üretici** → mahsul fire riski → satış zorunluluğu.
+/// Stok>500 olduğunda CROSS — best_bid'a iner (taze stoğu eritir).
+/// Stok<500 ise PASSIVE — kâr maks (taze ürün, beklemeye değer).
+///
+/// Floor (asla altına satmama eşiği) stok'a göre:
+/// - 0-199 → %100 baz (taze, kâr maks)
+/// - 200-499 → %90 (hafif basınç)
+/// - 500-999 → %80 (orta basınç)
+/// - 1000+ → %65 (kriz)
+///
+/// `marketable_ask` urgency_pct uygular → hatta cross olmadan bile floor
+/// patience erosion + season drift ile %30 düşer → match garantisi.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
@@ -46,19 +55,35 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         // Stok-baskısı indirim: Çiftçi'nin bu (city, raw)'da stok'u büyükse
         // SELL fiyatı agresif düşür — pazar onu emsin. Aksi takdirde prime
         // şehir over-supply pattern'inde stok kilitlenir.
-        let stock_discount_pct = match qty {
-            0..=499 => 100,         // baz fiyat
-            500..=999 => 80,        // %20 indirim (orta stok)
-            _ => 65,                // %35 indirim (1000+ birim → kriz)
+        let stock_floor_pct: i64 = match qty {
+            0..=199 => 100,         // taze stok → kâr maks
+            200..=499 => 90,        // hafif basınç
+            500..=999 => 80,        // orta basınç
+            _ => 65,                // 1000+ birim → kriz
         };
-        let discounted = Money::from_cents(
-            reference.as_cents().saturating_mul(stock_discount_pct).saturating_div(100),
+        let stock_floor = Money::from_cents(
+            reference
+                .as_cents()
+                .saturating_mul(stock_floor_pct)
+                .saturating_div(100),
         );
-        let unit_price =
-            apply_jitter(discounted, state.current_tick, city, product, OrderSide::Sell);
-        if unit_price.as_cents() <= 0 {
+        // Stok>500 → CROSS (eritmek için best_bid'a in). Aksi halde PASSIVE.
+        let policy = if qty >= 500 {
+            CrossPolicy::Cross
+        } else {
+            CrossPolicy::Passive
+        };
+        let Some(unit_price) = marketable_ask(
+            state,
+            player.id,
+            city,
+            product,
+            stock_floor,
+            policy,
+            state.current_tick,
+        ) else {
             continue;
-        }
+        };
         out.push(ActionCandidate::SubmitOrder {
             side: OrderSide::Sell,
             city,

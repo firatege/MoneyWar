@@ -24,7 +24,7 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
-use crate::behavior::pricing::apply_jitter;
+use crate::behavior::pricing::{CrossPolicy, marketable_bid};
 
 /// Alıcı'nın bu tick için olası alım adayları (3 şehir × 3 mamul = 9 max).
 #[must_use]
@@ -40,12 +40,20 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if reference.as_cents() <= 0 {
                 continue;
             }
-            // Dinamik rezerv fiyatı (Vic3 pop needs urgency).
-            // Stoğu boşsa 110% verir, doluysa 100%. Sanayici 105% asking
-            // → stok ortadayken (urgency 0.5) 105% Alıcı bid ile eşleşir.
-            let urgency_price = bid_with_urgency(reference, player, city, product);
-            let unit_price =
-                apply_jitter(urgency_price, state.current_tick, city, product, OrderSide::Buy);
+            // v8.20: Alıcı CROSS policy — tüketici talep esnek değil, best_ask
+            // üzerine atlar. Cash_ceiling = stok-based urgency (100-110%).
+            let cash_ceiling = bid_with_urgency(reference, player, city, product);
+            let Some(unit_price) = marketable_bid(
+                state,
+                player.id,
+                city,
+                product,
+                cash_ceiling,
+                CrossPolicy::Cross,
+                state.current_tick,
+            ) else {
+                continue;
+            };
             let quantity = affordable_qty(bucket_cash, unit_price, 30);
             if quantity == 0 {
                 continue;
