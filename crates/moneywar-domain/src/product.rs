@@ -118,6 +118,55 @@ impl ProductKind {
         }
     }
 
+    /// v0.4.1: Ham → mamul dönüşüm verim yüzdesi. Mamul (`is_finished`) için
+    /// 100 ham birim → bu sayı kadar mamul. Reel sanayide kayıp var.
+    /// - `Kumas` (Pamuk): %80 — dokumacılık fire (kumaş kenar, parça vb)
+    /// - `Un` (Buğday): %90 — değirmen az kayıp
+    /// - `Zeytinyagi` (Zeytin): %50 — sıkım sonrası posa atılır, yarı verim
+    /// Ham ürünler ve geçerli olmayan üretim için %100 (identity, no-op).
+    #[must_use]
+    pub const fn output_ratio_pct(self) -> u32 {
+        match self {
+            Self::Kumas => 80,
+            Self::Un => 90,
+            Self::Zeytinyagi => 50,
+            _ => 100,
+        }
+    }
+
+    /// v0.4.1: Mamul üretim süresi (tick). Fab batch başlatıldıktan kaç tick
+    /// sonra tamamlanır. Reel sanayide farklı: değirmen hızlı, dokuma yavaş.
+    /// - `Un`: 2 (değirmen — mevcut default)
+    /// - `Zeytinyagi`: 3 (sıkım orta süre)
+    /// - `Kumas`: 4 (dokumacılık yavaş)
+    /// Ham ürünler için 0 (üretim mekaniği yok, sadece mahsul).
+    #[must_use]
+    pub const fn production_ticks(self) -> u32 {
+        match self {
+            Self::Un => 2,
+            Self::Zeytinyagi => 3,
+            Self::Kumas => 4,
+            _ => 0,
+        }
+    }
+
+    /// v0.4.1: Ürün başına baseline fiyat (₺). Verim ve süre farklılaştığı
+    /// için baseline'lar da farklılaştı:
+    /// - Un: 22 (verim %90 → bol arz → ucuz)
+    /// - Kumaş: 35 (verim %80 → orta)
+    /// - Zeytinyağı: 65 (verim %50 + 3 tick → kıtlık primi)
+    /// - Ham (Pamuk/Buğday/Zeytin): 5 (default ham fiyatı)
+    #[must_use]
+    pub const fn base_price_lira(self) -> i64 {
+        match self {
+            Self::Un => 22,
+            Self::Kumas => 35,
+            Self::Zeytinyagi => 65,
+            // Ham ürünler — eski NPC_BASE_PRICE_RAW_LIRA değeri (5)
+            Self::Pamuk | Self::Bugday | Self::Zeytin => 5,
+        }
+    }
+
     /// Ürün kısa adı (UI + log).
     #[must_use]
     pub const fn display_name(self) -> &'static str {

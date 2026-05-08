@@ -171,17 +171,31 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         return;
     }
 
-    let completion = tick.checked_add(Factory::PRODUCTION_TICKS).unwrap_or(tick);
+    // v0.4.1: Per-product üretim süresi + verim oranı.
+    // - Süre: product.production_ticks() (Un=2, Zeytinyağı=3, Kumaş=4)
+    // - Verim: batch_size × output_ratio_pct() / 100
+    let prod_ticks = product.production_ticks().max(1);
+    let completion = tick.checked_add(prod_ticks).unwrap_or(tick);
+    let output_units = batch_size
+        .saturating_mul(product.output_ratio_pct())
+        .saturating_div(100)
+        .max(1);
     let Some(factory) = state.factories.get_mut(&fid) else {
         return;
     };
     factory.batches.push(FactoryBatch {
         started_tick: tick,
         completion_tick: completion,
-        units: batch_size,
+        units: output_units, // verim sonrası mamul miktarı
     });
     report.push(LogEntry::production_started(
-        tick, owner, fid, city, product, batch_size, completion,
+        tick,
+        owner,
+        fid,
+        city,
+        product,
+        output_units,
+        completion,
     ));
 }
 
@@ -332,7 +346,8 @@ mod tests {
     }
 
     #[test]
-    fn production_starts_when_raw_available_and_completes_after_two_ticks() {
+    fn production_starts_when_raw_available_and_completes_after_kumas_ticks() {
+        // v0.4.1: Kumaş 4 tick + %80 verim. 100 Pamuk → 80 Kumaş.
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
         s.players
@@ -352,7 +367,7 @@ mod tests {
         )
         .unwrap();
 
-        // Tick 1: üretim başlar (batch=100, completion_tick=3).
+        // Tick 1: batch başlar (100 Pamuk → 80 Kumaş, completion=5).
         advance_production(&mut s, &mut r, Tick::new(1));
         assert_eq!(
             s.players[&pid]
@@ -362,10 +377,12 @@ mod tests {
         );
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
 
-        // Tick 2: hiçbir batch tamamlanmaz (completion=3 ve 4), yeni batch başlar.
-        let mut r2 = TickReport::new(Tick::new(2));
-        advance_production(&mut s, &mut r2, Tick::new(2));
-        assert_eq!(s.factories.values().next().unwrap().batches.len(), 2);
+        // Tick 2-4: yeni batch'ler başlar, hiçbiri tamamlanmaz (completion 5/6/7/8).
+        for t in 2u32..=4 {
+            let mut rt = TickReport::new(Tick::new(t));
+            advance_production(&mut s, &mut rt, Tick::new(t));
+        }
+        assert_eq!(s.factories.values().next().unwrap().batches.len(), 4);
         assert_eq!(
             s.players[&pid]
                 .inventory
@@ -373,21 +390,21 @@ mod tests {
             0
         );
 
-        // Tick 3: ilk batch tamamlanır (tick 1 + 2 = 3), yeni batch başlar.
-        let mut r3 = TickReport::new(Tick::new(3));
-        advance_production(&mut s, &mut r3, Tick::new(3));
+        // Tick 5: ilk batch tamamlanır (1+4=5), yeni 5. batch başlar.
+        // 80 Kumaş üretilir (verim %80). Pamuk 1000-500=500.
+        let mut r5 = TickReport::new(Tick::new(5));
+        advance_production(&mut s, &mut r5, Tick::new(5));
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Kumas),
-            100
+            80
         );
-        // Pamuk 700 kaldı (3 batch × 100).
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            700
+            500
         );
     }
 

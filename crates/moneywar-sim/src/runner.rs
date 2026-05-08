@@ -319,11 +319,14 @@ fn build_state(runner: &SimRunner) -> GameState {
     for city in CityId::ALL {
         let cheap = city.cheap_raw();
         for product in ProductKind::ALL {
+            // v0.4.1: Mamul baseline ürün-spesifik. Şehir talep modulator'ü
+            // base × demand_factor (yüksek %20, normal %0, düşük -%20).
             let lira = if product.is_finished() {
+                let base = product.base_price_lira();
                 match city.demand_for(product) {
-                    DemandLevel::High => 36,
-                    DemandLevel::Normal => 28,
-                    DemandLevel::Low => 22,
+                    DemandLevel::High => base * 12 / 10,    // +%20
+                    DemandLevel::Normal => base,
+                    DemandLevel::Low => base * 8 / 10,      // -%20
                 }
             } else if product == cheap {
                 4

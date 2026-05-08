@@ -44,9 +44,10 @@ fn init_state() -> GameState {
 
 #[test]
 fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
+    // v0.4.1: Kumaş 4 tick + %80 verim (100 Pamuk → 80 Kumaş).
     let s0 = init_state();
 
-    // Tick 1: Sanayici fabrika kurar.
+    // Tick 1: Sanayici fabrika kurar + üretim başlar.
     let build = Command::BuildFactory {
         owner: PlayerId::new(1),
         city: CityId::Istanbul,
@@ -54,7 +55,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     };
     let (s1, _r1) = advance_tick(&s0, &[build]).unwrap();
     assert_eq!(s1.factories.len(), 1);
-    // Tick 1 sonu üretim döngüsü: batch başladı, pamuk 100 tüketildi → 900 kaldı (10× ölçek).
+    // Tick 1 sonu: batch başladı, pamuk 100 tüketildi → 900 kaldı.
     assert_eq!(
         s1.players[&PlayerId::new(1)]
             .inventory
@@ -63,38 +64,21 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     );
     assert_eq!(s1.factories.values().next().unwrap().batches.len(), 1);
 
-    // Tick 2: yeni batch başlar (üretim 2 tick, hiçbiri tamamlanmadı).
-    let (s2, _r2) = advance_tick(&s1, &[]).unwrap();
-    assert_eq!(s2.factories.values().next().unwrap().batches.len(), 2);
-    assert_eq!(
-        s2.players[&PlayerId::new(1)]
-            .inventory
-            .get(CityId::Istanbul, ProductKind::Pamuk),
-        800
-    );
-
-    // Tick 3: ilk batch tamamlanır (completion_tick = 1+2=3). Kumas envantere,
-    // yeni batch başlar.
-    let (s3, _r3) = advance_tick(&s2, &[]).unwrap();
-    let kumas3 = s3.players[&PlayerId::new(1)]
-        .inventory
-        .get(CityId::Istanbul, ProductKind::Kumas);
-    assert_eq!(kumas3, 100, "100 kumas after 2 tick delay (10× ölçek)");
-    assert_eq!(
-        s3.players[&PlayerId::new(1)]
-            .inventory
-            .get(CityId::Istanbul, ProductKind::Pamuk),
-        700
-    );
-
-    // Tick 4: ikinci batch tamamlanır → kumaş 200.
+    // Tick 2-4: yeni batch'ler başlar, hiçbiri tamamlanmaz (Kumaş 4 tick).
+    let (s2, _) = advance_tick(&s1, &[]).unwrap();
+    let (s3, _) = advance_tick(&s2, &[]).unwrap();
     let (s4, _r4) = advance_tick(&s3, &[]).unwrap();
-    let kumas = s4.players[&PlayerId::new(1)]
-        .inventory
-        .get(CityId::Istanbul, ProductKind::Kumas);
-    assert_eq!(kumas, 200, "200 kumas after second batch completed");
+    assert_eq!(s4.factories.values().next().unwrap().batches.len(), 4);
+    assert_eq!(
+        s4.players[&PlayerId::new(1)]
+            .inventory
+            .get(CityId::Istanbul, ProductKind::Kumas),
+        0,
+        "Kumaş 4 tick sürer, t4'te hiç tamamlanmadı"
+    );
 
-    // Tick 5: Sanayici 50 kumas satar; Tüccar 50 kumas alır (10× ölçek).
+    // Tick 5: ilk batch tamamlanır (started=1, completion=1+4=5). %80 verim
+    // → 80 Kumaş. Yeni batch başlar. Plus 50 sat / 50 al.
     let sell = Command::SubmitOrder(
         MarketOrder::new(
             OrderId::new(1),
@@ -139,13 +123,13 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             .get(CityId::Istanbul, ProductKind::Kumas),
         50
     );
-    // Tick 5'te 3. batch tamamlanır (started=3, completion=5).
-    // 200 - 50 (sat) + 100 (yeni batch) = 250.
+    // v0.4.1: Tick 5'te 1. batch tamamlanır (started=1, completion=1+4=5).
+    // 80 Kumaş üretildi, 50 satıldı → 30 kalır. 5. batch başladı.
     assert_eq!(
         s5.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Kumas),
-        250
+        30
     );
     // Para korunumu: 200_000₺ × 100 cent — eksiği işlem vergisi (sistem sink).
     // İşlem yapıldığı için toplam <= başlangıç. Vergi miktarı tam değişken,

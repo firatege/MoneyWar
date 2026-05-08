@@ -1614,11 +1614,9 @@ fn seed_world(
     // Bazı şehirler pahalı, bazıları ucuz → doğal arbitraj fırsatı.
     for city in CityId::ALL {
         for product in ProductKind::ALL {
-            let base_lira = if product.is_raw() {
-                moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
-            } else {
-                moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
-            };
+            // v0.4.1: Ürün başına baseline (verim/süre farklılığı için).
+            // Un 22, Kumaş 35, Zeytinyağı 65, ham 5.
+            let base_lira = product.base_price_lira();
             let multiplier: u32 = rng.random_range(80..=120);
             let price_cents = base_lira.saturating_mul(100) * i64::from(multiplier) / 100;
             let baseline = Money::from_cents(price_cents);
