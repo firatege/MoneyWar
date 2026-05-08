@@ -17,12 +17,18 @@ use moneywar_domain::{
     CityId, GameState, MAX_NO_MATCH_STREAK, Money, OrderSide, PlayerId, ProductKind, Tick,
 };
 
-/// Bu (tick, city, product, side) için ±3% jitter yüzdesi (-3..=+3).
-/// Deterministik hash — replay safe. ±3% range'i ilk denenen ±5%'in match
-/// sayısını -36% düşürmesinden sonra daraltıldı; fiyat hareketi yeterli,
-/// BUY/SELL kesişme alanı korunur.
+/// Bu (tick, city, product, side, player) için ±3% jitter yüzdesi (-3..=+3).
+/// v0.4.1: player_id eklendi — aynı bucket'ta farklı NPC'ler farklı jitter alır,
+/// senkronize emir spam'ı kırılır. Eski versiyon 4 Tüccar aynı fiyatı veriyordu
+/// ("bot army" sorunu, user gözlemi: NPC'ler birlikte hareket ediyor).
 #[must_use]
-pub fn jitter_pct(tick: Tick, city: CityId, product: ProductKind, side: OrderSide) -> i64 {
+pub fn jitter_pct(
+    tick: Tick,
+    city: CityId,
+    product: ProductKind,
+    side: OrderSide,
+    player_id: PlayerId,
+) -> i64 {
     let city_idx: u64 = match city {
         CityId::Istanbul => 1,
         CityId::Ankara => 2,
@@ -46,11 +52,12 @@ pub fn jitter_pct(tick: Tick, city: CityId, product: ProductKind, side: OrderSid
     h ^= city_idx.wrapping_mul(7);
     h ^= product_idx.wrapping_mul(13);
     h ^= side_idx.wrapping_mul(17);
+    h ^= player_id.value().wrapping_mul(31);
     h = h.wrapping_mul(2_654_435_761);
     ((h % 7) as i64) - 3
 }
 
-/// Fiyata ±3% jitter uygula. Sıfır veya negatif sonucu 1 cent'e clamp eder.
+/// Fiyata ±3% NPC-spesifik jitter uygula. Sıfır/negatif sonuç 1 cent'e clamp.
 #[must_use]
 pub fn apply_jitter(
     price: Money,
@@ -58,8 +65,9 @@ pub fn apply_jitter(
     city: CityId,
     product: ProductKind,
     side: OrderSide,
+    player_id: PlayerId,
 ) -> Money {
-    let pct = jitter_pct(tick, city, product, side);
+    let pct = jitter_pct(tick, city, product, side, player_id);
     let multiplier = 100i64 + pct;
     let cents = price
         .as_cents()
@@ -142,7 +150,7 @@ pub fn marketable_ask(
         },
         CrossPolicy::Passive => softened_floor,
     };
-    let jittered = apply_jitter(target, tick, city, product, OrderSide::Sell);
+    let jittered = apply_jitter(target, tick, city, product, OrderSide::Sell, player);
     if jittered.as_cents() <= 0 {
         return None;
     }
@@ -179,7 +187,7 @@ pub fn marketable_bid(
         },
         CrossPolicy::Passive => softened_ceiling,
     };
-    let jittered = apply_jitter(target, tick, city, product, OrderSide::Buy);
+    let jittered = apply_jitter(target, tick, city, product, OrderSide::Buy, player);
     if jittered.as_cents() <= 0 {
         return None;
     }
@@ -201,11 +209,12 @@ mod tests {
 
     #[test]
     fn jitter_in_bounds() {
+        let p1 = PlayerId::new(100);
         for tick in 0u32..50 {
             for city in CityId::ALL {
                 for product in ProductKind::ALL {
                     for side in [OrderSide::Buy, OrderSide::Sell] {
-                        let p = jitter_pct(Tick::new(tick), city, product, side);
+                        let p = jitter_pct(Tick::new(tick), city, product, side, p1);
                         assert!((-3..=3).contains(&p), "jitter {p} out of range");
                     }
                 }
@@ -215,31 +224,54 @@ mod tests {
 
     #[test]
     fn jitter_varies_across_buckets() {
-        // Aynı tick, farklı bucket'lar farklı jitter üretmeli (genelde).
-        // Bütün bucket'larda toplama bakıp en az 3 farklı değer var mı kontrol.
         let tick = Tick::new(10);
+        let p1 = PlayerId::new(100);
         let mut seen = std::collections::BTreeSet::new();
         for city in CityId::ALL {
             for product in ProductKind::ALL {
-                seen.insert(jitter_pct(tick, city, product, OrderSide::Buy));
+                seen.insert(jitter_pct(tick, city, product, OrderSide::Buy, p1));
             }
         }
         assert!(seen.len() >= 3, "jitter çeşitlilik düşük: {seen:?}");
     }
 
     #[test]
+    fn jitter_varies_across_players() {
+        // v0.4.1: Aynı bucket'ta farklı NPC'ler farklı jitter — "bot army"
+        // sorununun fix'i. 8 farklı player için en az 3 farklı jitter beklenir.
+        let tick = Tick::new(10);
+        let mut seen = std::collections::BTreeSet::new();
+        for pid_n in 100u64..108 {
+            seen.insert(jitter_pct(
+                tick,
+                CityId::Istanbul,
+                ProductKind::Pamuk,
+                OrderSide::Buy,
+                PlayerId::new(pid_n),
+            ));
+        }
+        assert!(
+            seen.len() >= 3,
+            "NPC-spesifik jitter çeşitliliği düşük: {seen:?}"
+        );
+    }
+
+    #[test]
     fn jitter_deterministic() {
+        let pl = PlayerId::new(42);
         let p1 = jitter_pct(
             Tick::new(42),
             CityId::Ankara,
             ProductKind::Pamuk,
             OrderSide::Buy,
+            pl,
         );
         let p2 = jitter_pct(
             Tick::new(42),
             CityId::Ankara,
             ProductKind::Pamuk,
             OrderSide::Buy,
+            pl,
         );
         assert_eq!(p1, p2);
     }
@@ -253,8 +285,8 @@ mod tests {
             CityId::Izmir,
             ProductKind::Un,
             OrderSide::Sell,
+            PlayerId::new(100),
         );
-        // ±3% → 970..=1030
         assert!(jittered.as_cents() >= 970);
         assert!(jittered.as_cents() <= 1030);
     }

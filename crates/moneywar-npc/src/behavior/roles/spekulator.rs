@@ -52,7 +52,14 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
         // BID — reference × 0.99 + jitter (dar spread, v8.15 mantığı).
         let bid_base = scale_pct(reference, 99);
-        let bid_price = apply_jitter(bid_base, state.current_tick, city, product, OrderSide::Buy);
+        let bid_price = apply_jitter(
+            bid_base,
+            state.current_tick,
+            city,
+            product,
+            OrderSide::Buy,
+            player.id,
+        );
         if bid_price.as_cents() > 0 {
             let qty = affordable_qty(bucket_cash, bid_price, 25);
             if qty > 0 {
@@ -71,8 +78,14 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let stock = player.inventory.get(city, product);
         if stock > 0 {
             let ask_base = scale_pct(reference, 101);
-            let ask_price =
-                apply_jitter(ask_base, state.current_tick, city, product, OrderSide::Sell);
+            let ask_price = apply_jitter(
+                ask_base,
+                state.current_tick,
+                city,
+                product,
+                OrderSide::Sell,
+                player.id,
+            );
             if ask_price.as_cents() > 0 {
                 let qty = (stock / 2).max(1).min(25);
                 out.push(ActionCandidate::SubmitOrder {

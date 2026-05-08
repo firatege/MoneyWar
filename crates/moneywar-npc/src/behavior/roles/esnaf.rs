@@ -60,6 +60,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             city,
             product,
             OrderSide::Sell,
+            player.id,
         );
         if unit_price.as_cents() <= 0 {
             continue;
@@ -94,6 +95,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 city,
                 product,
                 OrderSide::Buy,
+                player.id,
             );
             if unit_price.as_cents() <= 0 {
                 continue;
@@ -123,8 +125,14 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             });
             // Toptan fiyat = reference (Sanayici'nin SAT fiyatı). Markdown yok
             // → Esnaf kâr marjını perakende SAT'tan kazanır.
-            let unit_price =
-                apply_jitter(reference, state.current_tick, city, product, OrderSide::Buy);
+            let unit_price = apply_jitter(
+                reference,
+                state.current_tick,
+                city,
+                product,
+                OrderSide::Buy,
+                player.id,
+            );
             if unit_price.as_cents() <= 0 {
                 continue;
             }

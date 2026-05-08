@@ -165,6 +165,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             cheap_city,
             product,
             OrderSide::Buy,
+            player.id,
         );
         let buy_qty = affordable_qty(bucket_cash, buy_price, 25);
         if buy_qty > 0 {
@@ -211,6 +212,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 to_city,
                 product,
                 OrderSide::Sell,
+                player.id,
             );
             let sell_qty = stock.min(25);
             out.push(ActionCandidate::SubmitOrder {
