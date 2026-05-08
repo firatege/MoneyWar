@@ -204,9 +204,8 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('q') => return Ok(true),
             // Tüccar şimdilik kapalı — Enter ile sadece Sanayici başlatılır.
             KeyCode::Enter => app.start_game(Role::Sanayici),
-            KeyCode::Char('p') => {
-                app.selected_preset = app.selected_preset.next();
-            }
+            // v0.4: 'p' tuşu kaldırıldı — sadece Hızlı sezon. İsim yazımında
+            // 'p' artık serbest. 'd' difficulty switcher korundu.
             KeyCode::Char('d') => {
                 app.difficulty = app.difficulty.next();
             }
@@ -815,12 +814,14 @@ struct App {
 const CHATTER_WINDOW: usize = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Standart/Uzun ileride aktif olur (v0.4: sadece Hızlı)
 enum PresetChoice {
     Hizli,
     Standart,
     Uzun,
 }
 
+#[allow(dead_code)] // v0.4: label/next şu an kullanılmıyor (tek preset)
 impl PresetChoice {
     fn config(self) -> RoomConfig {
         match self {
@@ -837,11 +838,9 @@ impl PresetChoice {
         }
     }
     fn next(self) -> Self {
-        match self {
-            Self::Hizli => Self::Standart,
-            Self::Standart => Self::Uzun,
-            Self::Uzun => Self::Hizli,
-        }
+        // v0.4: Sadece Hızlı (90 tick) destekleniyor. Standart/Uzun preset'leri
+        // ileride tuning gerekirse aktif olur. Şimdilik cycle no-op.
+        Self::Hizli
     }
 }
 
@@ -2711,16 +2710,15 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ]),
         Line::from("      Fabrika kurar — ham maddeyi mamule çevirir, satar."),
         Line::from(""),
-        // Preset + difficulty tek satır kompakt
+        // v0.4: Tek preset (Hızlı 90 tick). p tuşu no-op.
         Line::from(vec![
-            Span::styled("  Preset: ", Style::default().fg(Color::White)),
+            Span::styled("  Sezon: ", Style::default().fg(Color::White)),
             Span::styled(
-                app.selected_preset.label(),
+                "Hızlı (90 tick)",
                 Style::default()
                     .fg(Color::Magenta)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  [p ile değiştir]", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
             Span::styled("  Zorluk: ", Style::default().fg(Color::White)),
