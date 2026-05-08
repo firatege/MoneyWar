@@ -152,13 +152,17 @@ impl GameBalance {
     /// TTL alt sınırı — emirler en az 1 clear pass'e katılmalı.
     pub const MIN_ORDER_TTL: u32 = 1;
     /// TTL üst sınırı (hardcoded sanity cap).
-    pub const MAX_ORDER_TTL_HARD: u32 = 50;
+    /// v0.4.1: 50 → 200. User: "bir kerede al, fab işlesin" passive
+    /// playstyle için sezon-uzun emir destekleniyor (Hızlı 90 tick içinde
+    /// emir sezon boyu kademeli match alır).
+    pub const MAX_ORDER_TTL_HARD: u32 = 200;
 
     #[must_use]
     pub const fn default_const() -> Self {
         Self {
             default_order_ttl: 3,
-            max_order_ttl: 10,
+            // v0.4.1: 10 → 100. User uzun TTL emir verebilsin.
+            max_order_ttl: 100,
             cancel_penalty_pct: 2,
             relist_cooldown_ticks: 2,
             npcs: NpcComposition::default_const(),
