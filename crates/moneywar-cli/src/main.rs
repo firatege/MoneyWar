@@ -3538,10 +3538,20 @@ fn wizard_preflight_blocks(app: &App, wizard: &Wizard) -> Vec<String> {
                     ));
                 }
             }
-            // Cash/stok kontrolü fiyat girilince
-            let price_input: f64 = wizard.text_buf.replace(',', ".").parse().unwrap_or(0.0);
-            if matches!(wizard.kind, ActionKind::Buy) && price_input > 0.0 && qty > 0 {
-                let total_cents = (price_input * qty as f64 * 100.0) as i64;
+            // Cash/stok kontrolü fiyat girilince. Bug fix: text_buf yalnızca
+            // PriceLira adımında geçerli — TTL adımında text_buf TTL değerine
+            // dönüşüyordu, eski kod onu price olarak okuyup yanlış cash hesabı
+            // yapıyordu (TTL=1000 → 102M ₺ "yetersiz" hatası). Şimdi:
+            // önce fields[3]'e bak (kalıcı price), yoksa text_buf'a düş.
+            let price_cents: i64 = match wizard.fields.get(3) {
+                Some(FieldValue::Number(n)) => *n as i64,
+                _ => {
+                    let p: f64 = wizard.text_buf.replace(',', ".").parse().unwrap_or(0.0);
+                    (p * 100.0) as i64
+                }
+            };
+            if matches!(wizard.kind, ActionKind::Buy) && price_cents > 0 && qty > 0 {
+                let total_cents = price_cents.saturating_mul(qty as i64);
                 let with_tax =
                     total_cents + total_cents * moneywar_domain::balance::TRANSACTION_TAX_PCT / 100;
                 if player.cash.as_cents() < with_tax {
