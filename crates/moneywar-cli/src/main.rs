@@ -1791,12 +1791,13 @@ fn seed_world(
     }
 
     // NPC-Çiftçi (v4) — hammadde üreticisi. Periyodik mahsul + SELL only.
-    // Bu olmadan Sanayici fabrikalar ham bulamaz, sezon ortasında Pamuk/
-    // Buğday/Zeytin pazarları ölür (TUI'de eski default'ta yoktu, sezon
-    // boyunca FactoryIdle 496/0 üretim — sim ile büyük kompozisyon farkı).
+    // v0.4.1: Sezon başı starter stok eklendi. Eski mantıkta Çiftçi t1'de
+    // 0 stoklu, ilk mahsul HARVEST_PERIOD=8'de geliyordu → t1-7 boyunca ham
+    // bucket'larında SELL=0 → user "kimse satmıyordu" hissi. Starter:
+    // Çiftçi'nin kendi şehrinin prime ham'ından 200 birim.
     for _ in 0..composition.ciftci {
         let name = pick_npc_name(&mut rng, NpcKind::Ciftci, &mut used_names);
-        let npc = Player::new(
+        let mut npc = Player::new(
             PlayerId::new(next_id),
             name,
             Role::Tuccar,
@@ -1805,6 +1806,15 @@ fn seed_world(
         )
         .unwrap()
         .with_kind(NpcKind::Ciftci);
+        // Şehir ataması: harvest mantığıyla aynı (pid % 3).
+        let city_idx = (next_id as usize) % CityId::ALL.len();
+        let city = CityId::ALL[city_idx];
+        let prime = s
+            .city_specialty
+            .get(&city)
+            .copied()
+            .unwrap_or_else(|| city.cheap_raw());
+        let _ = npc.inventory.add(city, prime, 200);
         s.news_subscriptions.insert(npc.id, NewsTier::Free);
         s.players.insert(npc.id, npc);
         next_id += 1;

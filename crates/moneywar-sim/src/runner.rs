@@ -459,8 +459,9 @@ fn build_state(runner: &SimRunner) -> GameState {
     }
 
     // NPC-Ciftci (yeni v4) — uzman, sezonluk mahsul akışı
+    // v0.4.1: Sezon başı starter stok (200 birim prime ham, kendi şehri).
     for _ in 0..runner.include_npcs.ciftci {
-        let npc = Player::new(
+        let mut npc = Player::new(
             PlayerId::new(next_id),
             format!("Ciftci-{next_id}"),
             Role::Tuccar,
@@ -469,6 +470,14 @@ fn build_state(runner: &SimRunner) -> GameState {
         )
         .unwrap()
         .with_kind(moneywar_domain::NpcKind::Ciftci);
+        let city_idx = (next_id as usize) % CityId::ALL.len();
+        let city = CityId::ALL[city_idx];
+        let prime = s
+            .city_specialty
+            .get(&city)
+            .copied()
+            .unwrap_or_else(|| city.cheap_raw());
+        let _ = npc.inventory.add(city, prime, 200);
         s.news_subscriptions
             .insert(PlayerId::new(next_id), NewsTier::Free);
         s.players.insert(npc.id, npc);

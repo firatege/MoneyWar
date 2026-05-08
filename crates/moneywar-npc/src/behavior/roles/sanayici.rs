@@ -110,8 +110,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
                         .unwrap_or(Money::ZERO)
                 });
-                // Cross tavanı: baseline × 1.10 (fab açlık → daha yüksek razı).
-                let cash_ceiling = scale_pct(reference, 110);
+                // Cross tavanı: baseline × 1.15 (v0.4.1: 1.10 → 1.15 — sezon
+                // boyu BUY/SELL 3-6× kıtlık, fab idle %50 sebep "ham fiyatı
+                // ceiling'e ulaşmıyor". Sanayici daha pahalıya almaya razı,
+                // ham match akışı artar).
+                let cash_ceiling = scale_pct(reference, 115);
                 let Some(unit_price) = marketable_bid(
                     state,
                     player.id,
