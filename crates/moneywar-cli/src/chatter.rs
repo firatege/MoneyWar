@@ -329,6 +329,8 @@ fn short_city(city: &moneywar_domain::CityId) -> &'static str {
         CityId::Istanbul => "İstanbul",
         CityId::Izmir => "İzmir",
         CityId::Ankara => "Ankara",
+        CityId::Bursa => "Bursa",
+        CityId::Konya => "Konya",
     }
 }
 

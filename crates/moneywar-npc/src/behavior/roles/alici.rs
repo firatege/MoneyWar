@@ -140,12 +140,11 @@ mod tests {
     }
 
     #[test]
-    fn rich_alici_emits_nine_buy_candidates() {
+    fn rich_alici_emits_buy_candidates_per_city_product() {
         let (s, p) = alici_with_cash(100_000);
         let cands = enumerate(&s, &p);
-        // 3 şehir × 3 mamul = 9 aday (baseline > 0 olmalı; sim runner doluyor
-        // ama bu test fresh_state kullanıyor → baseline None → fallback fiyat).
-        assert_eq!(cands.len(), 9);
+        // v0.6.0: 5 şehir × 3 mamul = 15 aday (baseline > 0 olmalı).
+        assert_eq!(cands.len(), 15);
         for cand in &cands {
             let ActionCandidate::SubmitOrder { side, product, .. } = cand else {
                 panic!("Alıcı sadece SubmitOrder emit etmeli");
@@ -267,7 +266,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(pairs.len(), 9);
+        // v0.6.0: 5 şehir × 3 mamul = 15.
+        assert_eq!(pairs.len(), 15);
         for city in CityId::ALL {
             for product in ProductKind::FINISHED_GOODS {
                 assert!(pairs.contains(&(city, product)));

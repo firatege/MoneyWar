@@ -518,10 +518,12 @@ fn build_state(runner: &SimRunner) -> GameState {
             let j = rng.random_range(0..=i);
             raws.swap(i, j);
         }
-        let prime_per_city: [(CityId, ProductKind); 3] = [
+        let prime_per_city: [(CityId, ProductKind); 5] = [
             (CityId::Istanbul, raws[0]),
             (CityId::Ankara, raws[1]),
             (CityId::Izmir, raws[2]),
+            (CityId::Bursa, ProductKind::Pamuk),
+            (CityId::Konya, ProductKind::Bugday),
         ];
         s.seed_city_profiles(prime_per_city);
     }

@@ -294,13 +294,16 @@ impl GameThresholds {
     }
 }
 
-/// 18 (city, product) bucket'tan kaç tanesi ölü (sezon boyu hiç clearing yok).
-/// Mean across runs.
+/// (city, product) bucket'lardan kaç tanesi ölü (sezon boyu hiç clearing yok).
+/// v0.6.0: 5 şehir × 6 ürün = 30 bucket. Mean across runs.
 fn count_dead_buckets(runs: &[SimResult]) -> f64 {
     use std::collections::BTreeSet;
     if runs.is_empty() {
         return 0.0;
     }
+    let total_buckets = u32::try_from(moneywar_domain::CityId::ALL.len())
+        .unwrap_or(5)
+        .saturating_mul(6);
     let mut total_dead: u32 = 0;
     for r in runs {
         let mut active: BTreeSet<(u8, u8)> = BTreeSet::new();
@@ -311,8 +314,8 @@ fn count_dead_buckets(runs: &[SimResult]) -> f64 {
                 }
             }
         }
-        // 3 şehir × 6 ürün = 18.
-        total_dead += 18 - active.len() as u32;
+        let active_count = u32::try_from(active.len()).unwrap_or(total_buckets);
+        total_dead += total_buckets.saturating_sub(active_count);
     }
     f64::from(total_dead) / runs.len() as f64
 }
@@ -377,7 +380,7 @@ pub fn audit_game_with_runs(
         let dead = count_dead_buckets(runs);
         out.push(CheckResult {
             label: format!(
-                "Ölü bucket ≤ {} / 18 (pazar dolaşımı)",
+                "Ölü bucket ≤ {} / 30 (pazar dolaşımı)",
                 thresholds.max_dead_buckets
             ),
             passed: dead <= f64::from(thresholds.max_dead_buckets),

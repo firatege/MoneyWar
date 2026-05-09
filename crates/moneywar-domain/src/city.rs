@@ -1,20 +1,24 @@
-//! 3 şehir (game-design.md §3): İstanbul, Ankara, İzmir.
+//! v0.6.0: 5 şehir — İstanbul, Ankara, İzmir, Bursa, Konya.
 //!
 //! Her şehir:
 //! - Bir ham maddeyi ucuza üretir (doğal uzmanlaşma)
 //! - Kendi talep profiline sahiptir (luxury / staple / balanced)
 //! - Diğerlerine asimetrik mesafede yer alır (tick cinsinden)
+//!
+//! Sprint A: Bursa (sanayi şehri) + Konya (tarım merkezi) eklendi.
 
 use serde::{Deserialize, Serialize};
 
 use crate::ProductKind;
 
-/// Oyundaki 3 şehir.
+/// Oyundaki 5 şehir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum CityId {
     Istanbul,
     Ankara,
     Izmir,
+    Bursa,
+    Konya,
 }
 
 /// Bir şehrin bir ürüne olan talep seviyesi.
@@ -27,31 +31,47 @@ pub enum DemandLevel {
 
 impl CityId {
     /// Tüm şehirler (deterministik sıra).
-    pub const ALL: [Self; 3] = [Self::Istanbul, Self::Ankara, Self::Izmir];
+    pub const ALL: [Self; 5] = [
+        Self::Istanbul,
+        Self::Ankara,
+        Self::Izmir,
+        Self::Bursa,
+        Self::Konya,
+    ];
 
     /// Bu şehrin ucuza ürettiği ham madde.
+    /// İst=Pamuk (Marmara), Ank=Buğday (İç Anadolu), İzm=Zeytin (Ege),
+    /// Bursa=Pamuk (Marmara üreticisi, İst ile paylaşır → arbitraj kapanır),
+    /// Konya=Buğday (Konya ovası, Ankara ile paylaşır).
     #[must_use]
     pub const fn cheap_raw(self) -> ProductKind {
         match self {
             Self::Istanbul => ProductKind::Pamuk,
             Self::Ankara => ProductKind::Bugday,
             Self::Izmir => ProductKind::Zeytin,
+            Self::Bursa => ProductKind::Pamuk,
+            Self::Konya => ProductKind::Bugday,
         }
     }
 
-    /// İki şehir arası tick cinsinden mesafe. Aynı şehir = 0.
-    ///
-    /// | Rota | Tick |
-    /// |------|------|
-    /// | İstanbul ↔ Ankara | 3 |
-    /// | Ankara ↔ İzmir | 2 |
-    /// | İstanbul ↔ İzmir | 4 |
+    /// İki şehir arası tick cinsinden mesafe (Türkiye coğrafyası).
+    /// Bursa İstanbul'a yakın (1), Konya Ankara/İzmir arası (2-3).
     #[must_use]
+    #[allow(clippy::match_same_arms)]
     pub const fn distance_to(self, other: Self) -> u32 {
-        match (self, other) {
+        // Aynı şehir = 0
+        if matches!(
+            (self, other),
             (Self::Istanbul, Self::Istanbul)
-            | (Self::Ankara, Self::Ankara)
-            | (Self::Izmir, Self::Izmir) => 0,
+                | (Self::Ankara, Self::Ankara)
+                | (Self::Izmir, Self::Izmir)
+                | (Self::Bursa, Self::Bursa)
+                | (Self::Konya, Self::Konya)
+        ) {
+            return 0;
+        }
+        match (self, other) {
+            // Eski 3 şehir mesafeleri
             (Self::Istanbul, Self::Ankara) | (Self::Ankara, Self::Istanbul) => {
                 crate::balance::DIST_ISTANBUL_ANKARA
             }
@@ -61,6 +81,17 @@ impl CityId {
             (Self::Istanbul, Self::Izmir) | (Self::Izmir, Self::Istanbul) => {
                 crate::balance::DIST_ISTANBUL_IZMIR
             }
+            // Bursa: İstanbul'un yakın komşusu
+            (Self::Istanbul, Self::Bursa) | (Self::Bursa, Self::Istanbul) => 1,
+            (Self::Ankara, Self::Bursa) | (Self::Bursa, Self::Ankara) => 3,
+            (Self::Izmir, Self::Bursa) | (Self::Bursa, Self::Izmir) => 3,
+            // Konya: İç Anadolu, Ankara'ya yakın, İzmir'e orta
+            (Self::Ankara, Self::Konya) | (Self::Konya, Self::Ankara) => 2,
+            (Self::Istanbul, Self::Konya) | (Self::Konya, Self::Istanbul) => 4,
+            (Self::Izmir, Self::Konya) | (Self::Konya, Self::Izmir) => 3,
+            (Self::Bursa, Self::Konya) | (Self::Konya, Self::Bursa) => 3,
+            // Aynı şehir kombinasyonları yukarıda erken return ile yakalandı.
+            _ => 0,
         }
     }
 
@@ -69,15 +100,16 @@ impl CityId {
     /// - İstanbul: lüks mal (bitmiş ürünler) talebi yüksek
     /// - Ankara: temel gıda (Buğday, Un) talebi yüksek
     /// - İzmir: dengeli (hepsi Normal)
+    /// - Bursa: sanayi şehri — Kumaş yüksek talep (tekstil tarihçesi)
+    /// - Konya: tarım merkezi — Un + Buğday yüksek talep
     #[must_use]
     #[allow(clippy::match_same_arms)]
     pub const fn demand_for(self, product: ProductKind) -> DemandLevel {
         match (self, product) {
-            // İstanbul: luxury finished goods
             (Self::Istanbul, ProductKind::Kumas | ProductKind::Zeytinyagi) => DemandLevel::High,
-            // Ankara: staple foods (ham + işlenmiş)
             (Self::Ankara, ProductKind::Bugday | ProductKind::Un) => DemandLevel::High,
-            // İzmir + diğerleri
+            (Self::Bursa, ProductKind::Kumas) => DemandLevel::High,
+            (Self::Konya, ProductKind::Un | ProductKind::Bugday) => DemandLevel::High,
             _ => DemandLevel::Normal,
         }
     }
@@ -89,6 +121,8 @@ impl CityId {
             Self::Istanbul => "İstanbul",
             Self::Ankara => "Ankara",
             Self::Izmir => "İzmir",
+            Self::Bursa => "Bursa",
+            Self::Konya => "Konya",
         }
     }
 
@@ -106,6 +140,8 @@ impl CityId {
             Self::Istanbul => 3,
             Self::Ankara => 2,
             Self::Izmir => 1,
+            Self::Bursa => 2, // sanayi şehri, orta
+            Self::Konya => 1, // tarım merkezi, düşük (arbitraj cazip)
         }
     }
 }
@@ -121,8 +157,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_contains_three_cities() {
-        assert_eq!(CityId::ALL.len(), 3);
+    fn all_contains_five_cities() {
+        // v0.6.0 Sprint A: Bursa + Konya eklendi.
+        assert_eq!(CityId::ALL.len(), 5);
     }
 
     #[test]
@@ -137,15 +174,14 @@ mod tests {
     }
 
     #[test]
-    fn each_city_produces_distinct_raw() {
+    fn each_city_produces_some_raw() {
+        // v0.6.0: Bursa+Konya İstanbul/Ankara ile ham paylaşır
+        // (specialty rekabeti — arbitraj kapanır).
         assert_eq!(CityId::Istanbul.cheap_raw(), ProductKind::Pamuk);
         assert_eq!(CityId::Ankara.cheap_raw(), ProductKind::Bugday);
         assert_eq!(CityId::Izmir.cheap_raw(), ProductKind::Zeytin);
-
-        let raws: Vec<ProductKind> = CityId::ALL.iter().map(|c| c.cheap_raw()).collect();
-        assert_eq!(raws.len(), 3);
-        assert_ne!(raws[0], raws[1]);
-        assert_ne!(raws[1], raws[2]);
+        assert_eq!(CityId::Bursa.cheap_raw(), ProductKind::Pamuk);
+        assert_eq!(CityId::Konya.cheap_raw(), ProductKind::Bugday);
     }
 
     #[test]

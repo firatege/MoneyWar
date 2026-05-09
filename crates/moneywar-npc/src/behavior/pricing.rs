@@ -33,6 +33,8 @@ pub fn jitter_pct(
         CityId::Istanbul => 1,
         CityId::Ankara => 2,
         CityId::Izmir => 3,
+        CityId::Bursa => 4,
+        CityId::Konya => 5,
     };
     let product_idx: u64 = match product {
         ProductKind::Pamuk => 1,

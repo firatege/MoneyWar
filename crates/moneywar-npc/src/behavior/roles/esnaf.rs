@@ -192,9 +192,8 @@ mod tests {
     }
 
     #[test]
-    fn rich_esnaf_emits_nine_raw_buy_candidates() {
-        // Esnaf gerçek toptancı: 3 şehir × 3 ham = 9 BUY raw.
-        // Off-specialty bucket'larda da BUY → Tüccar getirdi mal alıcı bulur.
+    fn rich_esnaf_emits_raw_buy_candidates_per_city_product() {
+        // v0.6.0: 5 şehir × 3 ham = 15 BUY raw.
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
@@ -202,7 +201,7 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, .. } if product.is_raw()))
             .count();
-        assert_eq!(buy_count, 9, "3 şehir × 3 ham = 9 BUY raw");
+        assert_eq!(buy_count, 15, "5 şehir × 3 ham = 15 BUY raw");
     }
 
     #[test]

@@ -525,7 +525,8 @@ mod tests {
 
     #[test]
     fn no_factory_falls_back_to_specialty_raw() {
-        // Fab yoksa fallback: her şehirin specialty raw'ı (3 BUY).
+        // v0.6.0: 5 şehir × specialty = 5 BUY (Ist=Pamuk, Ank=Bug, Izm=Zey,
+        // Bursa=Pamuk, Konya=Bug).
         let s = fresh();
         let p = sanayici(50_000);
         let cands = enumerate(&s, &p);
@@ -533,7 +534,7 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, .. } if product.is_raw()))
             .count();
-        assert_eq!(buy_count, 3, "fab yok → fallback specialty (3 BUY)");
+        assert_eq!(buy_count, 5, "fab yok → fallback specialty (5 BUY)");
         for c in &cands {
             if let ActionCandidate::SubmitOrder {
                 side: OrderSide::Buy,
@@ -574,8 +575,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // Fab Kumaş üretiyor → raw_input Pamuk → 3 şehirde BUY emit
-        assert_eq!(pamuk_buys.len(), 3, "Kumaş fab → Pamuk talebi her şehirde");
+        // v0.6.0: Fab Kumaş → Pamuk her 5 şehirde BUY emit
+        assert_eq!(pamuk_buys.len(), 5, "Kumaş fab → Pamuk talebi her şehirde");
     }
 
     #[test]

@@ -1782,10 +1782,14 @@ fn seed_world(
             let j = rng.random_range(0..=i);
             raws.swap(i, j);
         }
-        let prime_per_city: [(CityId, ProductKind); 3] = [
+        // v0.6.0 Sprint A: 5 şehir. Bursa Pamuk (Marmara), Konya Bugday
+        // (İç Anadolu) — coğrafya tabanlı uzmanlaşma, eski 3 ile tutarlı.
+        let prime_per_city: [(CityId, ProductKind); 5] = [
             (CityId::Istanbul, raws[0]),
             (CityId::Ankara, raws[1]),
             (CityId::Izmir, raws[2]),
+            (CityId::Bursa, ProductKind::Pamuk),
+            (CityId::Konya, ProductKind::Bugday),
         ];
         s.seed_city_profiles(prime_per_city);
     }
@@ -8680,6 +8684,8 @@ fn city_short(city: CityId) -> &'static str {
         CityId::Istanbul => "İstanbul",
         CityId::Ankara => "Ankara",
         CityId::Izmir => "İzmir",
+        CityId::Bursa => "Bursa",
+        CityId::Konya => "Konya",
     }
 }
 

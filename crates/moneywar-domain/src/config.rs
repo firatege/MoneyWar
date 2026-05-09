@@ -83,27 +83,20 @@ const fn default_banka() -> u8 {
 }
 
 impl NpcComposition {
-    /// Default: 2 Sanayici, 4 Tüccar, 8 Alıcı, 0 Esnaf, 0 Spekülatör,
-    /// 6 Çiftçi (2/ham), 3 Banka = 23 NPC. v0.5.1: Sanayici 5→1→2.
-    /// 1 Sanayici tek mamul üretiyor → 2 ham bucket BUY tarafında ölü
-    /// (Pamuk talep yok, Bugday talep yok gibi). 2 Sanayici 2 farklı
-    /// mamul üretir → tüm ham bucket'larda talep oluşur. Çok değil
-    /// (eski 5 kronik arz fazlasıydı), denge için 2 yeterli.
-    /// v8.19: Esnaf emekli. v8.24: Spek emekli.
+    /// Default: 2 Sanayici, 4 Tüccar, 10 Alıcı, 0 Esnaf, 0 Spekülatör,
+    /// 10 Çiftçi (5 şehir × 2), 3 Banka = 29 NPC.
+    /// v0.6.0 Sprint A: Şehir 3→5 (Bursa + Konya). Çiftçi 6→10 (her
+    /// şehir 2 Çiftçi), Alıcı 8→10 (Bursa Kumaş + Konya Un talebi).
+    /// v0.5.1: Sanayici 2 (kronik arz fazlası kırıldı). Spek/Esnaf emekli.
     #[must_use]
     pub const fn default_const() -> Self {
         Self {
             sanayici: 2,
             tuccar: 4,
-            alici: 8,
+            alici: 10,
             esnaf: 0,
-            // v8.24: Spek emekli — Hard mode'da -304K zarar (3 NPC × -100K).
-            // SELL match=0 (ASK %101 baseline hiç eşleşmiyor), ham depoda
-            // birikiyor. Para sızıntısı: Spek → Tüccar/Çiftçi. Çıkarınca
-            // ham BUY tarafı %30 azalır ama Sanayici cross + tâtonnement
-            // ile dengelenir. NPC altyapısı korundu (kompozisyon 0).
             spekulator: 0,
-            ciftci: 6,
+            ciftci: 10,
             banka: 3,
         }
     }
@@ -511,18 +504,17 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_sim_aligned_23_npc() {
-        // v0.5.1: Sanayici 5→2 (5: kronik arz; 1: ham bucket'larında talep
-        // boşluğu). 2 ile her ham bucket için talep var. Toplam 26→23.
+    fn npc_composition_default_is_sim_aligned_29_npc() {
+        // v0.6.0 Sprint A: 5 şehir → Çiftçi 6→10, Alıcı 8→10. Toplam 23→29.
         let c = NpcComposition::default_const();
         assert_eq!(c.sanayici, 2);
         assert_eq!(c.tuccar, 4);
-        assert_eq!(c.alici, 8);
+        assert_eq!(c.alici, 10);
         assert_eq!(c.esnaf, 0);
         assert_eq!(c.spekulator, 0);
-        assert_eq!(c.ciftci, 6);
+        assert_eq!(c.ciftci, 10);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 23);
+        assert_eq!(c.total(), 29);
     }
 
     #[test]

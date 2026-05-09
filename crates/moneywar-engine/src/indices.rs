@@ -41,6 +41,8 @@ impl IndexKind {
             Self::City(CityId::Istanbul) => "🏛 İst",
             Self::City(CityId::Ankara) => "🏛 Ank",
             Self::City(CityId::Izmir) => "🏛 İzm",
+            Self::City(CityId::Bursa) => "🏛 Bur",
+            Self::City(CityId::Konya) => "🏛 Kon",
             Self::Ana => "📊 Ana",
         }
     }
@@ -54,6 +56,8 @@ impl IndexKind {
             Self::City(CityId::Istanbul) => "🏛 İstanbul",
             Self::City(CityId::Ankara) => "🏛 Ankara",
             Self::City(CityId::Izmir) => "🏛 İzmir",
+            Self::City(CityId::Bursa) => "🏛 Bursa",
+            Self::City(CityId::Konya) => "🏛 Konya",
             Self::Ana => "📊 Ana",
         }
     }
@@ -222,8 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn all_indices_returns_six() {
+    fn all_indices_returns_eight() {
+        // v0.6.0 Sprint A: 5 şehir → 5 city + Tarım + Sanayi + Ana = 8.
         let s = fresh();
-        assert_eq!(all_indices(&s).len(), 6);
+        assert_eq!(all_indices(&s).len(), 8);
     }
 }

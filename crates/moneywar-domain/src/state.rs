@@ -318,7 +318,7 @@ impl GameState {
     /// `secondary = prime'ın bir sonraki raw`, `demand = onun bir sonrası`.
     /// Her şehirde 3 slot 3 farklı raw → 9 (şehir × ham) bucket'tan 9'u da
     /// ekonomik anlamlı (3 prime, 3 secondary, 3 demand).
-    pub fn seed_city_profiles(&mut self, prime_per_city: [(CityId, ProductKind); 3]) {
+    pub fn seed_city_profiles(&mut self, prime_per_city: [(CityId, ProductKind); 5]) {
         for (city, prime) in prime_per_city {
             let secondary = next_raw(prime);
             let demand = next_raw(secondary);
@@ -547,6 +547,8 @@ mod tests {
             (CityId::Istanbul, ProductKind::Pamuk),
             (CityId::Ankara, ProductKind::Bugday),
             (CityId::Izmir, ProductKind::Zeytin),
+            (CityId::Bursa, ProductKind::Pamuk),
+            (CityId::Konya, ProductKind::Bugday),
         ]);
         for city in CityId::ALL {
             let prime = s.city_specialty[&city];
@@ -560,26 +562,23 @@ mod tests {
     }
 
     #[test]
-    fn seed_city_profiles_covers_all_nine_buckets() {
+    fn seed_city_profiles_covers_buckets() {
         let mut s = empty_state();
         s.seed_city_profiles([
             (CityId::Istanbul, ProductKind::Pamuk),
             (CityId::Ankara, ProductKind::Bugday),
             (CityId::Izmir, ProductKind::Zeytin),
+            (CityId::Bursa, ProductKind::Pamuk),
+            (CityId::Konya, ProductKind::Bugday),
         ]);
-        // Her ham × her slot kombinasyonu en az bir şehirde olmalı (tüm
-        // bucket'lar besleniyor: 3 prime + 3 secondary + 3 demand = 9).
+        // 5 şehir × 3 slot = 15 entry. Tek bucket çakışmaz.
         let mut covered = std::collections::BTreeSet::new();
         for city in CityId::ALL {
             covered.insert((city, s.city_specialty[&city]));
             covered.insert((city, s.city_secondary[&city]));
             covered.insert((city, s.city_demand[&city]));
         }
-        assert_eq!(
-            covered.len(),
-            9,
-            "9 bucket'tan {} kapsanıyor",
-            covered.len()
-        );
+        // 5 şehir × 3 slot = 15
+        assert_eq!(covered.len(), 15);
     }
 }
