@@ -66,6 +66,9 @@ pub struct SimRunner {
     pub human_role: Role,
     pub human_starting_cash_lira: i64,
     pub include_npcs: NpcComposition,
+    /// v0.5.1: TUI debug log ile aynı format. Her tick event akışı +
+    /// `<bucket>` snapshot yazılır. None → log yok (eski davranış).
+    pub debug_log_path: Option<std::path::PathBuf>,
 }
 
 const HUMAN_ID: PlayerId = PlayerId::new(1);
@@ -83,7 +86,14 @@ impl SimRunner {
             human_role: Role::Sanayici,
             human_starting_cash_lira: 25_000,
             include_npcs: NpcComposition::default(),
+            debug_log_path: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_debug_log(mut self, path: std::path::PathBuf) -> Self {
+        self.debug_log_path = Some(path);
+        self
     }
 
     #[must_use]
@@ -114,6 +124,32 @@ impl SimRunner {
         let mut action_mix_by_kind: std::collections::BTreeMap<String, RoleActionMix> =
             std::collections::BTreeMap::new();
         let mut bank_loans_issued: u32 = 0;
+
+        // v0.5.1: TUI ile aynı format debug log. Tick event akışı + bucket
+        // snapshot her tick sonu yazılır. None → log yok.
+        let mut debug_file = self
+            .debug_log_path
+            .as_ref()
+            .and_then(|p| std::fs::File::create(p).map(std::io::BufWriter::new).ok());
+        if let Some(f) = &mut debug_file {
+            use std::io::Write;
+            let _ = writeln!(f, "# MoneyWar sim debug log");
+            let _ = writeln!(f, "# seed: {}", self.seed);
+            let _ = writeln!(f, "# ticks: {}", self.ticks);
+            let _ = writeln!(f, "# difficulty: {:?}", self.difficulty);
+            let _ = writeln!(
+                f,
+                "# npcs: sanayici={} tuccar={} alici={} ciftci={} banka={} (total={})",
+                self.include_npcs.sanayici,
+                self.include_npcs.tuccar,
+                self.include_npcs.alici,
+                self.include_npcs.ciftci,
+                self.include_npcs.banka,
+                self.include_npcs.total()
+            );
+            let _ = writeln!(f, "# format: t{{tick}}  {{actor:<22}}  {{event:?}}");
+            let _ = writeln!(f, "# ---");
+        }
 
         // Tick 0 snapshot (başlangıç).
         let initial_report = TickReport::new(Tick::ZERO);
@@ -191,6 +227,15 @@ impl SimRunner {
 
             snapshots.push(TickSnapshot::from_state(&state, &report, tick));
             traces.push(tick_trace);
+
+            // v0.5.1: Debug log writer — TUI ile aynı format.
+            if let Some(f) = &mut debug_file {
+                write_tick_debug(f, &state, &report);
+            }
+        }
+        if let Some(f) = &mut debug_file {
+            use std::io::Write;
+            let _ = f.flush();
         }
 
         SimResult {
@@ -210,6 +255,129 @@ impl SimRunner {
 ///
 /// `kind_label` `Debug` çıktısı (`"Ciftci"`, `"Sanayici"` …). Yasak aksiyon
 /// emit edildiyse `forbidden_action_count` artar — gate ihlali demek.
+/// v0.5.1: TUI debug log ile aynı format. Tick event akışı + bucket
+/// snapshot. Her tick sonu çağrılır.
+fn write_tick_debug(
+    f: &mut std::io::BufWriter<std::fs::File>,
+    state: &GameState,
+    report: &TickReport,
+) {
+    use std::io::Write;
+    let tick = state.current_tick.value();
+
+    // Event akışı (TUI format ile aynı).
+    for entry in &report.entries {
+        let actor_str = entry
+            .actor
+            .map(|a| {
+                state
+                    .players
+                    .get(&a)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| format!("#{}", a.value()))
+            })
+            .unwrap_or_else(|| "system".into());
+        let _ = writeln!(
+            f,
+            "t{:>3}  {:<22}  {:?}",
+            entry.tick.value(),
+            actor_str,
+            entry.event
+        );
+    }
+
+    // Tick özeti — matched/expired/rejected sayaçları.
+    use moneywar_engine::LogEvent;
+    let mut matched_cnt: u32 = 0;
+    let mut matched_qty: u32 = 0;
+    let mut expired_cnt: u32 = 0;
+    let mut rejected_cnt: u32 = 0;
+    let mut fill_rejected_cnt: u32 = 0;
+    for entry in &report.entries {
+        match &entry.event {
+            LogEvent::OrderMatched { quantity, .. } => {
+                matched_cnt += 1;
+                matched_qty += quantity;
+            }
+            LogEvent::OrderExpired { .. } => expired_cnt += 1,
+            LogEvent::CommandRejected { .. } => rejected_cnt += 1,
+            LogEvent::FillRejected { .. } => fill_rejected_cnt += 1,
+            _ => {}
+        }
+    }
+    let _ = writeln!(
+        f,
+        "t{tick:>3}  <tick-summary>           matched={matched_qty}u/{matched_cnt}fill expired={expired_cnt} cmd_reject={rejected_cnt} fill_reject={fill_rejected_cnt}",
+    );
+
+    // Bucket snapshot — last/avg5/baseline/bid/ask/spread/buy_q/sell_q/streak.
+    let _ = writeln!(
+        f,
+        "t{tick:>3}  <bucket-header>          bucket               last      avg5      base      bid       ask       spread  buy_q  sell_q  streak"
+    );
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            let last = state
+                .price_history
+                .get(&(city, product))
+                .and_then(|h| h.last().map(|(_, p)| format!("{p:>8}")))
+                .unwrap_or_else(|| "       -".into());
+            let avg5 = state
+                .rolling_avg_price(city, product, 5)
+                .map(|p| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let base = state
+                .price_baseline
+                .get(&(city, product))
+                .map(|p| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let bid = state
+                .best_bid(city, product)
+                .map(|(p, _)| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let ask = state
+                .best_ask(city, product)
+                .map(|(p, _)| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let spread = match (state.best_bid(city, product), state.best_ask(city, product)) {
+                (Some((b, _)), Some((a, _))) => {
+                    format!("{:>6}", a.as_cents().saturating_sub(b.as_cents()))
+                }
+                _ => "     -".into(),
+            };
+            let (buy_q, sell_q) = state
+                .order_book
+                .get(&(city, product))
+                .map(|book| {
+                    let bq: u32 = book
+                        .iter()
+                        .filter(|o| o.side.is_buy())
+                        .map(|o| o.quantity)
+                        .sum();
+                    let sq: u32 = book
+                        .iter()
+                        .filter(|o| o.side.is_sell())
+                        .map(|o| o.quantity)
+                        .sum();
+                    (bq, sq)
+                })
+                .unwrap_or((0, 0));
+            let streak = state
+                .no_match_streak
+                .iter()
+                .filter(|((_, c, p), _)| *c == city && *p == product)
+                .map(|(_, s)| *s)
+                .max()
+                .unwrap_or(0);
+            let bucket_label = format!("{}/{}", city.display_name(), product.display_name());
+            let _ = writeln!(
+                f,
+                "t{tick:>3}  <bucket>                 {bucket_label:<20} {last} {avg5} {base} {bid} {ask} {spread} {buy_q:>6} {sell_q:>6} {streak:>6}"
+            );
+        }
+    }
+}
+
 fn record_action(cmd: &Command, kind_label: &str, mix: &mut RoleActionMix, _state: &GameState) {
     mix.total_commands += 1;
     match cmd {

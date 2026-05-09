@@ -42,6 +42,7 @@ fn main() {
     let mut per_seed_dir: Option<String> = None;
     let mut threshold_report_out: Option<String> = None;
     let mut log_dir: Option<String> = None;
+    let mut debug_log: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -97,6 +98,10 @@ fn main() {
                 log_dir = Some(args[i + 1].clone());
                 i += 2;
             }
+            "--debug-log" => {
+                debug_log = Some(args[i + 1].clone());
+                i += 2;
+            }
             "-h" | "--help" => {
                 print_help();
                 return;
@@ -122,10 +127,13 @@ fn main() {
         seeds
             .iter()
             .map(|s| {
-                SimRunner::new(*s, scenario)
+                let mut runner = SimRunner::new(*s, scenario)
                     .with_ticks(ticks)
-                    .with_difficulty(diff)
-                    .run()
+                    .with_difficulty(diff);
+                if let Some(path) = &debug_log {
+                    runner = runner.with_debug_log(std::path::PathBuf::from(path));
+                }
+                runner.run()
             })
             .collect()
     };
