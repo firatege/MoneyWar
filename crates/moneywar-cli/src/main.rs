@@ -2139,8 +2139,10 @@ fn render_heatmap_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     for city in moneywar_domain::CityId::ALL {
         let mut row: Vec<Span> = Vec::new();
+        // v0.5: Şehir adı + tax%
+        let label = format!("{} %{}", city.display_name(), city.transaction_tax_pct());
         row.push(Span::styled(
-            format!("  {:<10}", city.display_name()),
+            format!("  {label:<14}"),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),

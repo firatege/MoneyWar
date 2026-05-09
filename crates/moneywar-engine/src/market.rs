@@ -33,7 +33,7 @@
 
 use moneywar_domain::{
     CityId, GameState, MarketOrder, Money, PlayerId, ProductKind, Tick,
-    balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT, TRANSACTION_TAX_PCT},
+    balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT},
 };
 
 use crate::report::{LogEntry, TickReport};
@@ -488,7 +488,10 @@ fn settle_segment(
     // İşlem vergisi: alıcıdan **ek** kesilir, sistem dışına atılır (hard sink).
     // EVE Online "broker fee + sales tax" karşılığı. Self-trade'de de uygulanır
     // (yıkama satışlarını cezalandırır).
-    let tax_cents = total.as_cents().saturating_mul(TRANSACTION_TAX_PCT) / 100;
+    // v0.5: Şehre özel tax — İstanbul %3, Ankara %2, İzmir %1.
+    // Düşük tax → arbitraj cazip; yüksek tax → likidite primi.
+    let city_tax_pct = city.transaction_tax_pct();
+    let tax_cents = total.as_cents().saturating_mul(city_tax_pct) / 100;
     let tax = Money::from_cents(tax_cents.max(0));
     let Ok(total_with_tax) = total.checked_add(tax) else {
         report.push(LogEntry::fill_rejected(
@@ -969,9 +972,13 @@ mod tests {
         clear_markets(&mut s, &mut r, Tick::new(1));
 
         // Pay-as-bid: trade fiyatı = BUY emrindeki limit (10₺).
-        // Toplam = 10 × 10 = 100₺. Buyer ek %TRANSACTION_TAX_PCT vergi.
+        // Toplam = 10 × 10 = 100₺. Buyer ek olarak şehir vergisini öder.
+        // v0.5: İstanbul %3.
         let total = Money::from_lira(100).unwrap();
-        let tax_cents = total.as_cents().saturating_mul(TRANSACTION_TAX_PCT) / 100;
+        let tax_cents = total
+            .as_cents()
+            .saturating_mul(CityId::Istanbul.transaction_tax_pct())
+            / 100;
         let total_with_tax = Money::from_cents(total.as_cents() + tax_cents);
         assert_eq!(
             s.players[&PlayerId::new(1)].cash,

@@ -91,6 +91,23 @@ impl CityId {
             Self::Izmir => "İzmir",
         }
     }
+
+    /// v0.5: Şehir başına işlem vergisi (yüzde). EVE Online "broker fee"
+    /// karşılığı: market clearing'inde alıcıdan ek olarak kesilir, sistem
+    /// dışına atılır (hard sink). Şehir karakteri:
+    /// - **İstanbul** %3 — büyük metropol, premium maliyet, lüks tüketim
+    /// - **Ankara** %2 — başkent, orta
+    /// - **İzmir** %1 — liman, kompetitif (arbitraj fırsatı)
+    ///
+    /// Düşük vergi → arbitraj cazip. Yüksek vergi → likidite primi.
+    #[must_use]
+    pub const fn transaction_tax_pct(self) -> i64 {
+        match self {
+            Self::Istanbul => 3,
+            Self::Ankara => 2,
+            Self::Izmir => 1,
+        }
+    }
 }
 
 impl std::fmt::Display for CityId {
@@ -106,6 +123,17 @@ mod tests {
     #[test]
     fn all_contains_three_cities() {
         assert_eq!(CityId::ALL.len(), 3);
+    }
+
+    #[test]
+    fn transaction_tax_per_city_distinct() {
+        // İstanbul yüksek → likidite primi; İzmir düşük → arbitraj cazip.
+        assert!(CityId::Istanbul.transaction_tax_pct() > CityId::Ankara.transaction_tax_pct());
+        assert!(CityId::Ankara.transaction_tax_pct() > CityId::Izmir.transaction_tax_pct());
+        // Hiçbiri 0 değil — closed-loop sink her şehirde aktif.
+        for c in CityId::ALL {
+            assert!(c.transaction_tax_pct() > 0);
+        }
     }
 
     #[test]
