@@ -66,7 +66,12 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let next_cost =
         moneywar_domain::Caravan::buy_cost(player.role, u32::try_from(owned_caravans).unwrap_or(0));
     let cash_reserve_threshold = Money::from_cents(player.cash.as_cents() / 3);
-    if any_arbitrage && next_cost <= cash_reserve_threshold {
+    // v0.5.1: Max 4 kervan/Tüccar. 11+ kervan'da satın alma maliyeti
+    // arbitraj kârından fazla (Tüccar -45K PnL → 79K kervan satın alıp
+    // -20K amortizasyon + dispatch fee). 4 kervan rotation 3 şehir + 1
+    // ek kapasite için yeterli, kervan sermayesi makul kalır.
+    let caravan_cap_reached = owned_caravans >= 4;
+    if any_arbitrage && !caravan_cap_reached && next_cost <= cash_reserve_threshold {
         let starting_city = CityId::ALL[owned_caravans % CityId::ALL.len()];
         out.push(ActionCandidate::BuyCaravan { starting_city });
     }
@@ -182,10 +187,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             });
         }
 
-        // SAT — stoğu olan **her** off-cheap şehirde SAT (sadece rich_city
-        // değil). Caravan dispatch rotation Ist veya Izm'e mal götürdüğünde
-        // o şehirde de SAT yaz → ölü ham bucket'lar canlanır.
-        // Fiyat: o şehirin baseline × 95 (Esnaf 95% BUY'u yakalar).
+        // SAT — stoğu olan **her** off-cheap şehirde SAT.
+        // v0.5.1: SELL fiyatı = max(best_bid × %100, buy_cost × 1.10).
+        // BID'a tam hizada (anlık match) ama maliyet tabanının altına asla.
+        // Eski %95 markdown Tüccar'ı zarara satırdı; şimdi nötr/kâr.
         for to_city in CityId::ALL {
             if to_city == cheap_city {
                 continue;
@@ -194,10 +199,6 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if stock == 0 {
                 continue;
             }
-            // SELL hedef fiyat: önce o şehirdeki en yüksek bid (Tüccar
-            // doğrudan o bid ile eşleşir), o yoksa reference_price.
-            // %95 markdown → bid'in altına gel, garanti eşleşme. Talep
-            // baskılı bucket'larda (1703 BUY 0 SELL) bu fiyat doğal yüksek.
             let to_target = best_bid_in_city(state, to_city, product)
                 .map(|m| m.as_cents())
                 .or_else(|| {
@@ -209,7 +210,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if to_target <= cheap_price.as_cents() {
                 continue;
             }
-            let sell_base = Money::from_cents(to_target.saturating_mul(95) / 100);
+            // Min kâr taban: maliyet × 1.10 (tax + minimum kâr).
+            let cost_floor = cheap_price.as_cents().saturating_mul(110) / 100;
+            // BID hizasında match için sell = best_bid (eşit). Kâr taban
+            // garantisi: ne olursa olsun cost_floor altına inme.
+            let sell_base = Money::from_cents(to_target.max(cost_floor));
             let sell_price = apply_jitter(
                 sell_base,
                 state.current_tick,
