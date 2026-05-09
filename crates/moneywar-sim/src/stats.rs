@@ -120,6 +120,10 @@ impl PerRunMetrics {
         // yatırımını hesaba katmıyordu.
         // fab_value = factory_count × ortalama maliyet (~7K ortalama 3 fab için).
         let avg_fab_value_cents: i64 = 700_000; // 7K lira ortalama
+        // v0.5.1: Kervan asset'i de PnL'e dahil. Tüccar 11 kervan satın alıp
+        // 89K cash kaybediyordu ama kervan PnL'de yoktu → -89K artefakt.
+        // avg_caravan_value: Tüccar [0, 3K, 6K, 10K] schedule, ortalama ~6K.
+        let avg_caravan_value_cents: i64 = 600_000;
         let mut pnl_by_role: BTreeMap<String, Vec<i64>> = BTreeMap::new();
         if let (Some(f), Some(l)) = (first, last) {
             for p_first in &f.players {
@@ -133,10 +137,12 @@ impl PerRunMetrics {
                         .unwrap_or_else(|| p_first.role.clone());
                     let total_first = p_first.cash_cents
                         + p_first.inventory_value_cents
-                        + i64::from(p_first.factory_count) * avg_fab_value_cents;
+                        + i64::from(p_first.factory_count) * avg_fab_value_cents
+                        + i64::from(p_first.caravan_count) * avg_caravan_value_cents;
                     let total_last = p_last.cash_cents
                         + p_last.inventory_value_cents
-                        + i64::from(p_last.factory_count) * avg_fab_value_cents;
+                        + i64::from(p_last.factory_count) * avg_fab_value_cents
+                        + i64::from(p_last.caravan_count) * avg_caravan_value_cents;
                     let pnl = (total_last - total_first) / 100;
                     pnl_by_role.entry(role_label).or_default().push(pnl);
                 }

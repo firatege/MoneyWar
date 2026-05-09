@@ -60,16 +60,20 @@ pub fn score_player(state: &GameState, player_id: PlayerId) -> PlayerScore {
     let stock_value = compute_stock_value(state, player_id);
     let factory_value = compute_factory_value(state, player_id, state.current_tick);
     let escrow_value = compute_escrow_value(state, player_id);
+    let caravan_value = compute_caravan_value(state, player_id);
 
     // PnL skor: mevcut varlık - başlangıç sermayesi.
     // Pasif oyuncu (hiçbir şey yapmayan) PnL=0 → leaderboard dibinde.
     // Aktif kâr eden NPC/oyuncu pozitif skor → üstte. Bu sayede skor
     // **performans**'ı ölçer, yalnızca sahip olunan sermayeyi değil.
+    // v0.5.1: Kervan asset'i de ekleniyor. Tüccar 11 kervan satın alıp
+    // 89K cash kaybediyordu ama kervan'lar PnL'de yoktu → -89K artefakt.
     let current_total_cents = cash
         .as_cents()
         .saturating_add(stock_value.as_cents())
         .saturating_add(factory_value.as_cents())
-        .saturating_add(escrow_value.as_cents());
+        .saturating_add(escrow_value.as_cents())
+        .saturating_add(caravan_value.as_cents());
     let pnl_cents = current_total_cents.saturating_sub(player.starting_cash.as_cents());
 
     PlayerScore {
@@ -154,6 +158,32 @@ fn compute_factory_value(state: &GameState, player_id: PlayerId, current: Tick) 
             .saturating_mul(moneywar_domain::balance::FACTORY_SCORE_NUM)
             / moneywar_domain::balance::FACTORY_SCORE_DEN;
         total = total.saturating_add(scored);
+    }
+    Money::from_cents(total)
+}
+
+/// v0.5.1: Kervan asset değeri — buy_cost'un %50'si (factory ile aynı).
+/// Tüccar/Sanayici 1+ kervan satın alır, satın alma cash sızıntısı
+/// görünmesin diye PnL'de geri kazanılır.
+fn compute_caravan_value(state: &GameState, player_id: PlayerId) -> Money {
+    let owned: Vec<&moneywar_domain::Caravan> = state
+        .caravans
+        .values()
+        .filter(|c| c.owner == player_id)
+        .collect();
+    if owned.is_empty() {
+        return Money::ZERO;
+    }
+    let role = state
+        .players
+        .get(&player_id)
+        .map(|p| p.role)
+        .unwrap_or(moneywar_domain::Role::Tuccar);
+    let mut total: i64 = 0;
+    for (idx, _) in owned.iter().enumerate() {
+        let cost = moneywar_domain::Caravan::buy_cost(role, u32::try_from(idx).unwrap_or(u32::MAX));
+        // %50 — factory ile aynı recovery oranı
+        total = total.saturating_add(cost.as_cents() / 2);
     }
     Money::from_cents(total)
 }

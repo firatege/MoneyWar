@@ -29,6 +29,7 @@ pub struct PlayerSnapshot {
     /// NPC'ye ait fabrika sayısı. `PnL`'de fab sermaye yatırımını hesaba katmak için.
     #[serde(default)]
     pub factory_count: u32,
+    pub caravan_count: u32,
 }
 
 /// `(city, product)` bucket için aktif emir özeti.
@@ -96,6 +97,9 @@ impl TickSnapshot {
                 let factory_count =
                     u32::try_from(state.factories.values().filter(|f| f.owner == *id).count())
                         .unwrap_or(0);
+                let caravan_count =
+                    u32::try_from(state.caravans.values().filter(|c| c.owner == *id).count())
+                        .unwrap_or(0);
                 PlayerSnapshot {
                     id: id.value(),
                     name: p.name.clone(),
@@ -112,6 +116,7 @@ impl TickSnapshot {
                     inventory_total: p.inventory.total_units(),
                     inventory_value_cents,
                     factory_count,
+                    caravan_count,
                 }
             })
             .collect();
