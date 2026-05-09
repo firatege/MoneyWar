@@ -544,6 +544,20 @@ fn build_state(runner: &SimRunner) -> GameState {
     s.players.insert(human.id, human);
     s.news_subscriptions.insert(HUMAN_ID, NewsTier::Free);
 
+    // v0.5.1: World player (PlayerId 0) — engine-driven baseline mamul
+    // üretici. tick_world_factories her N tick 9 mamul bucket'a arz inject
+    // eder. Sim'de yoksa world fab çalışmıyor → İzmir mamulleri gibi
+    // Sanayici fab'ı olmayan bucket'lar ölü kalıyor (TUI ile farklılık).
+    let world = Player::new(
+        PlayerId::new(moneywar_domain::balance::WORLD_PLAYER_ID_VALUE),
+        "Dünya Üretim",
+        Role::Tuccar,
+        Money::from_lira(0).unwrap(),
+        true,
+    )
+    .unwrap();
+    s.players.insert(world.id, world);
+
     let mut next_id: u64 = 100;
 
     // NPC-Tüccar
