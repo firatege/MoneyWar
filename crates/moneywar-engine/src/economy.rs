@@ -27,14 +27,11 @@ use crate::report::{LogEntry, TickReport};
 const WAGE_PERIOD: u32 = 10;
 /// Sanayici fabrikası başına ücret (lira) — her wage period'da Sanayici'den
 /// çıkar, Alıcı'lara eşit dağıtılır. Closed-loop ekonomi.
-/// Faz E tuning: 100 → 250. Behavior motorda Sanayici +27K, Alıcı -60K idi.
-/// 2.5× pompa: 250 × 9 sefer × ~3 fab = 6.75K transfer/Sanayici, 8 Alıcı'ya
-/// ~22.5K toplam akış → Sanayici dengelenir, Alıcı kaybı azalır.
-/// Faz F2 tuning: 250 → 400. Esnaf perakendeci (yeni tedarik zinciri)
-/// Alıcı'dan daha fazla para çekiyor (+21K Esnaf kârı).
-/// Faz F4: 400 → 500. Alıcı hâlâ -92K eşiğe yakın, wages 25% ek pompa
-/// ile -75K civarına iner.
-const WAGE_PER_FACTORY_LIRA: i64 = 500;
+/// v0.5.1: 500 → 1500. Sanayici 5→2 sonrası fab sayısı azaldı; Alıcı'ya
+/// akış düştü → mamul talebi söndü, BUY=0 bucket'lar oluştu. Wage 3x
+/// pompa: 1500 × 9 sefer × ~3 fab = 40K transfer/Sanayici/sezon,
+/// 8 Alıcı'ya ~10K/Alıcı/sezon — talep yeniden canlanır.
+const WAGE_PER_FACTORY_LIRA: i64 = 1500;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;

@@ -450,7 +450,7 @@ fn build_state(runner: &SimRunner) -> GameState {
             PlayerId::new(next_id),
             format!("Alici-{next_id}"),
             Role::Tuccar,
-            Money::from_lira(100_000).unwrap(),
+            Money::from_lira(150_000).unwrap(), // v0.5.1: 100K → 150K
             true,
         )
         .unwrap()

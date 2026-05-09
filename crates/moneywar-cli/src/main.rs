@@ -1929,15 +1929,18 @@ fn seed_world(
     }
 
     // NPC-Alıcı(lar) — saf alıcı, 100k nakit, stok yok.
-    // Eski 200K çoktu — sezon sonunda NPC'ler 100K+ kullanılmamış parayla
-    // kalıyordu. 3 NPC × 100K = 300K toplam talep, hâlâ bol ama atık az.
+    // v0.5.1: 100K → 150K. Sanayici 5→2 düştüğünde wage closed-loop çıktısı
+    // azaldı (her 10 tick fab başına 500₺ × 2-3 fab = 1-1.5K/10t/Alıcı),
+    // Alıcı sezon sonunda 95% para kaybediyordu → mamul talebi söndü →
+    // mamul bucket'larında BUY=0. Daha geniş başlangıç tabanı + ileride
+    // wage tuning'i ile dengeleyeceğiz.
     for _ in 0..composition.alici {
         let name = pick_npc_name(&mut rng, NpcKind::Alici, &mut used_names);
         let npc = Player::new(
             PlayerId::new(next_id),
             name,
             Role::Tuccar,
-            Money::from_lira(100_000).unwrap(),
+            Money::from_lira(150_000).unwrap(),
             true,
         )
         .unwrap()
