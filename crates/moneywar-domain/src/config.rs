@@ -83,16 +83,16 @@ const fn default_banka() -> u8 {
 }
 
 impl NpcComposition {
-    /// Default: 5 Sanayici, 4 Tüccar, 8 Alıcı, 0 Esnaf, 3 Spekülatör,
-    /// 6 Çiftçi (2/ham), 3 Banka = 29 NPC. v8.19: Esnaf emekli edildi —
-    /// matematik paradoksu (60K cash ama 429K BUY accept; engine
-    /// `settle_segment` buyer_ok bypass'ı), tedarik zinciri Çiftçi (ham) →
-    /// Sanayici (mamul) → Alıcı (tüketim) zaten net. Esnaf middleman
-    /// katmanı oyun mantığı katmıyordu, sadece para sızıntısı + gürültü.
+    /// Default: 1 Sanayici, 4 Tüccar, 8 Alıcı, 0 Esnaf, 0 Spekülatör,
+    /// 6 Çiftçi (2/ham), 3 Banka = 22 NPC. v0.5.1: Sanayici 5→1 — kronik
+    /// arz fazlası (5×80 birim/tick mamul), Istanbul/Kumas'ta BUY 0
+    /// olmasına rağmen sürekli SELL bombardımanı vardı. Tek Sanayici
+    /// rakip + insan oyuncuya gerçek mamul rekabeti hissi verir.
+    /// v8.19: Esnaf emekli — matematik paradoksu. v8.24: Spek emekli.
     #[must_use]
     pub const fn default_const() -> Self {
         Self {
-            sanayici: 5,
+            sanayici: 1,
             tuccar: 4,
             alici: 8,
             esnaf: 0,
@@ -510,17 +510,17 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_sim_aligned_26_npc() {
-        // v8.24: Spek emekli (spekulator=0). Toplam 29 → 26.
+    fn npc_composition_default_is_sim_aligned_22_npc() {
+        // v0.5.1: Sanayici 5→1 (kronik arz fazlası kırıldı). Toplam 26→22.
         let c = NpcComposition::default_const();
-        assert_eq!(c.sanayici, 5);
+        assert_eq!(c.sanayici, 1);
         assert_eq!(c.tuccar, 4);
         assert_eq!(c.alici, 8);
         assert_eq!(c.esnaf, 0);
         assert_eq!(c.spekulator, 0);
         assert_eq!(c.ciftci, 6);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 26);
+        assert_eq!(c.total(), 22);
     }
 
     #[test]

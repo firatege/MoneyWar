@@ -143,7 +143,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     }
 
     for product in ProductKind::ALL {
-        let Some((cheap_city, cheap_price)) = cheapest_city(state, product) else {
+        // v0.5.1: NPC-spesifik bucket bias — bot army kırılması.
+        let Some((cheap_city, cheap_price)) =
+            bias_cheap_city(state, product, player.id, state.current_tick)
+        else {
             continue;
         };
         let Some((rich_city, rich_price)) = richest_city(state, product) else {
@@ -404,6 +407,49 @@ fn cheapest_city(state: &GameState, product: ProductKind) -> Option<(CityId, Mon
         .map(|city| (city, baseline_or_default(state, city, product)))
         .filter(|(_, p)| p.as_cents() > 0)
         .min_by_key(|(_, p)| p.as_cents())
+}
+
+/// v0.5.1: NPC-spesifik şehir bias — `cheapest_city` deterministic tek
+/// winner döndürür, 4 Tüccar aynı bucket'a yığılır (bot army).
+/// Bunun yerine fiyat-sıralı top-N (3 şehir = full liste) içinden
+/// `(player_id, tick, product)` hash'iyle birini seç. En ucuz olan yine
+/// %60 ihtimalle çıkar (weighted), ama 2./3. de %25/%15 şansla seçilir.
+fn bias_cheap_city(
+    state: &GameState,
+    product: ProductKind,
+    player_id: moneywar_domain::PlayerId,
+    tick: moneywar_domain::Tick,
+) -> Option<(CityId, Money)> {
+    let mut cands: Vec<(CityId, Money)> = CityId::ALL
+        .iter()
+        .copied()
+        .map(|city| (city, baseline_or_default(state, city, product)))
+        .filter(|(_, p)| p.as_cents() > 0)
+        .collect();
+    if cands.is_empty() {
+        return None;
+    }
+    cands.sort_by_key(|(_, p)| p.as_cents());
+    let mix = u64::from(tick.value())
+        .wrapping_mul(2_654_435_761)
+        .wrapping_add(player_id.value().wrapping_mul(11_400_714_785_074_694_791))
+        .wrapping_add((product as u64).wrapping_mul(1_597_334_677));
+    // %60/25/15 ağırlıklı seçim; sadece 1 veya 2 şehir varsa fallback en ucuza.
+    let r = (mix % 100) as u32;
+    let idx = if cands.len() >= 3 {
+        if r < 60 {
+            0
+        } else if r < 85 {
+            1
+        } else {
+            2
+        }
+    } else if cands.len() == 2 {
+        if r < 70 { 0 } else { 1 }
+    } else {
+        0
+    };
+    Some(cands[idx])
 }
 
 fn richest_city(state: &GameState, product: ProductKind) -> Option<(CityId, Money)> {
