@@ -143,6 +143,10 @@ pub fn marketable_ask(
     // SELL tarafında urgency floor'ı **düşürür** — daha agresif satış.
     let softened_floor = scale_pct(stock_floor, 100 - urgency);
 
+    let crossed = matches!(policy, CrossPolicy::Cross)
+        && state
+            .best_bid(city, product)
+            .is_some_and(|(b, _)| b >= softened_floor);
     let target = match policy {
         CrossPolicy::Cross => match state.best_bid(city, product) {
             Some((bid, _)) if bid >= softened_floor => bid,
@@ -150,11 +154,18 @@ pub fn marketable_ask(
         },
         CrossPolicy::Passive => softened_floor,
     };
-    let jittered = apply_jitter(target, tick, city, product, OrderSide::Sell, player);
-    if jittered.as_cents() <= 0 {
+    // v0.5.1 fix: Cross policy'de target = best_bid; jitter sonrası SELL > BID
+    // olursa match yok (jitter ±3% bid'in altına ezebilir). SELL Cross'ta
+    // jitter yok — atomik bid eşleşmesi garantili. Passive'de jitter normal.
+    let final_price = if crossed {
+        target
+    } else {
+        apply_jitter(target, tick, city, product, OrderSide::Sell, player)
+    };
+    if final_price.as_cents() <= 0 {
         return None;
     }
-    Some(jittered)
+    Some(final_price)
 }
 
 /// BUY emir için marketable fiyat hesabı (Sanayici, Alıcı, Spek-BID, Tüccar BUY).
@@ -180,6 +191,10 @@ pub fn marketable_bid(
     // BUY tarafında urgency ceiling'i **yükseltir** — daha pahalıya razı.
     let softened_ceiling = scale_pct(cash_ceiling, 100 + urgency);
 
+    let crossed = matches!(policy, CrossPolicy::Cross)
+        && state
+            .best_ask(city, product)
+            .is_some_and(|(a, _)| a <= softened_ceiling);
     let target = match policy {
         CrossPolicy::Cross => match state.best_ask(city, product) {
             Some((ask, _)) if ask <= softened_ceiling => ask,
@@ -187,11 +202,17 @@ pub fn marketable_bid(
         },
         CrossPolicy::Passive => softened_ceiling,
     };
-    let jittered = apply_jitter(target, tick, city, product, OrderSide::Buy, player);
-    if jittered.as_cents() <= 0 {
+    // v0.5.1 fix: Cross policy'de target = best_ask; jitter sonrası BUY < ASK
+    // olursa match yok. BUY Cross'ta jitter yok — atomik ask eşleşmesi.
+    let final_price = if crossed {
+        target
+    } else {
+        apply_jitter(target, tick, city, product, OrderSide::Buy, player)
+    };
+    if final_price.as_cents() <= 0 {
         return None;
     }
-    Some(jittered)
+    Some(final_price)
 }
 
 fn scale_pct(price: Money, pct: i64) -> Money {
