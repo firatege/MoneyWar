@@ -291,6 +291,20 @@ fn match_continuous(
             };
             let price = Money::from_cents(raw_price.as_cents().clamp(low_cents, high_cents));
 
+            // v0.5.1 fix: clamp limit ihlal etmemeli. Pay-as-bid + clamp
+            // kombinasyonu kullanıcının limit'ini eziyordu — feb @49 SELL
+            // emri Ali Bey @54 BUY ile eşleşip clamp 46'ya düşürüldüğünde
+            // 46'da satılıyordu. Limit korunmalı: clamp sonrası fiyat
+            // SELL'in altına veya BUY'un üstüne düşerse match'i atla.
+            let (buy_limit, sell_limit) = if incoming.side.is_buy() {
+                (incoming.unit_price, best.unit_price)
+            } else {
+                (best.unit_price, incoming.unit_price)
+            };
+            if price < sell_limit || price > buy_limit {
+                break;
+            }
+
             let (buy_id, sell_id, buyer, seller) = if incoming.side.is_buy() {
                 (incoming.id, best.id, incoming.player, best.player)
             } else {
@@ -950,6 +964,41 @@ mod tests {
     // -----------------------------------------------------------------------
     // Faz 3C: Settlement + Saturation + price_history testleri
     // -----------------------------------------------------------------------
+
+    /// v0.5.1: clamp + pay-as-bid kombinasyonu SELL limit'i ihlal
+    /// etmemeli. Sahnesi: baseline 10₺ → clamp [%25, %175] = [2.5, 17.5].
+    /// BUY emir 50₺ verilse bile clamp ile 17.5'e düşer; SELL @20₺
+    /// (clamp üstü) match olmamalı, kullanıcı 20'nin altına satmaz.
+    #[test]
+    fn clamp_does_not_violate_sell_limit() {
+        let mut s = state();
+        seed_players(&mut s, &[1, 2]);
+        let initial_stock = s.players[&PlayerId::new(2)]
+            .inventory
+            .get(CityId::Istanbul, ProductKind::Pamuk);
+        // baseline 10 → clamp upper 17.5
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Pamuk),
+            Money::from_lira(10).unwrap(),
+        );
+        populate(
+            &mut s,
+            vec![
+                order(1, 1, OrderSide::Buy, 10, 50),  // BUY @50, clamp ile 17.5
+                order(2, 2, OrderSide::Sell, 10, 20), // SELL @20, clamp üstü
+            ],
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        clear_markets(&mut s, &mut r, Tick::new(1));
+        // SELL @20 clamp 17.5'e ezilemez → match yok, stok değişmez.
+        assert_eq!(
+            s.players[&PlayerId::new(2)]
+                .inventory
+                .get(CityId::Istanbul, ProductKind::Pamuk),
+            initial_stock,
+            "SELL @20 limit korunmalı, satılmamalı"
+        );
+    }
 
     #[test]
     fn settlement_transfers_cash_and_inventory() {
