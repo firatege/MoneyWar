@@ -1,7 +1,7 @@
 # MoneyWar — Feature Roadmap
 
 > **Son güncelleme**: 2026-05-09
-> **Şu anki sürüm**: `v0.4.1`
+> **Şu anki sürüm**: `v0.5.0`
 > Bekleyen feature'lar, statü, öncelik ve dependency'ler.
 
 ## 📚 Statü göstergeleri
@@ -33,7 +33,20 @@
 
 ---
 
-## v0.5.0 — Sıradaki Sprint
+## v0.5.0 — Tamamlanan
+
+| Feature | Statü | Not |
+|---|---|---|
+| Borsa endeks banner | ✅ | Tarım/Sanayi/3 şehir/Ana 6 endeks, header altı 1 satır |
+| Heatmap overlay (`H`) | ✅ | 3×6 fiyat haritası, baseline %sapma renklendirme |
+| Watchlist overlay (`W`) | ✅ | İzleme listesi, `:watch`/`:unwatch` komutları |
+| Charts dashboard (`k`) | ✅ | Endeks trend + en volatil 8 bucket |
+| Şehre özel işlem vergisi | ✅ | İst %3, Ank %2, İzm %1 — arbitraj asimetrisi |
+| NPC dialog derinleştirme | ✅ | Reactive (`@isim`) + ShockEvent + IndexShift |
+
+---
+
+## v0.6.0 — Sıradaki Sprint
 
 ### 🚧 Sprint A — Yeni şehirler (öncelik: yüksek)
 **Hedef**: 3 → 5 şehir (Bursa + Konya).
@@ -132,7 +145,7 @@ impl EconomyTuning {
 
 ---
 
-## v0.6.0 — Orta vadeli
+## v0.7.0 — Orta vadeli
 
 ### 📋 Sprint C — Çoklu girdi mamul (tier-2)
 **Statü**: Plan var.
@@ -245,6 +258,9 @@ impl EconomyTuning {
 | 2026-05-08 | TTL cap 50 → 200 | User passive playstyle |
 | 2026-05-08 | Sezon: sadece Hızlı (90 tick) | User: "Standart/Uzun gerek yok" |
 | 2026-05-09 | Ürün-spesifik üretim | User: "gerçekçi yapalım" |
+| 2026-05-09 | Sprint UI-1: endeks/heatmap/watchlist/charts | User: "ui ux tarafında dedigin seyleri yap" |
+| 2026-05-09 | Sprint TAX: şehre özel vergi | User: "sehire ozel tax isi de okey" |
+| 2026-05-09 | Sprint CHAT: NPC dialog derinleştirme | User: "chatte olsun aralrinda konusabilirler" |
 
 ---
 
