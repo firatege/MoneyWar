@@ -954,6 +954,115 @@ fn write_city_snapshot(f: &mut BufWriter<std::fs::File>, state: &GameState) {
     }
 }
 
+/// v0.5.1: Tick sonu detaylı bucket snapshot — "bu tickte ne oldu?" sorusu
+/// için. Her (city, product) için tek satır:
+/// - **last**: son clearing fiyatı (yoksa `-`)
+/// - **avg5**: son 5 tick rolling avg (yoksa `-`)
+/// - **base**: anlık baseline (Walras tâtonnement-shifted)
+/// - **bid/ask**: kitaptaki en iyi BUY/SELL fiyatı (yoksa `-`)
+/// - **spread**: ask-bid (sadece ikisi de varsa)
+/// - **buy_qty / sell_qty**: bekleyen toplam emir miktarı (kitap)
+/// - **streak**: en yüksek no_match_streak (uyumsuzluk göstergesi)
+fn write_bucket_snapshot(
+    f: &mut BufWriter<std::fs::File>,
+    state: &GameState,
+    report: &moneywar_engine::TickReport,
+) {
+    use moneywar_engine::LogEvent;
+    let tick = state.current_tick.value();
+    // Tick içi event sayaçlarını topla.
+    let mut matched_cnt: u32 = 0;
+    let mut matched_qty: u32 = 0;
+    let mut expired_cnt: u32 = 0;
+    let mut rejected_cnt: u32 = 0;
+    let mut fill_rejected_cnt: u32 = 0;
+    for entry in &report.entries {
+        match &entry.event {
+            LogEvent::OrderMatched { quantity, .. } => {
+                matched_cnt += 1;
+                matched_qty += quantity;
+            }
+            LogEvent::OrderExpired { .. } => expired_cnt += 1,
+            LogEvent::CommandRejected { .. } => rejected_cnt += 1,
+            LogEvent::FillRejected { .. } => fill_rejected_cnt += 1,
+            _ => {}
+        }
+    }
+    let _ = writeln!(
+        f,
+        "t{:>3}  <tick-summary>           matched={matched_qty}u/{matched_cnt}fill expired={expired_cnt} cmd_reject={rejected_cnt} fill_reject={fill_rejected_cnt}",
+        tick
+    );
+
+    let _ = writeln!(
+        f,
+        "t{:>3}  <bucket-header>          bucket               last      avg5      base      bid       ask       spread  buy_q  sell_q  streak",
+        tick
+    );
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            let last = state
+                .price_history
+                .get(&(city, product))
+                .and_then(|h| h.last().map(|(_, p)| format!("{p:>8}")))
+                .unwrap_or_else(|| "       -".into());
+            let avg5 = state
+                .rolling_avg_price(city, product, 5)
+                .map(|p| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let base = state
+                .price_baseline
+                .get(&(city, product))
+                .map(|p| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let bid = state
+                .best_bid(city, product)
+                .map(|(p, _)| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let ask = state
+                .best_ask(city, product)
+                .map(|(p, _)| format!("{p:>8}"))
+                .unwrap_or_else(|| "       -".into());
+            let spread = match (state.best_bid(city, product), state.best_ask(city, product)) {
+                (Some((b, _)), Some((a, _))) => {
+                    format!("{:>6}", a.as_cents().saturating_sub(b.as_cents()))
+                }
+                _ => "     -".into(),
+            };
+            let (buy_q, sell_q) = state
+                .order_book
+                .get(&(city, product))
+                .map(|book| {
+                    let bq: u32 = book
+                        .iter()
+                        .filter(|o| o.side.is_buy())
+                        .map(|o| o.quantity)
+                        .sum();
+                    let sq: u32 = book
+                        .iter()
+                        .filter(|o| o.side.is_sell())
+                        .map(|o| o.quantity)
+                        .sum();
+                    (bq, sq)
+                })
+                .unwrap_or((0, 0));
+            let streak = state
+                .no_match_streak
+                .iter()
+                .filter(|((_, c, p), _)| *c == city && *p == product)
+                .map(|(_, s)| *s)
+                .max()
+                .unwrap_or(0);
+            let bucket_label = format!("{}/{}", city.display_name(), product.display_name());
+            let _ = writeln!(
+                f,
+                "t{:>3}  <bucket>                 {:<20} {} {} {} {} {} {} {:>6} {:>6} {:>6}",
+                tick, bucket_label, last, avg5, base, bid, ask, spread, buy_q, sell_q, streak
+            );
+        }
+    }
+}
+
 /// `./debug/moneywar-{epoch}.log` dosyası açar. Klasör yoksa oluşturur.
 /// Başarısız olursa sessiz — debug opsiyoneldir, oyunu kırmasın.
 fn open_debug_file(balance: GameBalance) -> Option<BufWriter<std::fs::File>> {
@@ -1514,6 +1623,8 @@ impl App {
             // Tick'in event'leri yazıldıktan sonra şehir bazlı stok + son
             // fiyat dump'ı — "neden bu şehirde satış yok" analizi için.
             write_city_snapshot(f, &self.state);
+            // v0.5.1: Detaylı bucket snapshot — bid/ask/avg/baseline/streak.
+            write_bucket_snapshot(f, &self.state, report);
             let _ = f.flush();
         }
     }
