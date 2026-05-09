@@ -1538,7 +1538,30 @@ impl App {
     /// Bu tick'in raporundan kişiliğe uygun NPC söylenti satırlarını üretir,
     /// `chatter_log`'un sonuna ekler. Tampon `CHATTER_WINDOW` ile sınırlı.
     fn harvest_chatter(&mut self, report: &moneywar_engine::TickReport) {
-        let new_lines = generate_chatter(&self.state, report);
+        let mut new_lines = generate_chatter(&self.state, report);
+        // v0.5: Endeks değişimi chatter — Tarım/Sanayi/Ana ±%5 üstü hareket
+        // varsa rastgele bir NPC yorumlar. cached_indices_prev henüz güncellenmemiş
+        // olabilir; aynı tick içinde refresh_caches'ten önce çağrılırsa boş.
+        if !self.cached_indices_prev.is_empty() {
+            let tick = self.state.current_tick;
+            for idx in &self.cached_indices {
+                let prev = self
+                    .cached_indices_prev
+                    .iter()
+                    .find(|p| p.kind == idx.kind)
+                    .map(|p| p.value.as_cents())
+                    .unwrap_or(idx.value.as_cents());
+                if prev <= 0 {
+                    continue;
+                }
+                let pct = ((idx.value.as_cents() - prev) * 100) / prev;
+                if let Some(line) =
+                    chatter::generate_index_chatter(&self.state, tick, idx.kind.label(), pct)
+                {
+                    new_lines.push(line);
+                }
+            }
+        }
         for line in new_lines {
             if self.chatter_log.len() >= CHATTER_WINDOW {
                 self.chatter_log.pop_front();
