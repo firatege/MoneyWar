@@ -24,6 +24,7 @@ use crate::behavior::pricing::apply_jitter;
 /// Arbitraj eşiği — bu yüzdeden az spread varsa arbitraj kârsız.
 /// Faz F tuning: 20 → 15. Demand_for matrisi mamul baseline farkını
 /// %25-28 yaratıyor; ham specialty farkı %14-75 (çoğunlukla yeterli).
+/// v0.5.1: 10 denedi → Tüccar PnL kötüleşti (-122K). Geri %15.
 const ARBITRAGE_SPREAD_PCT: i64 = 15;
 
 /// Bir (şehir, ürün) için açık order book'taki en yüksek BUY emir fiyatı.

@@ -27,11 +27,11 @@ use crate::report::{LogEntry, TickReport};
 const WAGE_PERIOD: u32 = 10;
 /// Sanayici fabrikası başına ücret (lira) — her wage period'da Sanayici'den
 /// çıkar, Alıcı'lara eşit dağıtılır. Closed-loop ekonomi.
-/// v0.5.1: 500 → 1500. Sanayici 5→2 sonrası fab sayısı azaldı; Alıcı'ya
-/// akış düştü → mamul talebi söndü, BUY=0 bucket'lar oluştu. Wage 3x
-/// pompa: 1500 × 9 sefer × ~3 fab = 40K transfer/Sanayici/sezon,
-/// 8 Alıcı'ya ~10K/Alıcı/sezon — talep yeniden canlanır.
-const WAGE_PER_FACTORY_LIRA: i64 = 1500;
+/// v0.5.1: 1500 → 3500. Sim 10 seed Hard: Sanayici PnL +116K (eşik 80K üst
+/// aşıyor), Tüccar -115K (alt aşıyor), Alıcı -137K. Sanayici servet
+/// fazlasını Alıcı'ya geri pompala: 3500 × 9 sefer × ~3 fab = 95K/Sanayici,
+/// 8 Alıcı'ya ~24K/Alıcı/sezon. Sanayici PnL ~80K'ya iner, Alıcı -113K'ya.
+const WAGE_PER_FACTORY_LIRA: i64 = 3500;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
