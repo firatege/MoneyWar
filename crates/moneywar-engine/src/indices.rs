@@ -32,7 +32,7 @@ pub enum IndexKind {
 }
 
 impl IndexKind {
-    /// Endeks etiketi (UI render için).
+    /// Endeks etiketi — banner için kısa.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -41,6 +41,19 @@ impl IndexKind {
             Self::City(CityId::Istanbul) => "🏛 İst",
             Self::City(CityId::Ankara) => "🏛 Ank",
             Self::City(CityId::Izmir) => "🏛 İzm",
+            Self::Ana => "📊 Ana",
+        }
+    }
+
+    /// Endeks etiketi — overlay/charts için tam şehir adlı.
+    #[must_use]
+    pub const fn long_label(self) -> &'static str {
+        match self {
+            Self::Tarim => "🌾 Tarım",
+            Self::Sanayi => "🏭 Sanayi",
+            Self::City(CityId::Istanbul) => "🏛 İstanbul",
+            Self::City(CityId::Ankara) => "🏛 Ankara",
+            Self::City(CityId::Izmir) => "🏛 İzmir",
             Self::Ana => "📊 Ana",
         }
     }

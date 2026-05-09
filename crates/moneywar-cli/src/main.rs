@@ -2171,15 +2171,19 @@ fn render_heatmap_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ));
         for product in moneywar_domain::ProductKind::ALL {
-            let baseline = app
+            // v0.5 fix: "sezon başı baseline"a göre sapma — Walras tâtonnement
+            // ile kayan `price_baseline` değil, sezon başında dondurulan
+            // `price_baseline_initial`. Aksi halde tüm hücreler sürekli kırmızı.
+            let initial = app
                 .state
-                .price_baseline
+                .price_baseline_initial
                 .get(&(city, product))
                 .copied()
+                .or_else(|| app.state.price_baseline.get(&(city, product)).copied())
                 .unwrap_or(moneywar_domain::Money::ZERO);
-            let current = app.state.reference_price(city, product).unwrap_or(baseline);
-            let pct: i64 = if baseline.as_cents() > 0 {
-                ((current.as_cents() - baseline.as_cents()) * 100) / baseline.as_cents()
+            let current = app.state.reference_price(city, product).unwrap_or(initial);
+            let pct: i64 = if initial.as_cents() > 0 {
+                ((current.as_cents() - initial.as_cents()) * 100) / initial.as_cents()
             } else {
                 0
             };
@@ -2266,18 +2270,20 @@ fn render_watchlist_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )));
         for (city, product) in &app.watchlist {
-            let baseline = app
+            // Sezon başı baseline'a göre sapma (heatmap ile aynı mantık).
+            let initial = app
                 .state
-                .price_baseline
+                .price_baseline_initial
                 .get(&(*city, *product))
                 .copied()
+                .or_else(|| app.state.price_baseline.get(&(*city, *product)).copied())
                 .unwrap_or(moneywar_domain::Money::ZERO);
             let current = app
                 .state
                 .reference_price(*city, *product)
-                .unwrap_or(baseline);
-            let pct: i64 = if baseline.as_cents() > 0 {
-                ((current.as_cents() - baseline.as_cents()) * 100) / baseline.as_cents()
+                .unwrap_or(initial);
+            let pct: i64 = if initial.as_cents() > 0 {
+                ((current.as_cents() - initial.as_cents()) * 100) / initial.as_cents()
             } else {
                 0
             };
@@ -2348,26 +2354,23 @@ fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .map(|p| p.value.as_cents())
             .unwrap_or(idx.value.as_cents());
         let delta = idx.value.as_cents() - prev;
-        let pct: i64 = if prev > 0 { (delta * 100) / prev } else { 0 };
-        let color = if pct > 0 {
-            Color::Green
-        } else if pct < 0 {
-            Color::LightRed
+        // 1 ondalıklı yüzde — integer division +0% paradoksunu engeller.
+        let pct_milli: i64 = if prev > 0 { (delta * 1000) / prev } else { 0 };
+        // Arrow: pct_milli'ye göre — delta küçük ama tam yüzde 0 ise "·".
+        let (arrow, color) = if pct_milli > 0 {
+            ("↑", Color::Green)
+        } else if pct_milli < 0 {
+            ("↓", Color::LightRed)
         } else {
-            Color::DarkGray
+            ("·", Color::DarkGray)
         };
-        let arrow = if delta > 0 {
-            "↑"
-        } else if delta < 0 {
-            "↓"
-        } else {
-            "·"
-        };
+        let pct_int = pct_milli / 10;
+        let pct_dec = (pct_milli.abs() % 10) as u8;
         let lira = idx.value.as_cents() / 100;
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
-                format!("{:<14}", idx.kind.label()),
+                format!("{:<16}", idx.kind.long_label()),
                 Style::default().fg(Color::Cyan),
             ),
             Span::styled(
@@ -2377,7 +2380,7 @@ fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("{arrow} {pct:+}%"),
+                format!("{arrow} {pct_int:+}.{pct_dec}%"),
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -2400,15 +2403,17 @@ fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     )> = Vec::new();
     for city in moneywar_domain::CityId::ALL {
         for product in moneywar_domain::ProductKind::ALL {
-            let baseline = app
+            // Sezon başı baseline'a göre — heatmap ile aynı.
+            let initial = app
                 .state
-                .price_baseline
+                .price_baseline_initial
                 .get(&(city, product))
                 .copied()
+                .or_else(|| app.state.price_baseline.get(&(city, product)).copied())
                 .unwrap_or(moneywar_domain::Money::ZERO);
-            let current = app.state.reference_price(city, product).unwrap_or(baseline);
-            let pct: i64 = if baseline.as_cents() > 0 {
-                ((current.as_cents() - baseline.as_cents()) * 100) / baseline.as_cents()
+            let current = app.state.reference_price(city, product).unwrap_or(initial);
+            let pct: i64 = if initial.as_cents() > 0 {
+                ((current.as_cents() - initial.as_cents()) * 100) / initial.as_cents()
             } else {
                 0
             };
