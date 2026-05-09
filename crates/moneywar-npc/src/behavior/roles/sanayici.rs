@@ -151,7 +151,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).max(1).min(50);
-        let reference = state.reference_price(city, product).unwrap_or_else(|| {
+        // v0.5.1: rolling_avg self-reinforcing loop (eski yüksek clearing'ler
+        // NPC fiyat tavanını yukarı tutuyordu, Alıcı bütçesi yetmiyordu) için
+        // Sanayici reference = effective_baseline (Walras-shifted). Rolling avg
+        // değil. Walras imbalance'a göre kayan baseline gerçek piyasa dengesi.
+        let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
             Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                 .unwrap_or(Money::ZERO)
         });

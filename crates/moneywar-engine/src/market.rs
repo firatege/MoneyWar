@@ -166,15 +166,15 @@ fn clear_bucket(
         if total > 0 {
             let imbalance =
                 (i64::from(submitted_buy_qty) - i64::from(submitted_sell_qty)) * 1000 / total;
-            // v8.25: Asimetri agresifleştirildi — yukarı %0.3 → %0.2,
-            // aşağı %0.7 → %1.0. 150 tick sezonda 18↑/0↓ tek yönlü artış
-            // sorununa yanıt. Sezon boyu kümülatif net etki düşüşe doğru
-            // dengelenir. Reel piyasa "fiyat hızla düşer (panik), yavaş
-            // yükselir (talep)" davranışı amplify edildi.
+            // v0.5.1: Asimetri yumuşatıldı — yukarı %0.2, aşağı %1.0
+            // (eski) çok agresif düşüş. 90 tick'te %90'a varan düşüş +
+            // dar clamp [%25, %175] gerçek piyasa fiyatını ezerek match
+            // sabote ediyordu. Şimdi simetrik %0.3/%0.3. Stok drift
+            // (aşağıda) arz fazlasını ayrıca temsil eder.
             let mut factor_milli = if imbalance > 0 {
-                1000 + imbalance * 2 / 1000 // +%0.2/tick
+                1000 + imbalance * 3 / 1000 // +%0.3/tick
             } else {
-                1000 + imbalance * 10 / 1000 // -%1.0/tick
+                1000 + imbalance * 3 / 1000 // -%0.3/tick
             };
 
             // v8.24 (C): Stok-bazlı aşağı drift — threshold düşürüldü
