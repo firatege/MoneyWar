@@ -115,15 +115,18 @@ pub const SATURATION_MIN_PLAYERS: u8 = 2;
 pub const TRANSACTION_TAX_PCT: i64 = 2;
 
 /// Clearing fiyat clamp alt sınırı — taban fiyatın yüzdesi (Vic3 §market).
-/// Fiyat tabanın %25'inin altına inemez. Ani arz patlamasında dipler kaybolur,
-/// üreticiyi koruyan zemin.
-pub const PRICE_CLAMP_LOW_PCT: i64 = 25;
+/// Fiyat tabanın %10'unun altına inemez. Ani arz patlamasında manyak dipleri
+/// engeller, ama mevcut Walras tâtonnement baseline'ı kaydırırken clamp'ı
+/// dar tutmamalı. v0.5.1: %25 → %10 (NPC fiyatlama'nın %50-200 marjını boğmasın).
+pub const PRICE_CLAMP_LOW_PCT: i64 = 10;
 
-/// Clearing fiyat clamp üst sınırı — taban fiyatın yüzdesi (Vic3 §market).
-/// Fiyat tabanın %175'inin üstüne çıkamaz. Talep patlamasında tavanlar kaybolur,
-/// alıcıyı koruyan tavan. NOT: aktif şok zaten `effective_baseline`'a uygulanır,
-/// clamp şokun üstüne ek serbest hareket alanı bırakır.
-pub const PRICE_CLAMP_HIGH_PCT: i64 = 175;
+/// Clearing fiyat clamp üst sınırı — taban fiyatın yüzdesi.
+/// Fiyat tabanın %500'ünün üstüne çıkamaz. Talep patlamasında manyak tavanları
+/// engeller, geri kalan emirlerin gerçek piyasa fiyatına gitmesine izin verir.
+/// v0.5.1: %175 → %500. Walras baseline 23 olsa bile clearing 50-100 alanında
+/// rahat hareket eder. clamp_does_not_violate_sell_limit fix'i kullanıcı
+/// limit'lerini zaten koruyor; clamp sadece kötü-niyet için.
+pub const PRICE_CLAMP_HIGH_PCT: i64 = 500;
 
 // =============================================================================
 // Haber (4-tier abonelik, recurring tick fee)

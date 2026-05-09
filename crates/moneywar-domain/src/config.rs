@@ -83,16 +83,17 @@ const fn default_banka() -> u8 {
 }
 
 impl NpcComposition {
-    /// Default: 1 Sanayici, 4 Tüccar, 8 Alıcı, 0 Esnaf, 0 Spekülatör,
-    /// 6 Çiftçi (2/ham), 3 Banka = 22 NPC. v0.5.1: Sanayici 5→1 — kronik
-    /// arz fazlası (5×80 birim/tick mamul), Istanbul/Kumas'ta BUY 0
-    /// olmasına rağmen sürekli SELL bombardımanı vardı. Tek Sanayici
-    /// rakip + insan oyuncuya gerçek mamul rekabeti hissi verir.
-    /// v8.19: Esnaf emekli — matematik paradoksu. v8.24: Spek emekli.
+    /// Default: 2 Sanayici, 4 Tüccar, 8 Alıcı, 0 Esnaf, 0 Spekülatör,
+    /// 6 Çiftçi (2/ham), 3 Banka = 23 NPC. v0.5.1: Sanayici 5→1→2.
+    /// 1 Sanayici tek mamul üretiyor → 2 ham bucket BUY tarafında ölü
+    /// (Pamuk talep yok, Bugday talep yok gibi). 2 Sanayici 2 farklı
+    /// mamul üretir → tüm ham bucket'larda talep oluşur. Çok değil
+    /// (eski 5 kronik arz fazlasıydı), denge için 2 yeterli.
+    /// v8.19: Esnaf emekli. v8.24: Spek emekli.
     #[must_use]
     pub const fn default_const() -> Self {
         Self {
-            sanayici: 1,
+            sanayici: 2,
             tuccar: 4,
             alici: 8,
             esnaf: 0,
@@ -510,17 +511,18 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_sim_aligned_22_npc() {
-        // v0.5.1: Sanayici 5→1 (kronik arz fazlası kırıldı). Toplam 26→22.
+    fn npc_composition_default_is_sim_aligned_23_npc() {
+        // v0.5.1: Sanayici 5→2 (5: kronik arz; 1: ham bucket'larında talep
+        // boşluğu). 2 ile her ham bucket için talep var. Toplam 26→23.
         let c = NpcComposition::default_const();
-        assert_eq!(c.sanayici, 1);
+        assert_eq!(c.sanayici, 2);
         assert_eq!(c.tuccar, 4);
         assert_eq!(c.alici, 8);
         assert_eq!(c.esnaf, 0);
         assert_eq!(c.spekulator, 0);
         assert_eq!(c.ciftci, 6);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 22);
+        assert_eq!(c.total(), 23);
     }
 
     #[test]

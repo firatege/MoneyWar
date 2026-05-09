@@ -966,9 +966,9 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// v0.5.1: clamp + pay-as-bid kombinasyonu SELL limit'i ihlal
-    /// etmemeli. Sahnesi: baseline 10₺ → clamp [%25, %175] = [2.5, 17.5].
-    /// BUY emir 50₺ verilse bile clamp ile 17.5'e düşer; SELL @20₺
-    /// (clamp üstü) match olmamalı, kullanıcı 20'nin altına satmaz.
+    /// etmemeli. Sahnesi: baseline 10₺ → clamp [%10, %500] = [1, 50].
+    /// BUY emir 100₺ verilse bile clamp ile 50'ye düşer; SELL @60₺
+    /// (clamp üstü) match olmamalı, kullanıcı 60'ın altına satmaz.
     #[test]
     fn clamp_does_not_violate_sell_limit() {
         let mut s = state();
@@ -976,7 +976,7 @@ mod tests {
         let initial_stock = s.players[&PlayerId::new(2)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Pamuk);
-        // baseline 10 → clamp upper 17.5
+        // baseline 10 → clamp upper 50
         s.price_baseline.insert(
             (CityId::Istanbul, ProductKind::Pamuk),
             Money::from_lira(10).unwrap(),
@@ -984,19 +984,19 @@ mod tests {
         populate(
             &mut s,
             vec![
-                order(1, 1, OrderSide::Buy, 10, 50),  // BUY @50, clamp ile 17.5
-                order(2, 2, OrderSide::Sell, 10, 20), // SELL @20, clamp üstü
+                order(1, 1, OrderSide::Buy, 10, 100), // BUY @100, clamp ile 50
+                order(2, 2, OrderSide::Sell, 10, 60), // SELL @60, clamp üstü
             ],
         );
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
-        // SELL @20 clamp 17.5'e ezilemez → match yok, stok değişmez.
+        // SELL @60 clamp 50'ye ezilemez → match yok, stok değişmez.
         assert_eq!(
             s.players[&PlayerId::new(2)]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
             initial_stock,
-            "SELL @20 limit korunmalı, satılmamalı"
+            "SELL @60 limit korunmalı, satılmamalı"
         );
     }
 
