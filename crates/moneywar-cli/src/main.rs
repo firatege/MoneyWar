@@ -34,7 +34,7 @@
     clippy::enum_glob_use
 )]
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::io::{self, BufWriter, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -294,6 +294,18 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 // kayıtları. Kullanıcı emirlerinin neden başarısız olduğunu görür.
                 app.mode = Mode::Rejections;
             }
+            KeyCode::Char('H') => {
+                // v0.5: Heatmap overlay (3x6 fiyat haritası).
+                app.mode = Mode::Heatmap;
+            }
+            KeyCode::Char('W') => {
+                // v0.5: Watchlist overlay (favori bucket'lar).
+                app.mode = Mode::Watchlist;
+            }
+            KeyCode::Char('k') => {
+                // v0.5: Charts dashboard (endeks trendi).
+                app.mode = Mode::Charts;
+            }
             KeyCode::Char('N') => {
                 // Büyük N: HABER abonelik (küçük 'n' news inbox için).
                 app.mode = Mode::Wizard {
@@ -344,6 +356,14 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
                 if line.is_empty() {
                     return Ok(false);
                 }
+                // v0.5: UI-only komutlar (watch/unwatch) — Command enum'a girmez.
+                if let Some(handled) = handle_ui_only_command(app, &line) {
+                    match handled {
+                        Ok(msg) => app.set_status_ok(msg),
+                        Err(msg) => app.set_status_err(format!("Hata: {msg}")),
+                    }
+                    return Ok(false);
+                }
                 match parse_command(app, &line) {
                     Ok(cmd) => {
                         let label = describe_command(&cmd);
@@ -391,13 +411,19 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         | Mode::Contracts
         | Mode::Chatter
         | Mode::Leaderboard
-        | Mode::Rejections => match code {
+        | Mode::Rejections
+        | Mode::Heatmap
+        | Mode::Watchlist
+        | Mode::Charts => match code {
             // Overlay'i kapat — Esc burada güvenli (oyundan çıkmaz, panel kapanır).
             KeyCode::Esc
             | KeyCode::Enter
             | KeyCode::Char(' ')
             | KeyCode::Char('L')
-            | KeyCode::Char('F') => {
+            | KeyCode::Char('F')
+            | KeyCode::Char('H')
+            | KeyCode::Char('W')
+            | KeyCode::Char('k') => {
                 app.mode = Mode::Normal;
             }
             _ => {}
@@ -554,6 +580,15 @@ enum Mode {
     /// v8.23: Reddedilenler overlay — `F` ile açılır. Son CommandRejected +
     /// FillRejected sebebi, kullanıcı emirinin neden başarısız olduğunu görür.
     Rejections,
+    /// v0.5: Heatmap overlay — `H` ile açılır. 3 şehir × 6 ürün matrix,
+    /// baseline'a göre yüzde sapma rengi (yeşil=ucuz, kırmızı=pahalı).
+    Heatmap,
+    /// v0.5: Watchlist overlay — `W` ile açılır. Oyuncu favori bucket'lar
+    /// belirler, fiyat değişiminde uyarı alır.
+    Watchlist,
+    /// v0.5: Charts dashboard — `k` ile açılır. Tarım vs Sanayi endeks
+    /// trendi sparkline + en volatil bucket'lar.
+    Charts,
 }
 
 /// Tek bir reddedilme kaydı — TUI rejection_log buffer'ında tutulur.
@@ -790,6 +825,9 @@ struct App {
     /// için saklanır (delta hesabı).
     cached_indices: Vec<moneywar_engine::MarketIndex>,
     cached_indices_prev: Vec<moneywar_engine::MarketIndex>,
+    /// v0.5: Watchlist — oyuncunun favori bucket'ları. `W` overlay'inde
+    /// toggle edilir; price_baseline değişimi izlenir, status'a uyarı düşer.
+    watchlist: BTreeSet<(CityId, ProductKind)>,
     /// v8.23: Reddedilen komut + fill kayıtları — son 50. F tuşu overlay açar.
     rejection_log: VecDeque<RejectionEntry>,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
@@ -984,6 +1022,7 @@ impl App {
             cached_sparklines: std::collections::BTreeMap::new(),
             cached_indices: Vec::new(),
             cached_indices_prev: Vec::new(),
+            watchlist: BTreeSet::new(),
             rejection_log: VecDeque::with_capacity(50),
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
@@ -1983,6 +2022,9 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::GameOver => render_game_over_overlay(f, area, app),
         Mode::Wizard { ref wizard } => render_wizard_overlay(f, area, app, wizard),
         Mode::Rejections => render_rejections_overlay(f, area, app),
+        Mode::Heatmap => render_heatmap_overlay(f, area, app),
+        Mode::Watchlist => render_watchlist_overlay(f, area, app),
+        Mode::Charts => render_charts_overlay(f, area, app),
         _ => {}
     }
 }
@@ -2051,6 +2093,333 @@ fn render_rejections_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
         "  F / Esc / Enter — kapat",
         Style::default().fg(Color::DarkGray),
     )));
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+/// v0.5: Heatmap overlay — `H` tuşu. 3 şehir × 6 ürün matrix; her hücrede
+/// fiyat + baseline'a göre yüzde sapma renklendirilir. Yeşil = ucuz fırsat,
+/// kırmızı = pahalı (sat fırsatı), gri = nötr.
+fn render_heatmap_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(85, 70, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🔥  Fiyat Haritası — Yeşil ucuz, Kırmızı pahalı  ")
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+
+    // Header satırı: "          Pamuk    Bugday   ..."
+    let mut header: Vec<Span> = Vec::new();
+    header.push(Span::styled(
+        format!("  {:<10}", ""),
+        Style::default().fg(Color::DarkGray),
+    ));
+    for product in moneywar_domain::ProductKind::ALL {
+        header.push(Span::styled(
+            format!("{:<11}", product.display_name()),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    lines.push(Line::from(header));
+    lines.push(Line::from(Span::styled(
+        format!("  {}", "─".repeat(75)),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    for city in moneywar_domain::CityId::ALL {
+        let mut row: Vec<Span> = Vec::new();
+        row.push(Span::styled(
+            format!("  {:<10}", city.display_name()),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
+        for product in moneywar_domain::ProductKind::ALL {
+            let baseline = app
+                .state
+                .price_baseline
+                .get(&(city, product))
+                .copied()
+                .unwrap_or(moneywar_domain::Money::ZERO);
+            let current = app.state.reference_price(city, product).unwrap_or(baseline);
+            let pct: i64 = if baseline.as_cents() > 0 {
+                ((current.as_cents() - baseline.as_cents()) * 100) / baseline.as_cents()
+            } else {
+                0
+            };
+            let color = if pct >= 15 {
+                Color::Rgb(255, 80, 80)
+            } else if pct >= 5 {
+                Color::Rgb(255, 180, 80)
+            } else if pct <= -15 {
+                Color::Rgb(80, 255, 120)
+            } else if pct <= -5 {
+                Color::Rgb(140, 220, 140)
+            } else {
+                Color::Rgb(160, 160, 160)
+            };
+            let lira = current.as_cents() / 100;
+            let text = if pct == 0 {
+                format!("{lira:>4}₺ ·    ")
+            } else if pct > 0 {
+                format!("{lira:>4}₺ +{pct:>2}% ")
+            } else {
+                format!("{lira:>4}₺ {pct:>3}% ")
+            };
+            row.push(Span::styled(
+                text,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ));
+        }
+        lines.push(Line::from(row));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Sapma = anlık fiyat / sezon başı baseline. ±%5 nötr, ±%15 güçlü sinyal.",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  H / Esc / Enter — kapat",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+/// v0.5: Watchlist overlay — `W` tuşu. Oyuncunun favori bucket'ları.
+/// MVP: liste gösterir; ekleme komut satırından `:watch <city>/<product>`
+/// ile yapılır (Faz 1.3 sonraki sprint'te interaktif).
+fn render_watchlist_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(60, 60, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" ⭐  İzleme Listesi ({})  ", app.watchlist.len()))
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    if app.watchlist.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  İzleme listesi boş.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Eklemek için komut: :watch istanbul/un",
+            Style::default().fg(Color::Cyan),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Çıkarmak için: :unwatch istanbul/un",
+            Style::default().fg(Color::Cyan),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  Şehir       Ürün        Fiyat    Sapma",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )));
+        for (city, product) in &app.watchlist {
+            let baseline = app
+                .state
+                .price_baseline
+                .get(&(*city, *product))
+                .copied()
+                .unwrap_or(moneywar_domain::Money::ZERO);
+            let current = app
+                .state
+                .reference_price(*city, *product)
+                .unwrap_or(baseline);
+            let pct: i64 = if baseline.as_cents() > 0 {
+                ((current.as_cents() - baseline.as_cents()) * 100) / baseline.as_cents()
+            } else {
+                0
+            };
+            let color = if pct >= 15 {
+                Color::Red
+            } else if pct >= 5 {
+                Color::Yellow
+            } else if pct <= -15 {
+                Color::Green
+            } else if pct <= -5 {
+                Color::LightGreen
+            } else {
+                Color::Gray
+            };
+            let lira = current.as_cents() / 100;
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<11}", city.display_name())),
+                Span::raw(format!("{:<11}", product.display_name())),
+                Span::styled(format!("{lira:>5}₺   "), Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{pct:+}%"),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  W / Esc / Enter — kapat",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+/// v0.5: Charts dashboard — `k` tuşu. Tarım/Sanayi/Ana endeks trendi
+/// sparkline + en volatil 5 bucket. Hızlı durum bakışı.
+fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(80, 70, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📈  Borsa Grafikleri  ")
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Endeks trendi (son tick):",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    lines.push(Line::from(""));
+
+    for idx in &app.cached_indices {
+        let prev = app
+            .cached_indices_prev
+            .iter()
+            .find(|p| p.kind == idx.kind)
+            .map(|p| p.value.as_cents())
+            .unwrap_or(idx.value.as_cents());
+        let delta = idx.value.as_cents() - prev;
+        let pct: i64 = if prev > 0 { (delta * 100) / prev } else { 0 };
+        let color = if pct > 0 {
+            Color::Green
+        } else if pct < 0 {
+            Color::LightRed
+        } else {
+            Color::DarkGray
+        };
+        let arrow = if delta > 0 {
+            "↑"
+        } else if delta < 0 {
+            "↓"
+        } else {
+            "·"
+        };
+        let lira = idx.value.as_cents() / 100;
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("{:<14}", idx.kind.label()),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                format!("{lira:>5}₺  "),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{arrow} {pct:+}%"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  En volatil bucket'lar (|sapma| büyükten küçüğe):",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )));
+    lines.push(Line::from(""));
+
+    let mut volatility: Vec<(
+        moneywar_domain::CityId,
+        moneywar_domain::ProductKind,
+        i64,
+        i64,
+    )> = Vec::new();
+    for city in moneywar_domain::CityId::ALL {
+        for product in moneywar_domain::ProductKind::ALL {
+            let baseline = app
+                .state
+                .price_baseline
+                .get(&(city, product))
+                .copied()
+                .unwrap_or(moneywar_domain::Money::ZERO);
+            let current = app.state.reference_price(city, product).unwrap_or(baseline);
+            let pct: i64 = if baseline.as_cents() > 0 {
+                ((current.as_cents() - baseline.as_cents()) * 100) / baseline.as_cents()
+            } else {
+                0
+            };
+            volatility.push((city, product, pct, current.as_cents() / 100));
+        }
+    }
+    volatility.sort_by_key(|(_, _, pct, _)| -pct.abs());
+    for (city, product, pct, lira) in volatility.iter().take(8) {
+        let color = if *pct > 10 {
+            Color::Red
+        } else if *pct > 0 {
+            Color::Yellow
+        } else if *pct < -10 {
+            Color::Green
+        } else if *pct < 0 {
+            Color::LightGreen
+        } else {
+            Color::Gray
+        };
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {:<10}", city.display_name())),
+            Span::raw(format!("{:<11}", product.display_name())),
+            Span::styled(format!("{lira:>5}₺  "), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{pct:+}%"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  k / Esc / Enter — kapat",
+        Style::default().fg(Color::DarkGray),
+    )));
+
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });
     f.render_widget(para, inner);
 }
@@ -2867,6 +3236,12 @@ fn render_help_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ),
         help_kv("v", "🚚 Kervan kontrol paneli (detaylı + cargo)"),
         help_kv("g", "🛠 Debug log (ham event akışı, ↑↓ scroll)"),
+        help_kv(
+            "H",
+            "🔥 Fiyat haritası (heatmap — yeşil ucuz, kırmızı pahalı)",
+        ),
+        help_kv("W", "⭐ İzleme listesi (favori bucket'lar)"),
+        help_kv("k", "📈 Borsa grafikleri (endeks trendi + en volatil)"),
         help_kv("?", "Bu yardım"),
         help_kv("i", "Oyun kuralları"),
         help_kv("q", "Çıkış"),
@@ -7675,6 +8050,69 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
 // ---------------------------------------------------------------------------
 // Komut parser
 // ---------------------------------------------------------------------------
+
+/// v0.5: UI-only komut (watch/unwatch). Command enum'a yansımaz; sadece
+/// App state'i değişir. None → bilinmeyen komut, normal parse'a düş.
+fn handle_ui_only_command(app: &mut App, line: &str) -> Option<Result<String, String>> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let head = parts[0].to_lowercase();
+    let args = &parts[1..];
+    match head.as_str() {
+        "watch" => {
+            if args.len() != 1 {
+                return Some(Err("kullanım: watch <şehir>/<ürün>".into()));
+            }
+            let pair: Vec<&str> = args[0].split('/').collect();
+            if pair.len() != 2 {
+                return Some(Err("kullanım: watch istanbul/un".into()));
+            }
+            let city = match parse_city(pair[0]) {
+                Ok(c) => c,
+                Err(e) => return Some(Err(e)),
+            };
+            let product = match parse_product(pair[1]) {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
+            };
+            app.watchlist.insert((city, product));
+            Some(Ok(format!(
+                "⭐ İzleme listesine eklendi: {} / {}",
+                city.display_name(),
+                product.display_name()
+            )))
+        }
+        "unwatch" => {
+            if args.len() != 1 {
+                return Some(Err("kullanım: unwatch <şehir>/<ürün>".into()));
+            }
+            let pair: Vec<&str> = args[0].split('/').collect();
+            if pair.len() != 2 {
+                return Some(Err("kullanım: unwatch istanbul/un".into()));
+            }
+            let city = match parse_city(pair[0]) {
+                Ok(c) => c,
+                Err(e) => return Some(Err(e)),
+            };
+            let product = match parse_product(pair[1]) {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
+            };
+            if app.watchlist.remove(&(city, product)) {
+                Some(Ok(format!(
+                    "İzleme listesinden çıkarıldı: {} / {}",
+                    city.display_name(),
+                    product.display_name()
+                )))
+            } else {
+                Some(Err("bu bucket zaten listede değil".into()))
+            }
+        }
+        _ => None,
+    }
+}
 
 fn parse_command(app: &mut App, line: &str) -> Result<Command, String> {
     let parts: Vec<&str> = line.split_whitespace().collect();
