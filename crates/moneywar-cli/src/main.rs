@@ -2356,7 +2356,6 @@ fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         let delta = idx.value.as_cents() - prev;
         // 1 ondalıklı yüzde — integer division +0% paradoksunu engeller.
         let pct_milli: i64 = if prev > 0 { (delta * 1000) / prev } else { 0 };
-        // Arrow: pct_milli'ye göre — delta küçük ama tam yüzde 0 ise "·".
         let (arrow, color) = if pct_milli > 0 {
             ("↑", Color::Green)
         } else if pct_milli < 0 {
@@ -2364,8 +2363,11 @@ fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         } else {
             ("·", Color::DarkGray)
         };
-        let pct_int = pct_milli / 10;
-        let pct_dec = (pct_milli.abs() % 10) as u8;
+        // Manuel format: -7 → "-0.7%"; +12 → "+1.2%". `format!({:+})` int kısım
+        // 0 olunca işareti yutuyor (BUG: -0.7% yerine +0.7%).
+        let abs = pct_milli.abs();
+        let sign = if pct_milli < 0 { "-" } else { "+" };
+        let pct_str = format!("{sign}{}.{}%", abs / 10, abs % 10);
         let lira = idx.value.as_cents() / 100;
         lines.push(Line::from(vec![
             Span::raw("  "),
@@ -2380,7 +2382,7 @@ fn render_charts_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("{arrow} {pct_int:+}.{pct_dec}%"),
+                format!("{arrow} {pct_str}"),
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
         ]));
