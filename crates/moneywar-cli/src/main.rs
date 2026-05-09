@@ -785,6 +785,11 @@ struct App {
     /// güncelle, render'da olduğu gibi kullan. Auto-sim'de 21 hücre × 4
     /// alloc/render sayısı sıfıra iner.
     cached_sparklines: std::collections::BTreeMap<(CityId, ProductKind), String>,
+    /// v0.5: Borsa endeksleri — Tarım/Sanayi/Şehir×3/Ana = 6 endeks. Tick
+    /// başı hesaplanır, header banner'da gösterilir. Önceki değer trend
+    /// için saklanır (delta hesabı).
+    cached_indices: Vec<moneywar_engine::MarketIndex>,
+    cached_indices_prev: Vec<moneywar_engine::MarketIndex>,
     /// v8.23: Reddedilen komut + fill kayıtları — son 50. F tuşu overlay açar.
     rejection_log: VecDeque<RejectionEntry>,
     /// Startup ekranında girilen oyuncu adı buffer'ı. Boş ise "Sen" default.
@@ -977,6 +982,8 @@ impl App {
             balance_loaded,
             cached_leaderboard: Vec::new(),
             cached_sparklines: std::collections::BTreeMap::new(),
+            cached_indices: Vec::new(),
+            cached_indices_prev: Vec::new(),
             rejection_log: VecDeque::with_capacity(50),
             player_name_input: String::new(),
             selected_role: Role::Sanayici,
@@ -1101,6 +1108,9 @@ impl App {
                 }
             }
         }
+        // v0.5: Borsa endeksleri. Önceki değer trend için saklanır.
+        self.cached_indices_prev = std::mem::take(&mut self.cached_indices);
+        self.cached_indices = moneywar_engine::all_indices(&self.state);
     }
 
     fn start_game(&mut self, role: Role) {
@@ -1931,6 +1941,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),             // header
+            Constraint::Length(1),             // v0.5: borsa endeksleri banner
             Constraint::Length(shock_height),  // aktif olaylar şeridi
             Constraint::Min(10),               // middle (panels)
             Constraint::Length(1),             // kervan status çubuğu
@@ -1940,16 +1951,17 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         .split(area);
 
     render_header(f, chunks[0], app);
+    render_indices_banner(f, chunks[1], app);
     if shock_height > 0 {
-        render_active_shocks(f, chunks[1], app);
+        render_active_shocks(f, chunks[2], app);
     }
-    render_middle(f, chunks[2], app);
-    render_caravan_strip(f, chunks[3], app);
+    render_middle(f, chunks[3], app);
+    render_caravan_strip(f, chunks[4], app);
     // v8.22: Alt leaderboard barı kaldırıldı. Sadece KOMUT modunda hint çiz.
     if matches!(app.mode, Mode::Command { .. }) {
-        render_command_hint(f, chunks[4], app);
+        render_command_hint(f, chunks[5], app);
     }
-    render_footer(f, chunks[5], app);
+    render_footer(f, chunks[6], app);
 
     // L tuşu ile açılan leaderboard overlay (popup).
     if matches!(app.mode, Mode::Leaderboard) {
@@ -5952,6 +5964,55 @@ fn render_header(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     let block = Block::default().borders(Borders::BOTTOM);
     let para = Paragraph::new(title).block(block);
+    f.render_widget(para, area);
+}
+
+/// v0.5: Borsa endeksleri banner — header altı 1 satır.
+/// `🌾 Tarım 12.40 ↑ │ 🏭 Sanayi 28.10 ↓ │ 🏛 İst 18.20 ↑ │ … │ 📊 Ana 19.50 ·`
+/// Önceki tick değeri (`cached_indices_prev`) ile karşılaştırarak yön çizer.
+fn render_indices_banner(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    if app.cached_indices.is_empty() {
+        f.render_widget(Paragraph::new(""), area);
+        return;
+    }
+    let mut spans: Vec<Span> = Vec::with_capacity(app.cached_indices.len() * 4);
+    spans.push(Span::raw(" "));
+    for (i, idx) in app.cached_indices.iter().enumerate() {
+        let prev_value = app
+            .cached_indices_prev
+            .iter()
+            .find(|p| p.kind == idx.kind)
+            .map(|p| p.value.as_cents())
+            .unwrap_or(idx.value.as_cents());
+        let delta = idx.value.as_cents() - prev_value;
+        let (arrow, color) = if delta > 0 {
+            ("↑", Color::Green)
+        } else if delta < 0 {
+            ("↓", Color::LightRed)
+        } else {
+            ("·", Color::DarkGray)
+        };
+        spans.push(Span::styled(
+            idx.kind.label(),
+            Style::default().fg(Color::Cyan),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!("{}", idx.value),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            arrow,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        if i + 1 < app.cached_indices.len() {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        }
+    }
+    let para = Paragraph::new(Line::from(spans));
     f.render_widget(para, area);
 }
 

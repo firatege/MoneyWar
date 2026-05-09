@@ -324,9 +324,9 @@ fn build_state(runner: &SimRunner) -> GameState {
             let lira = if product.is_finished() {
                 let base = product.base_price_lira();
                 match city.demand_for(product) {
-                    DemandLevel::High => base * 12 / 10,    // +%20
+                    DemandLevel::High => base * 12 / 10, // +%20
                     DemandLevel::Normal => base,
-                    DemandLevel::Low => base * 8 / 10,      // -%20
+                    DemandLevel::Low => base * 8 / 10, // -%20
                 }
             } else if product == cheap {
                 4
