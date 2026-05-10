@@ -80,11 +80,22 @@ pub fn decide_behavior(
     let mut scored: Vec<(ActionCandidate, f64)> = candidates
         .into_iter()
         .map(|cand| {
+            // Context'siz adaylar (BuyCaravan, DispatchCaravan, kontrat) için
+            // aday türüne özel sabit baz skor — 0.0 vermek bunları SubmitOrder
+            // akışıyla yarışta sürekli kaybediyordu: Tüccar 90 tick'te 1
+            // dispatch atıyordu. Sabit skor onları top-K'da garantili tutar.
             let base_score = if let Some((city, product)) = cand.context() {
                 let inputs = signals::compute_inputs(state, pid, city, product);
                 scoring::score_candidate(&inputs, &weights)
             } else {
-                0.0
+                match &cand {
+                    ActionCandidate::BuyCaravan { .. } => 0.4,
+                    ActionCandidate::DispatchCaravan { .. } => 0.4,
+                    ActionCandidate::ProposeContract(_)
+                    | ActionCandidate::AcceptContract { .. } => 0.2,
+                    // SubmitOrder/BuildFactory context döner, buraya düşmez.
+                    _ => 0.0,
+                }
             };
             let noise = if difficulty.noise > 0.0 {
                 (rng.random::<f64>() - 0.5) * 2.0 * difficulty.noise
