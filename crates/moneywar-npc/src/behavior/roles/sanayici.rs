@@ -438,7 +438,18 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
             .values()
             .filter(|f| f.city == *city && f.product == *product && f.owner == player.id)
             .count() as i64;
-        let competition_factor = 1 + 2 * rival_count + 3 * own_count;
+        // Aynı mamulün tüm sahipler/tüm şehirlerdeki toplam fab sayısı.
+        // (city, product) bazlı own/rival, farklı şehirlerde aynı mamulü
+        // istiflemeyi engellemiyordu — Zeytinyağı margin (60) Un (17) ve
+        // Kumaş'ı (30) her zaman yenip 5 şehre Zeytinyağı dağıtıyordu, Un
+        // hiç kurulmuyordu → Buğday talep tarafı sıfıra düşüyordu.
+        // Global product penalty ürün çeşitliliği için pressure ekler.
+        let same_product_global = state
+            .factories
+            .values()
+            .filter(|f| f.product == *product)
+            .count() as i64;
+        let competition_factor = 1 + 2 * rival_count + 3 * own_count + 2 * same_product_global;
         let base_score = margin / competition_factor;
 
         // Jitter: NPC × tick × (city, product) hash'i ile. Marjın %20'si
