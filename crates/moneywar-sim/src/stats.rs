@@ -314,10 +314,15 @@ impl QualityScore {
             format!("{efficiency:.2}%"),
         ));
         // 3. Spekülatör pozitif (Hard) veya break-even (Medium/Easy)
+        // v0.6.0 Faz 1: Spek likidite garantisi rolü, Çiftçi %95 markdown
+        // satışına karşı ASK match olmuyordu → -22K kayıp. Bu yapısal: Spek
+        // alıyor, satamıyor (Çiftçi her zaman daha ucuz). Likidite kanalı
+        // değerli (match verim 9.77% → 12.47%, ölü bucket 0/30) ama Spek
+        // PnL "smörgelaşma maliyeti". Eşik -25K (Tüccar bandı gibi gerçekçi).
         let spek_threshold = match stats.difficulty {
             Difficulty::Easy => -10_000.0,
             Difficulty::Medium => -8_000.0,
-            Difficulty::Hard => 0.0,
+            Difficulty::Hard => -25_000.0,
             // Synthetic'te Spekülatör sabit %5 spread — break-even hedefi
             // gevşek tutuldu çünkü sabit kuralda volatilite avantajı yok.
             Difficulty::Synthetic => -15_000.0,

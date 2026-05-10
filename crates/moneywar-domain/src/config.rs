@@ -83,10 +83,13 @@ const fn default_banka() -> u8 {
 }
 
 impl NpcComposition {
-    /// Default: 2 Sanayici, 4 Tüccar, 10 Alıcı, 0 Esnaf, 0 Spekülatör,
-    /// 10 Çiftçi (5 şehir × 2), 3 Banka = 29 NPC.
+    /// Default: 2 Sanayici, 4 Tüccar, 10 Alıcı, 0 Esnaf, 3 Spekülatör,
+    /// 10 Çiftçi (5 şehir × 2), 3 Banka = 32 NPC.
     /// v0.6.0 Sprint A: Şehir 3→5 (Bursa + Konya). Çiftçi 6→10 (her
     /// şehir 2 Çiftçi), Alıcı 8→10 (Bursa Kumaş + Konya Un talebi).
+    /// v0.6.0 Faz 1 (cliff): Spekülatör 0→3 — market maker rolü, Sanayici
+    /// off-fab BUY likidite garantisini devral, Çiftçi yığını emer (BID),
+    /// Sanayici raw'a alternatif tedarikçi (ASK). Volatilite emici.
     /// v0.5.1: Sanayici 2 (kronik arz fazlası kırıldı). Spek/Esnaf emekli.
     #[must_use]
     pub const fn default_const() -> Self {
@@ -95,7 +98,7 @@ impl NpcComposition {
             tuccar: 4,
             alici: 10,
             esnaf: 0,
-            spekulator: 0,
+            spekulator: 3,
             ciftci: 10,
             banka: 3,
         }
@@ -504,17 +507,18 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_sim_aligned_29_npc() {
+    fn npc_composition_default_is_sim_aligned_32_npc() {
         // v0.6.0 Sprint A: 5 şehir → Çiftçi 6→10, Alıcı 8→10. Toplam 23→29.
+        // v0.6.0 Faz 1 (cliff): Spekülatör 0→3 (market maker dirilişi).
         let c = NpcComposition::default_const();
         assert_eq!(c.sanayici, 2);
         assert_eq!(c.tuccar, 4);
         assert_eq!(c.alici, 10);
         assert_eq!(c.esnaf, 0);
-        assert_eq!(c.spekulator, 0);
+        assert_eq!(c.spekulator, 3);
         assert_eq!(c.ciftci, 10);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 29);
+        assert_eq!(c.total(), 32);
     }
 
     #[test]

@@ -26,29 +26,30 @@ use crate::behavior::pricing::apply_jitter;
 /// v8.19: Spek **odaklı raw spekülatör** — sadece **prime_raw** bucket'larında
 /// BID + stok varsa ASK. Eski 18-bucket lokal market maker -271K zarar
 /// kasası (Esnafsız ham BUY iştahı düşünce Spek alıp satamadı, depoda 10K+
-/// ham çürüdü; 0 SELL match). Yeni: 3 bucket (her şehrin prime ham'ı)
-/// → cash konsantre, daha rekabetçi BID; ASK aynı bucket'ta SELL pressure
-/// ekler. Mamul tarafı zaten temiz, Spek karışmasın.
+/// ham çürüdü; 0 SELL match). v8.19'da 3 bucket'a indirilmişti.
+///
+/// v0.6.0 Faz 2 (cliff fix): Sanayici off-fab BUY kaldırıldı, Spek likidite
+/// devraldı. 5 prime_raw bucket dar — Sanayici fab şehri specialty'siyle
+/// çakışmadığında Spek müşteri bulamadı, stok birikti (Faz 2'de -19K zarar).
+/// Yeni: **15 raw bucket** (5 şehir × 3 raw). Her raw'ı her şehirde işler →
+/// Sanayici fab şehri ne olursa olsun Spek o şehirde alternatif tedarikçi.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
-    // 3 prime_raw bucket → cash bölünür. Eski 18 → 3, bucket başı 6× cash.
-    let bucket_cash = Money::from_cents(player.cash.as_cents().saturating_div(3).max(0));
+    // 15 raw bucket (5 şehir × 3 raw) → cash bölünür.
+    let bucket_count = (CityId::ALL.len() * moneywar_domain::ProductKind::RAW_MATERIALS.len())
+        .max(1) as i64;
+    let bucket_cash =
+        Money::from_cents(player.cash.as_cents().saturating_div(bucket_count).max(0));
 
     for city in CityId::ALL {
-        // Sadece prime ham — her şehrin uzmanlık ürünü.
-        let Some(&product) = state.city_specialty.get(&city) else {
-            continue;
-        };
-        if !product.is_raw() {
-            continue;
-        }
-        let Some(reference) = state.reference_price(city, product) else {
-            continue;
-        };
-        if reference.as_cents() <= 0 {
-            continue;
-        }
+        for &product in &moneywar_domain::ProductKind::RAW_MATERIALS {
+            let Some(reference) = state.reference_price(city, product) else {
+                continue;
+            };
+            if reference.as_cents() <= 0 {
+                continue;
+            }
 
         // BID — reference × 0.99 + jitter (dar spread, v8.15 mantığı).
         let bid_base = scale_pct(reference, 99);
@@ -73,11 +74,14 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             }
         }
 
-        // ASK — stok varsa, reference × 1.01 + jitter. Spek'in birikmiş
-        // stoğunu eritmek için %1 markup yeterli (v8.18'e göre).
+        // ASK — stok-baskılı pricing. Az stoklu → reference × 1.01 (kar
+        // marjı). Birikmiş stoklu → reference × 0.97 (Çiftçi'den ucuz
+        // sat, hızlı erit). v0.6.0 Faz 2 sonrası: 15-bucket Spek mal alıp
+        // satamazdı (-22K), stok-baskılı ASK ile satış akışı açılır.
         let stock = player.inventory.get(city, product);
         if stock > 0 {
-            let ask_base = scale_pct(reference, 101);
+            let ask_pct = if stock >= 100 { 97 } else if stock >= 50 { 99 } else { 101 };
+            let ask_base = scale_pct(reference, ask_pct);
             let ask_price = apply_jitter(
                 ask_base,
                 state.current_tick,
@@ -96,6 +100,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     unit_price: ask_price,
                 });
             }
+        }
         }
     }
     out
@@ -153,20 +158,20 @@ mod tests {
     }
 
     #[test]
-    fn no_specialty_no_emit() {
-        // city_specialty boşsa hiçbir bucket prime değil → Spek pas geçer.
+    fn no_baseline_no_emit() {
+        // baseline boşsa reference_price None → Spek hiçbir bucket'a girmez.
         let s = GameState::new(RoomId::new(1), RoomConfig::hizli());
         let p = spek(40_000);
         let cands = enumerate(&s, &p);
-        assert!(cands.is_empty(), "specialty yoksa emit yok");
+        assert!(cands.is_empty(), "baseline yoksa emit yok");
     }
 
     #[test]
-    fn emits_bid_only_in_prime_raw_buckets() {
-        // 3 prime_raw bucket: Ist/Pamuk, Ank/Bugday, Izm/Zeytin. Diğer 15
-        // bucket pas.
+    fn emits_bid_in_all_raw_buckets() {
+        // v0.6.0: 15 raw bucket (5 şehir × 3 raw). Spek her şehirde her raw
+        // için BID emit eder — likidite garantisi.
         let s = fresh_with_specialty();
-        let p = spek(60_000);
+        let p = spek(150_000);
         let cands = enumerate(&s, &p);
         let bid_buckets: std::collections::BTreeSet<_> = cands
             .iter()
@@ -180,10 +185,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(bid_buckets.len(), 3, "tam 3 prime_raw BID");
-        assert!(bid_buckets.contains(&(CityId::Istanbul, ProductKind::Pamuk)));
-        assert!(bid_buckets.contains(&(CityId::Ankara, ProductKind::Bugday)));
-        assert!(bid_buckets.contains(&(CityId::Izmir, ProductKind::Zeytin)));
+        assert_eq!(bid_buckets.len(), 15, "5 şehir × 3 raw = 15 BID");
     }
 
     #[test]
@@ -231,28 +233,25 @@ mod tests {
     }
 
     #[test]
-    fn stock_in_non_prime_bucket_skipped() {
-        // Spek Izm'de Pamuk stoklu (Izm prime=Zeytin değil Pamuk değil) →
-        // Pamuk prime sadece Istanbul → Izm/Pamuk prime değil → ASK yok.
+    fn stock_in_any_raw_bucket_yields_ask() {
+        // v0.6.0: 15-bucket Spek her şehir × her raw'da çalışıyor.
+        // Izm'de Pamuk stoğu varsa Spek orada ASK emit eder.
         let s = fresh_with_specialty();
         let mut p = spek(40_000);
         p.inventory
             .add(CityId::Izmir, ProductKind::Pamuk, 30)
             .unwrap();
         let cands = enumerate(&s, &p);
-        let asks = cands
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c,
-                    ActionCandidate::SubmitOrder {
-                        side: OrderSide::Sell,
-                        ..
-                    }
-                )
-            })
-            .count();
-        assert_eq!(asks, 0, "Izm/Pamuk prime değil, ASK olmamalı");
+        let has_ask = cands.iter().any(|c| matches!(
+            c,
+            ActionCandidate::SubmitOrder {
+                side: OrderSide::Sell,
+                city: CityId::Izmir,
+                product: ProductKind::Pamuk,
+                ..
+            }
+        ));
+        assert!(has_ask, "her raw bucket'ta stoklu ASK emit edilir");
     }
 
     #[test]

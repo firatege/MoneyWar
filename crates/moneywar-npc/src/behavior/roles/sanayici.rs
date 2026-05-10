@@ -100,11 +100,20 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             }
         }
     } else {
-        // Fab var → fab-bazlı, her şehirde her ihtiyaç (gerçek tedarik zinciri).
+        // Fab var → SADECE fab şehirlerinde BUY. Spekülatör market maker
+        // off-fab şehirlerde Çiftçi malını alıp pazara likidite veriyor;
+        // Tüccar arbitraj zaten ucuz şehirden pahalı şehre taşıyor. Sanayici
+        // off-fab BUY yaparsa stok israfı + Spekülatör kanalını boğuyor.
+        let fab_cities: std::collections::BTreeSet<CityId> = state
+            .factories
+            .values()
+            .filter(|f| f.owner == player.id)
+            .map(|f| f.city)
+            .collect();
         // CROSS policy: best_ask varsa ona kadar in (fab idle = para sızıntısı).
-        let bucket_count = (needed_raws.len() * CityId::ALL.len()).max(1) as i64;
+        let bucket_count = (needed_raws.len() * fab_cities.len()).max(1) as i64;
         let bucket_cash = Money::from_cents(player.cash.as_cents() / 2 / bucket_count);
-        for city in CityId::ALL {
+        for &city in &fab_cities {
             for &product in &needed_raws {
                 let reference = state.reference_price(city, product).unwrap_or_else(|| {
                     Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
@@ -564,10 +573,10 @@ mod tests {
     }
 
     #[test]
-    fn factory_drives_raw_demand_in_all_cities() {
-        // Fab varsa: o fab'ın raw_input'unu **5 şehirde de** arar.
-        // Ist'te Kumaş fab → Pamuk her şehirde BUY (Tüccar arbitrajı için
-        // off-fab şehirde de likidite sinyali).
+    fn factory_drives_raw_demand_only_in_fab_city() {
+        // v0.6.0 Faz 2: Sanayici sadece kendi fab şehrinde raw alır. Off-fab
+        // şehirlerde likidite Spekülatör market maker tarafından sağlanır.
+        // Ist'te Kumaş fab → Pamuk SADECE Ist'te BUY.
         let mut s = fresh();
         let p = sanayici(50_000);
         let fid = FactoryId::new(1);
@@ -587,7 +596,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(pamuk_buys.len(), 5, "Kumaş fab → Pamuk talebi her şehirde");
+        assert_eq!(pamuk_buys.len(), 1, "Pamuk talebi sadece fab şehrinde");
+        assert_eq!(pamuk_buys[0], CityId::Istanbul, "fab şehri Istanbul");
     }
 
     #[test]
