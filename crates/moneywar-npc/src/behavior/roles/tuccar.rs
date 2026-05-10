@@ -122,6 +122,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     continue;
                 }
                 let qty = stock.min(caravan.capacity);
+                // Min eşik: caravan'ın %50'si altında dispatch yapma. Aksi
+                // halde Tüccar 50 birim stokla %4 dolu caravan göndererek
+                // boş seyahat ediyor, hedef şehirde küçük arz dümpü yapıp
+                // spot SELL fırsatlarını kaçırıyor (Cartel personality
+                // dispatch'e meyilli olduğu için bilhassa zarar ediyor).
+                let min_qty = caravan.capacity / 2;
+                if qty < min_qty {
+                    continue;
+                }
                 targets.push((product, to_city, qty, profit_per_unit));
             }
         }
