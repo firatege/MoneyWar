@@ -84,7 +84,7 @@ const fn default_banka() -> u8 {
 
 impl NpcComposition {
     /// Default: 3 Sanayici, 4 Tüccar, 10 Alıcı, 0 Esnaf, 3 Spekülatör,
-    /// 10 Çiftçi (5 şehir × 2), 3 Banka = 33 NPC.
+    /// 9 Çiftçi (round-robin: 2-2-2-2-1), 3 Banka = 32 NPC.
     /// v0.6.0 Sprint A: Şehir 3→5 (Bursa + Konya). Çiftçi 6→10 (her
     /// şehir 2 Çiftçi), Alıcı 8→10 (Bursa Kumaş + Konya Un talebi).
     /// v0.6.0 Faz 1 (cliff): Spekülatör 0→3 — market maker rolü, Sanayici
@@ -93,6 +93,10 @@ impl NpcComposition {
     /// v0.6.0 Faz 3 (BUY çakılma): Sanayici 2→3 — 6 fab → 9 fab. Mamul
     /// BUY fill %7-9 idi (Bursa-Un 216K BUY/15K match), arz darboğazı.
     /// 9 fab ile 5×3=15 mamul-bucket'ın 9'u dolu, BUY fill %15+ hedef.
+    /// v0.6.0 Faz 4 (Bugday SELL çakılma): Çiftçi 10→9 — round-robin
+    /// (Ist=2, Ank=2, Izm=2, Bursa=2, Konya=1). Bugday Çiftçi 4→3,
+    /// Konya'da 1 azaltma. Bugday arz 6.8K → 5.1K, 1.5 Un fab tüketim
+    /// ~1.2K ile yumuşar. Sanayici penalty 3× ile birlikte hibrit.
     /// v0.5.1: Sanayici 2 (kronik arz fazlası kırıldı). Spek/Esnaf emekli.
     #[must_use]
     pub const fn default_const() -> Self {
@@ -102,7 +106,7 @@ impl NpcComposition {
             alici: 10,
             esnaf: 0,
             spekulator: 3,
-            ciftci: 10,
+            ciftci: 9,
             banka: 3,
         }
     }
@@ -510,19 +514,20 @@ mod tests {
     }
 
     #[test]
-    fn npc_composition_default_is_sim_aligned_33_npc() {
+    fn npc_composition_default_is_sim_aligned_32_npc() {
         // v0.6.0 Sprint A: 5 şehir → Çiftçi 6→10, Alıcı 8→10. Toplam 23→29.
         // v0.6.0 Faz 1 (cliff): Spekülatör 0→3 (market maker dirilişi).
         // v0.6.0 Faz 3 (BUY çakılma): Sanayici 2→3 (6→9 fab).
+        // v0.6.0 Faz 4 (Bugday SELL çakılma): Çiftçi 10→9 (Konya 1 az).
         let c = NpcComposition::default_const();
         assert_eq!(c.sanayici, 3);
         assert_eq!(c.tuccar, 4);
         assert_eq!(c.alici, 10);
         assert_eq!(c.esnaf, 0);
         assert_eq!(c.spekulator, 3);
-        assert_eq!(c.ciftci, 10);
+        assert_eq!(c.ciftci, 9);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 33);
+        assert_eq!(c.total(), 32);
     }
 
     #[test]

@@ -453,12 +453,18 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
         // Kumaş'ı (30) her zaman yenip 5 şehre Zeytinyağı dağıtıyordu, Un
         // hiç kurulmuyordu → Buğday talep tarafı sıfıra düşüyordu.
         // Global product penalty ürün çeşitliliği için pressure ekler.
+        // v0.6.0 Faz 4 (Bugday arz fazla): 2× → 3×. Math:
+        //   1. fab Zeytinyağı: 60/1=60 → kurulur
+        //   2. fab Zeytinyağı: 60/(1+3)=15 ← Kumaş 30/1=30 kazanır
+        //   3. fab Un: 17/1=17 ← Zeytinyağı 60/(1+6)=8.5, Kumaş 30/(1+3)=7.5
+        // 3 fab dağılımı garantili: Zeytinyağı, Kumaş, Un. Un fab → Bugday
+        // talebi 3× → 4 Bugday Çiftçi'si mal birikmesi azalır.
         let same_product_global = state
             .factories
             .values()
             .filter(|f| f.product == *product)
             .count() as i64;
-        let competition_factor = 1 + 2 * rival_count + 3 * own_count + 2 * same_product_global;
+        let competition_factor = 1 + 2 * rival_count + 3 * own_count + 3 * same_product_global;
         let base_score = margin / competition_factor;
 
         // Jitter: NPC × tick × (city, product) hash'i ile. Marjın %20'si
