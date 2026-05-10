@@ -115,7 +115,13 @@ fn main() {
     }
 
     let seeds: Vec<u64> = if multi_seed {
-        vec![1, 7, 42, 100, 256, 512, 1024, 2048, 4096, 8192]
+        // v0.6.0: 10 → 20 seed. Daha sağlam regression doğrulama, paralel
+        // koşumda 2× yavaşlama kabul. İlk 10 seed orijinal set, ek 10
+        // farklı asal-tabanlı seed (varyans çeşitlilik).
+        vec![
+            1, 7, 42, 100, 256, 512, 1024, 2048, 4096, 8192,
+            3, 11, 19, 31, 67, 127, 251, 509, 1021, 2039,
+        ]
     } else {
         vec![seed]
     };
