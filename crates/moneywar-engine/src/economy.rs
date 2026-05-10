@@ -86,6 +86,16 @@ const TAX_PERIOD: u32 = 10;
 #[allow(dead_code)]
 const TAX_PCT: i64 = 2;
 
+/// Alıcı sabit maaş periyodu — her N tick'te Alıcı NPC'lerine sabit gelir
+/// dağıtılır. Sanayici fab'larından bağımsız (havadan basılır), closed-loop
+/// dışı semi-open kanal.
+const ALICI_SALARY_PERIOD: u32 = 3;
+/// Alıcı başına her periyotta verilen sabit maaş (lira). Sezon 90 tick / 3
+/// = 30 cycle × 2000 = 60K/Alıcı/sezon. Mevcut wage (27K/Alıcı, Sanayici
+/// fab kaynaklı) ile birlikte 87K/Alıcı toplam gelir → harcama 165K'nın
+/// %53'ü, cliff sezon ikinci yarıda yumuşar.
+const ALICI_SALARY_LIRA: i64 = 2000;
+
 /// `advance_tick` içinde çağrılır — periyodik ekonomi akışlarını uygular.
 pub(crate) fn tick_economy(
     state: &mut GameState,
@@ -98,6 +108,13 @@ pub(crate) fn tick_economy(
     // Wages — Sanayici fab'ları işçilere (Alıcı'lara) ücret ödesin (closed loop)
     if t > 0 && t % WAGE_PERIOD == 0 {
         pay_factory_wages(state, report, tick);
+    }
+
+    // Alıcı sabit maaş — havadan basılan ek gelir. Sanayici-bound wage tek
+    // başına Alıcı tüketim hızını karşılamıyordu (cliff t40+). Sabit akış
+    // sezon ikinci yarısında talep canlı tutar.
+    if t > 0 && t % ALICI_SALARY_PERIOD == 0 {
+        pay_alici_salary(state, report, tick);
     }
 
     // Maintenance — fab işletme gideri (Anno mekaniği): Sanayici'den çek, sistem dışı
@@ -182,6 +199,30 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
         return;
     }
     let amount = Money::from_cents(per_alici);
+    for pid in alici_ids {
+        if let Some(p) = state.players.get_mut(&pid) {
+            let _ = p.credit(amount);
+            report.push(LogEntry::economy_salary(tick, pid, amount));
+        }
+    }
+}
+
+/// Alıcı NPC'lerine sabit periyodik maaş — havadan basılır (semi-open).
+/// `pay_factory_wages` Sanayici cebinden çıkar (closed loop). Bu ek kanal
+/// Alıcı'ya sezon başından sonuna sürekli akış sağlar → t40 cliff yumuşar.
+fn pay_alici_salary(state: &mut GameState, report: &mut TickReport, tick: Tick) {
+    let alici_ids: Vec<PlayerId> = state
+        .players
+        .iter()
+        .filter(|(_, p)| p.npc_kind == Some(NpcKind::Alici))
+        .map(|(id, _)| *id)
+        .collect();
+    if alici_ids.is_empty() {
+        return;
+    }
+    let Ok(amount) = Money::from_lira(ALICI_SALARY_LIRA) else {
+        return;
+    };
     for pid in alici_ids {
         if let Some(p) = state.players.get_mut(&pid) {
             let _ = p.credit(amount);
