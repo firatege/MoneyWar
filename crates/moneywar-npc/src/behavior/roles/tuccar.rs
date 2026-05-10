@@ -677,12 +677,12 @@ mod tests {
             Money::from_lira(8).unwrap(),
         );
         let mut p = tuccar(15_000);
-        // İstanbul'da Tüccar'ın 50 birim Pamuk stoğu
+        // İstanbul'da Tüccar'ın 1500 birim Pamuk stoğu (kapasite/2 üstünde)
         p.inventory
-            .add(CityId::Istanbul, ProductKind::Pamuk, 50)
+            .add(CityId::Istanbul, ProductKind::Pamuk, 1500)
             .unwrap();
-        // İdle kervan İstanbul'da
-        let caravan = Caravan::new(CaravanId::new(1), p.id, 200, CityId::Istanbul);
+        // İdle kervan İstanbul'da (kapasite 1200)
+        let caravan = Caravan::new(CaravanId::new(1), p.id, 1200, CityId::Istanbul);
         s.caravans.insert(caravan.id, caravan);
         let cands = enumerate(&s, &p);
         let has_dispatch = cands.iter().any(|c| {

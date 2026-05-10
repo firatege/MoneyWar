@@ -565,8 +565,9 @@ mod tests {
 
     #[test]
     fn factory_drives_raw_demand_in_all_cities() {
-        // Fab varsa: o fab'ın raw_input'unu **3 şehirde de** arar.
-        // Ist'te Kumaş fab → Pamuk her şehirde BUY (Ank/Izm'den de gelebilir).
+        // Fab varsa: o fab'ın raw_input'unu **5 şehirde de** arar.
+        // Ist'te Kumaş fab → Pamuk her şehirde BUY (Tüccar arbitrajı için
+        // off-fab şehirde de likidite sinyali).
         let mut s = fresh();
         let p = sanayici(50_000);
         let fid = FactoryId::new(1);
@@ -586,7 +587,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // v0.6.0: Fab Kumaş → Pamuk her 5 şehirde BUY emit
         assert_eq!(pamuk_buys.len(), 5, "Kumaş fab → Pamuk talebi her şehirde");
     }
 
