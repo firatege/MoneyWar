@@ -161,8 +161,12 @@ pub fn default_contracts() -> Vec<RoleContract> {
                 },
             ],
             forbidden_label: "Same-city BUY+SELL (arbitraj gate ihlali)",
-            min_pnl_lira: -10_000.0,
-            max_pnl_lira: 80_000.0,
+            // v0.6.0 Bursa+Konya + Alıcı maaş kanalı: 5-şehir arbitraj alanı
+            // 1.7× büyük (30 bucket vs 18), Alıcı maaş kanalı ekonomi
+            // pompası + dispatch min cargo fix. Mevcut ortalama 85K, std 14K
+            // → bant 0..130K (eski -10..80K, 3-şehir tasarımı).
+            min_pnl_lira: 0.0,
+            max_pnl_lira: 130_000.0,
             min_dominant_action_share: 0.0,
         },
         RoleContract {
