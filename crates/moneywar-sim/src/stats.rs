@@ -130,6 +130,12 @@ impl PerRunMetrics {
                 if !p_first.is_npc {
                     continue;
                 }
+                // World player (id=0) sentetik arz mekanizması — gerçek bir rol değil,
+                // PnL hesabı dışında. Aksi halde "Tüccar" Display'iyle ayrı row üretip
+                // gerçek Tuccar NPC'lerinin ortalamasını bozar.
+                if p_first.id == moneywar_domain::balance::WORLD_PLAYER_ID_VALUE {
+                    continue;
+                }
                 if let Some(p_last) = l.players.iter().find(|p| p.id == p_first.id) {
                     let role_label = p_first
                         .npc_kind

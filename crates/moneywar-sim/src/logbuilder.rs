@@ -20,6 +20,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use moneywar_domain::{CityId, ProductKind};
 use moneywar_npc::Difficulty;
 
 use crate::report::render_markdown;
@@ -29,27 +30,18 @@ use crate::thresholds::{
     GameThresholds, audit_game_with_runs, audit_role, default_contracts, render_threshold_report,
 };
 
-/// Şehir id (0..2) → display name.
+/// Şehir id → display name. `CityId::ALL` enum sırasına paralel.
 fn city_name(id: u8) -> &'static str {
-    match id {
-        0 => "Istanbul",
-        1 => "Ankara",
-        2 => "Izmir",
-        _ => "?",
-    }
+    CityId::ALL
+        .get(id as usize)
+        .map_or("?", |c| c.display_name())
 }
 
-/// Ürün id (0..5) → display name.
+/// Ürün id → display name. `ProductKind::ALL` enum sırasına paralel.
 fn product_name(id: u8) -> &'static str {
-    match id {
-        0 => "Pamuk",
-        1 => "Bugday",
-        2 => "Zeytin",
-        3 => "Kumas",
-        4 => "Un",
-        5 => "Zeytinyagi",
-        _ => "?",
-    }
+    ProductKind::ALL
+        .get(id as usize)
+        .map_or("?", |p| p.display_name())
 }
 
 /// Timestamp'lı run klasörü oluştur (`root/run_YYYYMMDD_HHMMSS`).
@@ -84,10 +76,14 @@ impl BucketStats {
     }
 }
 
-/// 18 bucket (3 şehir × 6 ürün) için seed başına aktivite + 10-seed ortalama.
+/// `CityId::ALL.len() * ProductKind::ALL.len()` bucket için seed başına aktivite
+/// + 10-seed ortalama.
 fn render_circulation_md(runs: &[SimResult]) -> String {
     use std::collections::BTreeMap;
     use std::fmt::Write;
+    let n_cities = u8::try_from(CityId::ALL.len()).expect("≤255 city");
+    let n_products = u8::try_from(ProductKind::ALL.len()).expect("≤255 product");
+    let total_buckets = u32::from(n_cities) * u32::from(n_products);
     let mut out = String::new();
     let _ = writeln!(out, "## 🔄 Pazar Dolaşımı — Şehir × Ürün Aktivite Matrisi");
     let _ = writeln!(out);
@@ -127,24 +123,33 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
             agg_bs.total_buy_submitted += bs.total_buy_submitted;
             agg_bs.total_sell_submitted += bs.total_sell_submitted;
         }
-        // Bu seedde kaç bucket boş kaldı (3*6=18 toplam)
-        let active = seed_buckets
-            .values()
-            .filter(|b| b.clearing_count > 0)
-            .count();
-        empty_buckets_per_seed.push(18 - active as u32);
+        // Bu seedde kaç bucket boş kaldı. `saturating_sub` underflow koruması:
+        // bilinmeyen bucket id'ler (ör. yeni eklenen şehir) total'i aşarsa 0 göster.
+        let active = u32::try_from(
+            seed_buckets
+                .values()
+                .filter(|b| b.clearing_count > 0)
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
+        empty_buckets_per_seed.push(total_buckets.saturating_sub(active));
     }
     let n_seeds = runs.len() as f64;
 
-    // Tablo: satır şehir, sütun ürün
-    let _ = writeln!(
-        out,
-        "| Şehir \\ Ürün | Pamuk | Bugday | Zeytin | Kumas | Un | Zeytinyagi |"
-    );
-    let _ = writeln!(out, "|---|---|---|---|---|---|---|");
-    for city_id in 0..3u8 {
+    // Tablo: satır şehir, sütun ürün — header dinamik üretiliyor.
+    let mut header = String::from("| Şehir \\ Ürün ");
+    let mut sep = String::from("|---");
+    for product_id in 0..n_products {
+        header.push_str(&format!("| {} ", product_name(product_id)));
+        sep.push_str("|---");
+    }
+    header.push('|');
+    sep.push('|');
+    let _ = writeln!(out, "{header}");
+    let _ = writeln!(out, "{sep}");
+    for city_id in 0..n_cities {
         let mut row = format!("| **{}** |", city_name(city_id));
-        for product_id in 0..6u8 {
+        for product_id in 0..n_products {
             let bs = agg.get(&(city_id, product_id));
             let count = bs.map_or(0, |b| b.clearing_count);
             let avg = f64::from(count) / n_seeds;
@@ -172,7 +177,7 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
     let max_empty = empty_buckets_per_seed.iter().copied().max().unwrap_or(0);
     let _ = writeln!(
         out,
-        "**Ölü bucket:** sezon başına ortalama {avg_empty:.1}/18 (max {max_empty} seed'de)"
+        "**Ölü bucket:** sezon başına ortalama {avg_empty:.1}/{total_buckets} (max {max_empty} seed'de)"
     );
     let _ = writeln!(out);
 
@@ -183,12 +188,12 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
         "| Şehir | Clearing | Match qty | Buy submit | Sell submit |"
     );
     let _ = writeln!(out, "|---|---|---|---|---|");
-    for city_id in 0..3u8 {
+    for city_id in 0..n_cities {
         let mut total_clearing = 0u32;
         let mut total_qty = 0u64;
         let mut total_buy = 0u64;
         let mut total_sell = 0u64;
-        for product_id in 0..6u8 {
+        for product_id in 0..n_products {
             if let Some(bs) = agg.get(&(city_id, product_id)) {
                 total_clearing += bs.clearing_count;
                 total_qty += bs.matched_qty;
@@ -212,11 +217,11 @@ fn render_circulation_md(runs: &[SimResult]) -> String {
     let _ = writeln!(out, "### Ürün Toplam");
     let _ = writeln!(out, "| Ürün | Clearing | Match qty | Fiyat min/max ₺ |");
     let _ = writeln!(out, "|---|---|---|---|");
-    for product_id in 0..6u8 {
+    for product_id in 0..n_products {
         let mut total_clearing = 0u32;
         let mut total_qty = 0u64;
         let mut all_prices: Vec<i64> = Vec::new();
-        for city_id in 0..3u8 {
+        for city_id in 0..n_cities {
             if let Some(bs) = agg.get(&(city_id, product_id)) {
                 total_clearing += bs.clearing_count;
                 total_qty += bs.matched_qty;
