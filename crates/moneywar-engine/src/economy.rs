@@ -24,7 +24,10 @@ use rand_chacha::ChaCha8Rng;
 use crate::report::{LogEntry, TickReport};
 
 /// Wages (ücret) periyodu — her N tick'te aktif fab başına ücret kesilir.
-const WAGE_PERIOD: u32 = 10;
+/// v0.6.0 Faz 1 (talep cliff): 10 → 5. Toplam transfer sabit kalsın diye
+/// `WAGE_PER_FACTORY_LIRA` da yarıya indi. Akışın sıklığı 2× → Alıcı cash'i
+/// daha pürüzsüz akıyor → t40 cliff yumuşaması.
+const WAGE_PERIOD: u32 = 5;
 /// Sanayici fabrikası başına ücret (lira) — her wage period'da Sanayici'den
 /// çıkar, Alıcı'lara eşit dağıtılır. Closed-loop ekonomi.
 /// v0.5.1: 1500 → 3500. Sim 10 seed Hard: Sanayici PnL +116K (eşik 80K üst
@@ -34,7 +37,10 @@ const WAGE_PERIOD: u32 = 10;
 /// v0.6.0: 3500 → 5000. Bursa+Konya genişlemesinde Alıcı kaybı yine -137K
 /// kalıyor, eşik -110K aşılamıyor. Wage akışı +43% ile Alıcı'ya ek ~12K
 /// transfer, Sanayici PnL bandının üst yarısı (+68K) aşağı çekilir.
-const WAGE_PER_FACTORY_LIRA: i64 = 5000;
+/// v0.6.0 Faz 1 (talep cliff): 5000 → 2500. WAGE_PERIOD 10→5 ile birlikte
+/// toplam transfer sabit (5000×9 = 2500×18 = 45K). Hedef: cash akışı
+/// pürüzsüz, miktar değişmez.
+const WAGE_PER_FACTORY_LIRA: i64 = 2500;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
