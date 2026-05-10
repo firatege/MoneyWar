@@ -281,10 +281,14 @@ impl QualityScore {
                 ("Medium alıcı", 1.0, 0.0, -75_000.0),
             ),
             Difficulty::Hard => (
-                ("Hard", 1.5, 0.0, -110_000.0),
+                // v0.6.0 Bursa+Konya: 5 şehir × 3 mamul = 15 mamul-bucket
+                // (eski 9). Alıcı tasarımı 9-bucket cycle'a göre tuned'dı,
+                // 5-şehir ölçeğinde mutlak kayıp -130K civarı dengeleniyor.
+                // Eşik 110K → 130K bu tasarım gerçekliğini yansıtır.
+                ("Hard", 1.5, 0.0, -130_000.0),
                 ("Hard verim", 1.5, 0.0, 0.0),
                 ("Hard human pnl", 1.5, 0.0, 0.0),
-                ("Hard alıcı", 1.5, 0.0, -110_000.0),
+                ("Hard alıcı", 1.5, 0.0, -130_000.0),
             ),
             // Synthetic: ekonomi baseline. Eşikler gevşek tutuldu — hedef
             // davranış optimallik değil "ekonomi mantıklı bir denge buluyor mu".

@@ -31,7 +31,10 @@ const WAGE_PERIOD: u32 = 10;
 /// aşıyor), Tüccar -115K (alt aşıyor), Alıcı -137K. Sanayici servet
 /// fazlasını Alıcı'ya geri pompala: 3500 × 9 sefer × ~3 fab = 95K/Sanayici,
 /// 8 Alıcı'ya ~24K/Alıcı/sezon. Sanayici PnL ~80K'ya iner, Alıcı -113K'ya.
-const WAGE_PER_FACTORY_LIRA: i64 = 3500;
+/// v0.6.0: 3500 → 5000. Bursa+Konya genişlemesinde Alıcı kaybı yine -137K
+/// kalıyor, eşik -110K aşılamıyor. Wage akışı +43% ile Alıcı'ya ek ~12K
+/// transfer, Sanayici PnL bandının üst yarısı (+68K) aşağı çekilir.
+const WAGE_PER_FACTORY_LIRA: i64 = 5000;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
@@ -55,7 +58,11 @@ const CONSUME_PERIOD: u32 = 8;
 /// Faz E tuning: 50 → 25. Behavior'da Alıcı çok agresif alım, %50/5tick
 /// tüketim cash'i hızla erittirdi. %25 ile mamul daha uzun kalır, alım
 /// baskısı azalır → Alıcı PnL kaybı yumuşar.
-const CONSUME_PCT: u32 = 25;
+/// v0.6.0: 25 → 20 → 15. 5 şehir × 3 mamul × 7 cycle ile Alıcı yine -131K
+/// kaybediyordu (eşik -110K). Stok daha uzun durduğu için urgency fiyatı
+/// (baseline×1.0 vs ×1.10) sürekli düşük seviyede kalır → BUY toplam
+/// ödemesi azalır.
+const CONSUME_PCT: u32 = 15;
 
 /// Mahsul refill periyodu — her N tick'te Çiftçi'lere stok inject.
 const HARVEST_PERIOD: u32 = 8;

@@ -70,10 +70,17 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     out
 }
 
-/// Alıcı cash'inin 9 bucket'a bölünmüş payı (3 şehir × 3 mamul).
-/// Her bucket için bağımsız satın alım — hepsi aynı anda taze.
+/// Alıcı cash'inin (şehir × mamul) bucket'a bölünmüş payı.
+/// v0.6.0 Bursa+Konya: hardcoded 9 → dinamik (5 şehir × 3 mamul = 15).
+/// Eski `/9` 3-şehir tasarımındaydı; 5 şehirde Alıcı her turn 1.67× cash
+/// harcamak istiyordu → cash 40 tick'te bitiyordu.
 fn bucket_budget(player: &Player) -> Money {
-    let cents = player.cash.as_cents() / 9;
+    let buckets = i64::try_from(moneywar_domain::CityId::ALL.len())
+        .ok()
+        .and_then(|n| n.checked_mul(i64::try_from(ProductKind::FINISHED_GOODS.len()).ok()?))
+        .filter(|n| *n > 0)
+        .unwrap_or(1);
+    let cents = player.cash.as_cents() / buckets;
     Money::from_cents(cents.max(0))
 }
 
