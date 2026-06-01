@@ -116,41 +116,38 @@ export function MarketChart({ cell, points }: Props) {
     chartRef.current?.timeScale().fitContent();
   }, [points, cell]);
 
-  if (!cell) {
-    return (
-      <div className="mc mc--empty">
-        <span>ürün seçin</span>
-      </div>
-    );
-  }
-
   const pct =
-    cell.last_lira != null && cell.baseline_lira > 0
+    cell && cell.last_lira != null && cell.baseline_lira > 0
       ? ((cell.last_lira - cell.baseline_lira) / cell.baseline_lira) * 100
       : null;
   const dir =
     pct == null ? "flat" : pct > 0.05 ? "up" : pct < -0.05 ? "down" : "flat";
 
+  // Canvas container HER ZAMAN render edilir; aksi halde createChart çalışacağı
+  // anda ref null olur ve grafik hiç oluşmaz (cell sonradan dolduğunda effect
+  // tekrar çalışmaz). Boş durum overlay ile gösterilir.
   return (
     <div className="mc">
       <div className="mc__head">
         <div className="mc__id">
-          <span className="mc__product">{cell.product_label}</span>
-          <span className="mc__city">{cell.city_label}</span>
-          <span className="mc__raw-badge">{cell.is_raw ? "HAM" : "MAMUL"}</span>
+          <span className="mc__product">{cell?.product_label ?? "—"}</span>
+          <span className="mc__city">{cell?.city_label ?? ""}</span>
+          {cell && (
+            <span className="mc__raw-badge">{cell.is_raw ? "HAM" : "MAMUL"}</span>
+          )}
         </div>
         <div className="mc__stats">
           <span className="mc__stat">
             <span className="mc__stat-l">SON</span>
-            <span className="mc__stat-v num">{lira2(cell.last_lira)}</span>
+            <span className="mc__stat-v num">{lira2(cell?.last_lira ?? null)}</span>
           </span>
           <span className="mc__stat">
             <span className="mc__stat-l">ORT5</span>
-            <span className="mc__stat-v num">{lira2(cell.avg5_lira)}</span>
+            <span className="mc__stat-v num">{lira2(cell?.avg5_lira ?? null)}</span>
           </span>
           <span className="mc__stat">
             <span className="mc__stat-l">BAZE</span>
-            <span className="mc__stat-v num">{lira2(cell.baseline_lira)}</span>
+            <span className="mc__stat-v num">{lira2(cell?.baseline_lira ?? null)}</span>
           </span>
           {pct != null && (
             <span className={`mc__delta mc__delta--${dir}`}>
@@ -160,13 +157,20 @@ export function MarketChart({ cell, points }: Props) {
           )}
         </div>
       </div>
-      <div className="mc__canvas" ref={containerRef} />
+      <div className="mc__canvas-wrap">
+        <div className="mc__canvas" ref={containerRef} />
+        {(!cell || points.length === 0) && (
+          <div className="mc__overlay">
+            {cell ? "veri bekleniyor…" : "ürün seçin"}
+          </div>
+        )}
+      </div>
       <div className="mc__foot">
         <span>
-          AL: {cell.buy_qty} · SAT: {cell.sell_qty}
+          AL: {cell?.buy_qty ?? 0} · SAT: {cell?.sell_qty ?? 0}
         </span>
         <span>
-          BID: {lira2(cell.bid_lira)} · ASK: {lira2(cell.ask_lira)}
+          BID: {lira2(cell?.bid_lira ?? null)} · ASK: {lira2(cell?.ask_lira ?? null)}
         </span>
       </div>
     </div>
