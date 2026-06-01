@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-IMAGE="hub.umcebo.com/byfeb/moneywar"
+IMAGE="hub.umceko.com/byfeb/moneywar"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Versiyon Cargo.toml'dan al
@@ -22,7 +22,7 @@ case "$BUMP" in
 esac
 NEW_VERSION="$MAJOR.$MINOR.$PATCH"
 
-# Cargo.toml güncelle
+# Cargo.toml workspace version güncelle
 sed -i "0,/^version = \".*\"/s//version = \"$NEW_VERSION\"/" "$SCRIPT_DIR/Cargo.toml"
 
 echo ">> Version: $OLD_VERSION -> $NEW_VERSION"
@@ -32,8 +32,8 @@ git add Cargo.toml Cargo.lock
 git commit -m "release: v$NEW_VERSION"
 git tag "v$NEW_VERSION"
 
-# Build & push
-echo ">> Building Docker image..."
+# Build & push (multi-stage: Rust + Node + runtime)
+echo ">> Building Docker image (Rust + frontend)..."
 docker build -t "$IMAGE:$NEW_VERSION" -t "$IMAGE:latest" "$SCRIPT_DIR"
 
 echo ">> Pushing image..."

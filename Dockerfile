@@ -1,30 +1,33 @@
-# ── Stage 1: Rust build ─────────────────────────────────────────────────────
-FROM rust:1.86-bookworm AS builder
+# ── Stage 1: Rust build ──────────────────────────────────────────────────────
+FROM rust:1.86-bookworm AS rust-builder
 
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p moneywar-cli
+RUN cargo build --release -p moneywar-web
 
-# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim
+# ── Stage 2: Frontend build ───────────────────────────────────────────────────
+FROM node:22-bookworm-slim AS frontend-builder
 
-RUN apt-get update && apt-get install -y \
-    python3 make g++ \
+WORKDIR /app/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY web/ ./
+RUN npm run build
+
+# ── Stage 3: Runtime ──────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Session server bağımlılıkları
-COPY session-server/package.json ./session-server/
-RUN cd session-server && npm install
-
-COPY session-server/server.js ./session-server/
-
-# Rust binary
-COPY --from=builder /app/target/release/moneywar /usr/local/bin/moneywar-cli
-
-RUN mkdir -p /app/debug
+COPY --from=rust-builder /app/target/release/moneywar-web /usr/local/bin/moneywar-web
+COPY --from=frontend-builder /app/web/dist /app/web/dist
 
 EXPOSE 8080
 
-CMD ["node", "session-server/server.js"]
+ENV RUST_LOG=info
+
+CMD ["/usr/local/bin/moneywar-web"]

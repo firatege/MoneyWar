@@ -67,7 +67,16 @@ async fn main() -> std::io::Result<()> {
 
     let app_state = web::Data::new(AppState { driver, tx });
 
-    tracing::info!(port, base_seed, "moneywar-web başlıyor");
+    // Frontend dist dizini: STATIC_DIR env > /app/web/dist (Docker) > web/dist (dev)
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| {
+        if std::path::Path::new("/app/web/dist").is_dir() {
+            "/app/web/dist".into()
+        } else {
+            "web/dist".into()
+        }
+    });
+    let static_dir_exists = std::path::Path::new(&static_dir).is_dir();
+    tracing::info!(port, base_seed, static_dir, static_dir_exists, "moneywar-web başlıyor");
 
     HttpServer::new(move || {
         let mut app = App::new()
@@ -76,9 +85,10 @@ async fn main() -> std::io::Result<()> {
             .route("/api/series", web::get().to(get_series))
             .route("/ws", web::get().to(ws_handler));
 
-        // Frontend dist'i varsa serve et (Faz 4). Yoksa API-only çalışır.
-        if std::path::Path::new("web/dist").is_dir() {
-            app = app.service(Files::new("/", "web/dist").index_file("index.html"));
+        if static_dir_exists {
+            app = app.service(
+                Files::new("/", static_dir.clone()).index_file("index.html"),
+            );
         }
         app
     })

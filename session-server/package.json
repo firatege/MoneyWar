@@ -1,9 +1,0 @@
-{
-  "name": "moneywar-session",
-  "version": "1.0.0",
-  "main": "server.js",
-  "dependencies": {
-    "node-pty": "^1.0.0",
-    "ws": "^8.0.0"
-  }
-}
