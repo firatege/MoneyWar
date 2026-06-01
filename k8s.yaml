@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moneywar
+  namespace: feb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moneywar
+  template:
+    metadata:
+      labels:
+        app: moneywar
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: moneywar
+          image: hub.umceko.com/byfeb/moneywar:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          volumeMounts:
+            - name: debug-logs
+              mountPath: /app/debug
+      volumes:
+        - name: debug-logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: moneywar-service
+  namespace: feb
+spec:
+  selector:
+    app: moneywar
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: moneywar
+  namespace: feb
+spec:
+  hostnames:
+    - moneywar.byfeb.com
+  parentRefs:
+    - name: front-gw-2
+      namespace: envoy-gateway-system
+      sectionName: https-moneywar-byfeb
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: moneywar-service
+          port: 80
