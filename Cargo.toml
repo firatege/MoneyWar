@@ -8,6 +8,7 @@ members = [
     "crates/moneywar-server",
     "crates/moneywar-cli",
     "crates/moneywar-sim",
+    "crates/moneywar-web",
 ]
 
 [workspace.package]
