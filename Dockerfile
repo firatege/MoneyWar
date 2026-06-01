@@ -1,5 +1,5 @@
 # ── Stage 1: Rust build ─────────────────────────────────────────────────────
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.86-bookworm AS builder
 
 WORKDIR /app
 COPY . .
@@ -21,7 +21,7 @@ RUN cd session-server && npm install
 COPY session-server/server.js ./session-server/
 
 # Rust binary
-COPY --from=builder /app/target/release/moneywar-cli /usr/local/bin/moneywar-cli
+COPY --from=builder /app/target/release/moneywar /usr/local/bin/moneywar-cli
 
 RUN mkdir -p /app/debug
 
