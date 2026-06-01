@@ -1,0 +1,120 @@
+.pg {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pg__table {
+  display: grid;
+  /* köşe + 6 ürün kolonu */
+  grid-template-columns: 6rem repeat(6, 1fr);
+  flex: 1;
+}
+
+.pg__corner {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 2;
+}
+.pg__col-head {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line-soft);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: var(--text-xs);
+  letter-spacing: 0.1em;
+  color: var(--text-ghost);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.3rem;
+  text-align: center;
+}
+.pg__row-head {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0.55rem;
+  text-align: right;
+  line-height: 1.2;
+}
+
+/* --- Hücre --- */
+.pg__cell {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+  position: relative;
+}
+.pg__cell:hover {
+  background: var(--surface-2);
+}
+.pg__cell--active {
+  background: var(--surface-hi) !important;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.pg__cell--empty {
+  background: var(--bg-deep);
+  cursor: default;
+}
+
+.pg__price {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+.pg__pct {
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+}
+.pg__cell--up .pg__pct {
+  color: var(--gain-dim);
+}
+.pg__cell--down .pg__pct {
+  color: var(--loss-dim);
+}
+.pg__cell--flat .pg__pct {
+  color: var(--text-ghost);
+}
+
+/* Mini alış/satış bar'ı */
+.pg__minibar {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--loss-dim);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-top: 0.1rem;
+}
+.pg__minibar-buy {
+  display: block;
+  height: 100%;
+  background: var(--gain-dim);
+  transition: width var(--dur) var(--ease-snap);
+}

@@ -1,0 +1,107 @@
+.mc {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+.mc--empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-ghost);
+  font-size: var(--text-sm);
+  letter-spacing: 0.1em;
+}
+
+.mc__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem var(--pad-panel);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.mc__id {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.mc__product {
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.mc__city {
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+}
+.mc__raw-badge {
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  color: var(--text-ghost);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.1rem 0.35rem;
+}
+
+.mc__stats {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+.mc__stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.05rem;
+}
+.mc__stat-l {
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  color: var(--text-ghost);
+}
+.mc__stat-v {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+.mc__delta {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius);
+}
+.mc__delta--up {
+  color: var(--gain);
+  background: color-mix(in oklch, var(--gain) 10%, transparent);
+}
+.mc__delta--down {
+  color: var(--loss);
+  background: color-mix(in oklch, var(--loss) 10%, transparent);
+}
+.mc__delta--flat {
+  color: var(--text-faint);
+}
+
+.mc__canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.mc__foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem var(--pad-panel);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  color: var(--text-ghost);
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface);
+  flex-shrink: 0;
+}
