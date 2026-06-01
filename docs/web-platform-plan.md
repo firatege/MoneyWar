@@ -13,6 +13,7 @@
 | Loop modeli | Sezon döngüsü — 90 tick → yeni seed → otomatik yeni sezon (sonsuz) |
 | Tick hızı | 2 sn/tick (≈3 dk/sezon) |
 | Frontend | React + Vite + TS + lightweight-charts (borsa hissi) |
+| Terminal | **Tamamen kaldırılır** — session-server siliniyor, web ana ve tek arayüz |
 | Faz 1 | Spectator (izleme) |
 | Faz 5 | İnteraktif müdahale (sonra) |
 
@@ -98,7 +99,7 @@ Faz sonu: ekonomi canlı izlenebilir (tablo + feed), grafik yok henüz.
 - **Dockerfile** çok-aşamalı: (A) Rust `moneywar-web` build, (B) Node `vite build`
   → dist, (C) runtime: binary + dist, actix `Files` ile serve, `:8080`
 - **k8s** zaten `moneywar.byfeb.com` → `:8080`. Çalışan değişir (session-server → moneywar-web)
-- Terminal oyunu istenirse `terminal.moneywar.byfeb.com`'a taşınabilir (opsiyonel)
+- **session-server/ tamamen silinir** — Dockerfile artık Node PTY değil, actix web binary çalıştırır
 - `deploy.sh` güncelle: web binary + frontend build
 
 ---
