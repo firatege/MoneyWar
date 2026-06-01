@@ -50,7 +50,7 @@ const STORAGE_COST_SANAYICI_CENTS: i64 = 1;
 /// v0.6.0 Faz 1 (talep cliff): 5000 → 2500. WAGE_PERIOD 10→5 ile birlikte
 /// toplam transfer sabit (5000×9 = 2500×18 = 45K). Hedef: cash akışı
 /// pürüzsüz, miktar değişmez.
-const WAGE_PER_FACTORY_LIRA: i64 = 500;
+const WAGE_PER_FACTORY_LIRA: i64 = 300;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;

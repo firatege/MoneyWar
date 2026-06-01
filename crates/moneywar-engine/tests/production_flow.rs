@@ -64,11 +64,11 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     );
     assert_eq!(s1.factories.values().next().unwrap().batches.len(), 1);
 
-    // Tick 2-4: yeni batch'ler başlar, hiçbiri tamamlanmaz (Kumaş 4 tick).
+    // Tick 2-4: seri üretim — batch bitmeden yeni başlamaz.
     let (s2, _) = advance_tick(&s1, &[]).unwrap();
     let (s3, _) = advance_tick(&s2, &[]).unwrap();
     let (s4, _r4) = advance_tick(&s3, &[]).unwrap();
-    assert_eq!(s4.factories.values().next().unwrap().batches.len(), 4);
+    assert_eq!(s4.factories.values().next().unwrap().batches.len(), 1); // hâlâ 1 batch
     assert_eq!(
         s4.players[&PlayerId::new(1)]
             .inventory

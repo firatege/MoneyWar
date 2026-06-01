@@ -134,7 +134,15 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         }
     }
 
-    // 2) Yeni batch başlatma — ham madde mevcut mu?
+    // 2) Yeni batch başlatma — önceki batch bitmeden yenisi başlamaz.
+    // Pipeline üretim kaldırıldı: fabrika seri çalışır, paralel değil.
+    {
+        let Some(factory) = state.factories.get(&fid) else { return; };
+        if !factory.batches.is_empty() {
+            return; // aktif batch var, bekle
+        }
+    }
+
     let raw = product
         .raw_input()
         .expect("finished product always has raw_input");
@@ -377,12 +385,13 @@ mod tests {
         );
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
 
-        // Tick 2-4: yeni batch'ler başlar, hiçbiri tamamlanmaz (completion 5/6/7/8).
+        // Tick 2-4: aktif batch bitmeden yeni başlamaz (seri üretim).
         for t in 2u32..=4 {
             let mut rt = TickReport::new(Tick::new(t));
             advance_production(&mut s, &mut rt, Tick::new(t));
         }
-        assert_eq!(s.factories.values().next().unwrap().batches.len(), 4);
+        // Sadece 1 batch aktif (pipeline kaldırıldı)
+        assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
         assert_eq!(
             s.players[&pid]
                 .inventory
@@ -390,12 +399,13 @@ mod tests {
             0
         );
 
-        // Tick 5: ilk batch tamamlanır, yeni 5. batch başlar.
-        // BATCH_SIZE×80% Kumaş üretilir. Pamuk: 1000 - 5×BATCH_SIZE.
+        // Tick 5: ilk batch tamamlanır (t1'de başladı, 4 tick = t5).
+        // Seri üretim: t1'de 1 batch başladı, t5'te biter + yeni batch başlar.
+        // Pamuk: 1000 - 2×BATCH_SIZE (t1 + t5 başlangıcı).
         let mut r5 = TickReport::new(Tick::new(5));
         advance_production(&mut s, &mut r5, Tick::new(5));
         let expected_kumas = batch * 80 / 100;
-        let expected_pamuk = 1000 - 5 * batch;
+        let expected_pamuk = 1000 - 2 * batch; // seri: sadece 2 batch tüketildi
         assert_eq!(
             s.players[&pid]
                 .inventory
