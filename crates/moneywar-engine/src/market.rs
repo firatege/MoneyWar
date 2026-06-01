@@ -171,10 +171,27 @@ fn clear_bucket(
             // dar clamp [%25, %175] gerçek piyasa fiyatını ezerek match
             // sabote ediyordu. Şimdi simetrik %0.3/%0.3. Stok drift
             // (aşağıda) arz fazlasını ayrıca temsil eder.
+            // Bucket no-fill streak güncelle: fill olduysa sıfırla, olmadıysa artır.
+            let had_fill = matched_qty > 0;
+            {
+                let streak = state.bucket_no_fill_streak.entry((city, product)).or_insert(0);
+                if had_fill { *streak = 0; } else { *streak = streak.saturating_add(1).min(20); }
+            }
+            let streak = *state.bucket_no_fill_streak.get(&(city, product)).unwrap_or(&0);
+
+            // Kümülatif hızlanma: fill olmayan her 3 tick'te %30 daha hızlı,
+            // max 2× (streak=10+). Tüccar fiyat farkı görüp mal taşıyınca fill
+            // olur, streak sıfırlanır, hız normale döner.
+            let streak_mult = match streak {
+                0..=2  => 1000, // normal
+                3..=5  => 1300, // +%30
+                6..=9  => 1600, // +%60
+                _      => 2000, // max 2×
+            };
             let mut factor_milli = if imbalance > 0 {
-                1000 + imbalance * 3 / 1000 // +%0.3/tick
+                1000 + imbalance * 8 * streak_mult / 1_000_000
             } else {
-                1000 + imbalance * 3 / 1000 // -%0.3/tick
+                1000 + imbalance * 8 * streak_mult / 1_000_000
             };
 
             // v8.24 (C): Stok-bazlı aşağı drift — threshold düşürüldü

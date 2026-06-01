@@ -134,6 +134,10 @@ pub struct GameState {
     #[serde(default)]
     pub no_match_streak: BTreeMap<(PlayerId, CityId, ProductKind), u32>,
 
+    /// Bucket-level kümülatif no-fill sayacı — Walras hızlanması için.
+    #[serde(default)]
+    pub bucket_no_fill_streak: BTreeMap<(CityId, ProductKind), u32>,
+
     /// v8.22: Easy/Hard difficulty için fiyat cömertliği. NPC pricing
     /// helper'ları bunu urgency_pct'ye ekler (SELL floor düşer, BUY ceiling
     /// yükselir) → human için kâr fırsatı genişler.
@@ -194,6 +198,8 @@ impl GameState {
             city_demand: BTreeMap::new(),
             counters: IdCounters::default(),
             no_match_streak: BTreeMap::new(),
+            bucket_no_fill_streak: BTreeMap::new(),
+
             market_softener_pct: 0,
             price_baseline_initial: BTreeMap::new(),
         }
