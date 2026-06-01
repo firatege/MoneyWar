@@ -157,7 +157,7 @@ impl ProductKind {
         match self {
             Self::Kumas => 80,
             Self::Un => 90,
-            Self::Zeytinyagi => 50,
+            Self::Zeytinyagi => 40,
             _ => 100,
         }
     }

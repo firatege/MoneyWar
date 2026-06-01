@@ -553,7 +553,10 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
             .values()
             .filter(|f| f.product == *product)
             .count() as i64;
-        let competition_factor = 1 + 2 * rival_count + 3 * own_count + 3 * same_product_global;
+        // Zeytinyağı için ek global penalty — Zeytin kıt, fazla Zeyt.yağı fab
+        // kurulmasın. Global same_product yerine ürün bazlı ek ağırlık.
+        let product_bias = if *product == ProductKind::Zeytinyagi { 2 } else { 0 };
+        let competition_factor = 1 + 2 * rival_count + 3 * own_count + 3 * same_product_global + product_bias;
         let base_score = margin / competition_factor;
 
         // Specialty bonus: şehrin prime hammaddesi bu ürünün girdisiyle eşleşirse
