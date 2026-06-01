@@ -57,7 +57,6 @@ spec:
   parentRefs:
     - name: front-gw-2
       namespace: envoy-gateway-system
-      sectionName: https-moneywar-byfeb
   rules:
     - matches:
         - path:
