@@ -178,9 +178,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
 
-        // AL ucuzda — piyasa fiyatından
-        let buy_price = state.derive_market_price(cheap_city, product, OrderSide::Buy);
-        if buy_price.as_cents() == 0 { continue; }
+        // AL ucuzda + jitter
+        let buy_price = apply_jitter(
+            cheap_price,
+            state.current_tick,
+            cheap_city,
+            product,
+            OrderSide::Buy,
+            player.id,
+        );
         let buy_qty = affordable_qty(bucket_cash, buy_price, 30);
         if buy_qty > 0 {
             out.push(ActionCandidate::SubmitOrder {
@@ -193,7 +199,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             });
         }
 
-        // SAT — stoğu olan her off-cheap şehirde piyasa fiyatından sat.
+        // SAT — stoğu olan **her** off-cheap şehirde SAT.
+        // v0.5.1: SELL fiyatı = max(best_bid × %100, buy_cost × 1.10).
+        // BID'a tam hizada (anlık match) ama maliyet tabanının altına asla.
+        // Eski %95 markdown Tüccar'ı zarara satırdı; şimdi nötr/kâr.
         for to_city in CityId::ALL {
             if to_city == cheap_city {
                 continue;
@@ -202,10 +211,30 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if stock == 0 {
                 continue;
             }
-            let sell_price = state.derive_market_price(to_city, product, OrderSide::Sell);
-            if sell_price.as_cents() <= cheap_price.as_cents() {
-                continue; // arbitraj kârsız
+            let to_target = best_bid_in_city(state, to_city, product)
+                .map(|m| m.as_cents())
+                .or_else(|| {
+                    state
+                        .reference_price(to_city, product)
+                        .map(|m| m.as_cents())
+                })
+                .unwrap_or(0);
+            if to_target <= cheap_price.as_cents() {
+                continue;
             }
+            // Min kâr taban: maliyet × 1.10 (tax + minimum kâr).
+            let cost_floor = cheap_price.as_cents().saturating_mul(110) / 100;
+            // BID hizasında match için sell = best_bid (eşit). Kâr taban
+            // garantisi: ne olursa olsun cost_floor altına inme.
+            let sell_base = Money::from_cents(to_target.max(cost_floor));
+            let sell_price = apply_jitter(
+                sell_base,
+                state.current_tick,
+                to_city,
+                product,
+                OrderSide::Sell,
+                player.id,
+            );
             let sell_qty = stock.min(30);
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,

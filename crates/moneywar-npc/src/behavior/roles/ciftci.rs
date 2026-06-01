@@ -23,6 +23,7 @@
 use moneywar_domain::{GameState, Money, OrderSide, Player, ProductKind};
 
 use crate::behavior::candidates::ActionCandidate;
+use crate::behavior::pricing::{CrossPolicy, marketable_ask};
 
 /// Çiftçi'nin bu tick için olası satış adayları.
 /// v8.20: Order-book aware pricing — `marketable_ask` üzerinden geçer.
@@ -52,10 +53,42 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).min(30);
-        let unit_price = state.derive_market_price(city, product, OrderSide::Sell);
-        if unit_price.as_cents() == 0 {
+        let reference = state.reference_price(city, product).unwrap_or_else(|| {
+            // Baseline yoksa fallback — sim her zaman init eder, prod CLI de.
+            Money::from_lira(default_raw_price(product)).unwrap_or(Money::ZERO)
+        });
+        // Stok-baskısı indirim: Çiftçi'nin bu (city, raw)'da stok'u büyükse
+        // SELL fiyatı agresif düşür — pazar onu emsin. Aksi takdirde prime
+        // şehir over-supply pattern'inde stok kilitlenir.
+        let stock_floor_pct: i64 = match qty {
+            0..=199 => 100,  // taze stok → kâr maks
+            200..=499 => 90, // hafif basınç
+            500..=999 => 80, // orta basınç
+            _ => 65,         // 1000+ birim → kriz
+        };
+        let stock_floor = Money::from_cents(
+            reference
+                .as_cents()
+                .saturating_mul(stock_floor_pct)
+                .saturating_div(100),
+        );
+        // Stok>500 → CROSS (eritmek için best_bid'a in). Aksi halde PASSIVE.
+        let policy = if qty >= 500 {
+            CrossPolicy::Cross
+        } else {
+            CrossPolicy::Passive
+        };
+        let Some(unit_price) = marketable_ask(
+            state,
+            player.id,
+            city,
+            product,
+            stock_floor,
+            policy,
+            state.current_tick,
+        ) else {
             continue;
-        }
+        };
         out.push(ActionCandidate::SubmitOrder {
             side: OrderSide::Sell,
             city,
@@ -68,6 +101,9 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     out
 }
 
+const fn default_raw_price(_product: ProductKind) -> i64 {
+    moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+}
 
 #[cfg(test)]
 mod tests {
