@@ -72,6 +72,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             product,
             quantity,
             unit_price,
+            ttl_override: None,
         });
     }
 
@@ -110,6 +111,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 product,
                 quantity,
                 unit_price,
+                ttl_override: None,
             });
         }
     }
@@ -146,6 +148,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 product,
                 quantity,
                 unit_price,
+                ttl_override: None,
             });
         }
     }

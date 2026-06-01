@@ -55,12 +55,12 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     };
     let (s1, _r1) = advance_tick(&s0, &[build]).unwrap();
     assert_eq!(s1.factories.len(), 1);
-    // Tick 1 sonu: batch başladı, pamuk 100 tüketildi → 900 kaldı.
+    // Tick 1 sonu: batch başladı, pamuk BATCH_SIZE tüketildi → 950 kaldı.
     assert_eq!(
         s1.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Pamuk),
-        900
+        950
     );
     assert_eq!(s1.factories.values().next().unwrap().batches.len(), 1);
 
@@ -77,8 +77,8 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
         "Kumaş 4 tick sürer, t4'te hiç tamamlanmadı"
     );
 
-    // Tick 5: ilk batch tamamlanır (started=1, completion=1+4=5). %80 verim
-    // → 80 Kumaş. Yeni batch başlar. Plus 50 sat / 50 al.
+    // Tick 5: ilk batch tamamlanır. BATCH_SIZE×80% Kumaş üretildi.
+    let produced_qty = moneywar_domain::balance::FACTORY_BATCH_SIZE * 80 / 100;
     let sell = Command::SubmitOrder(
         MarketOrder::new(
             OrderId::new(1),
@@ -86,7 +86,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             CityId::Istanbul,
             ProductKind::Kumas,
             OrderSide::Sell,
-            50,
+            produced_qty,
             Money::from_lira(18).unwrap(),
             Tick::new(5),
         )
@@ -107,7 +107,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     );
     let (s5, _r5) = advance_tick(&s4, &[sell, buy]).unwrap();
 
-    // Pay-as-bid: trade fiyatı = BUY emrindeki limit (20₺). 50 × 20 = 1000₺.
+    // Pay-as-bid: trade fiyatı = BUY emrindeki limit (20₺).
     let expected_price = Money::from_lira(20).unwrap();
     assert_eq!(
         s5.price_history[&(CityId::Istanbul, ProductKind::Kumas)]
@@ -116,20 +116,21 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             .1,
         expected_price
     );
-    // Tüccar envanterinde 50 kumas.
+    // BATCH_SIZE × 80% Kumaş üretildi. SELL qty≤produced, BUY qty≥produced.
+    // Trade = produced amount.
+    let produced = moneywar_domain::balance::FACTORY_BATCH_SIZE * 80 / 100;
+    let sold = produced; // tüm üretim satılır (BUY qty=50 ≥ produced)
     assert_eq!(
         s5.players[&PlayerId::new(2)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Kumas),
-        50
+        sold
     );
-    // v0.4.1: Tick 5'te 1. batch tamamlanır (started=1, completion=1+4=5).
-    // 80 Kumaş üretildi, 50 satıldı → 30 kalır. 5. batch başladı.
     assert_eq!(
         s5.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Kumas),
-        30
+        0 // hepsi satıldı
     );
     // Para korunumu: 200_000₺ × 100 cent — eksiği işlem vergisi (sistem sink).
     // İşlem yapıldığı için toplam <= başlangıç. Vergi miktarı tam değişken,

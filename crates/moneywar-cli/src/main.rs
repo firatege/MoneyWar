@@ -164,7 +164,7 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
                     | Mode::DebugLog { .. }
                     | Mode::MarketIntel
                     | Mode::Contracts
-                    | Mode::RecentTrades
+                    | Mode::RecentTrades { .. }
                     | Mode::NewsInbox
                     | Mode::CaravanPanel
                     | Mode::Holdings
@@ -243,7 +243,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('m') => app.mode = Mode::Holdings,
             KeyCode::Char('r') => app.mode = Mode::MarketIntel,
             KeyCode::Char('y') => app.mode = Mode::Contracts,
-            KeyCode::Char('e') => app.mode = Mode::RecentTrades,
+            KeyCode::Char('e') => app.mode = Mode::RecentTrades { scroll: 0 },
             KeyCode::Char('v') => app.mode = Mode::CaravanPanel,
             KeyCode::Char('g') => app.mode = Mode::DebugLog { scroll: 0 },
             // Wizard kısayolları — tek tuşla aksiyon menüsü.
@@ -402,11 +402,28 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => {}
         },
+        Mode::RecentTrades { scroll } => {
+            let max_scroll = app.recent_trades.len().saturating_sub(1);
+            match code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.mode = Mode::RecentTrades { scroll: scroll.saturating_sub(1) };
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.mode = Mode::RecentTrades { scroll: (scroll + 1).min(max_scroll) };
+                }
+                KeyCode::PageUp => {
+                    app.mode = Mode::RecentTrades { scroll: scroll.saturating_sub(10) };
+                }
+                KeyCode::PageDown => {
+                    app.mode = Mode::RecentTrades { scroll: (scroll + 10).min(max_scroll) };
+                }
+                _ => { app.mode = Mode::Normal; }
+            }
+        }
         Mode::Help
         | Mode::Info
         | Mode::Holdings
         | Mode::NewsInbox
-        | Mode::RecentTrades
         | Mode::CaravanPanel
         | Mode::Contracts
         | Mode::Chatter
@@ -543,7 +560,7 @@ enum Mode {
     /// Haber inbox overlay — n ile açılır.
     NewsInbox,
     /// Son eşleşmeler overlay — e ile açılır. Kim kime ne sattı, fiyat, tick.
-    RecentTrades,
+    RecentTrades { scroll: usize },
     /// Kervan kontrol paneli — v ile açılır. Detaylı kervan listesi + hızlı dispatch.
     CaravanPanel,
     /// Debug log overlay — g ile açılır. Son tick'lerin ham LogEntry akışı
@@ -774,6 +791,8 @@ struct TradeRecord {
     product: ProductKind,
     buyer_name: String,
     seller_name: String,
+    buyer_role: &'static str,
+    seller_role: &'static str,
     quantity: u32,
     price: Money,
 }
@@ -916,6 +935,37 @@ fn random_room_id() -> RoomId {
 /// event'inde var, ama oyuncuların fiziksel envanteri yoktu — bu satırlar
 /// onu kapatır. (city, product) başına: tüm oyuncuların toplam stoğu +
 /// `price_history`'deki son takas fiyatı (yoksa "-"). 3 şehir = 3 satır/tick.
+fn write_leaderboard(f: &mut BufWriter<std::fs::File>, state: &GameState) {
+    let all_scores = moneywar_engine::leaderboard(state);
+    // Sadece Tüccar, Sanayici ve insan oyuncu
+    let scores: Vec<_> = all_scores.iter().filter(|sc| {
+        state.players.get(&sc.player_id).is_none_or(|p| {
+            !p.is_npc || p.has_npc_kind(NpcKind::Sanayici) || p.has_npc_kind(NpcKind::Tuccar)
+        })
+    }).collect();
+    let tick = state.current_tick.value();
+    let _ = writeln!(f, "t{:>3}  <leaderboard>           --- FINAL SKORLAR ---", tick);
+    for (rank, sc) in scores.iter().enumerate() {
+        let name = state
+            .players
+            .get(&sc.player_id)
+            .map(|p| p.name.as_str())
+            .unwrap_or("?");
+        let _ = writeln!(
+            f,
+            "t{:>3}  <leaderboard>           #{} {:?} {} nakit={} stok={} fab={} pnl={}",
+            tick,
+            rank + 1,
+            sc.player_id,
+            name,
+            sc.cash.as_cents() / 100,
+            sc.stock_value.as_cents() / 100,
+            sc.factory_value.as_cents() / 100,
+            sc.total.as_cents() / 100,
+        );
+    }
+}
+
 fn write_city_snapshot(f: &mut BufWriter<std::fs::File>, state: &GameState) {
     let tick = state.current_tick.value();
     for city in CityId::ALL {
@@ -1540,6 +1590,8 @@ impl App {
                     product: *product,
                     buyer_name: player_name(*buyer),
                     seller_name: player_name(*seller),
+                    buyer_role: npc_role_label(&self.state, *buyer),
+                    seller_role: npc_role_label(&self.state, *seller),
                     quantity: *quantity,
                     price: *price,
                 });
@@ -1600,6 +1652,7 @@ impl App {
             self.debug_log.drain(..drop_count);
         }
         // Dosyaya da yaz — IO hatası oyunu kırmasın.
+        let is_last_tick = self.game_over();
         if let Some(f) = &mut self.debug_file {
             for entry in &report.entries {
                 let actor_str = entry
@@ -1625,6 +1678,10 @@ impl App {
             write_city_snapshot(f, &self.state);
             // v0.5.1: Detaylı bucket snapshot — bid/ask/avg/baseline/streak.
             write_bucket_snapshot(f, &self.state, report);
+            // Son tick'te leaderboard yaz.
+            if is_last_tick {
+                write_leaderboard(f, &self.state);
+            }
             let _ = f.flush();
         }
     }
@@ -1777,19 +1834,30 @@ fn seed_world(
     // 3 ham × 3 slot × 3 şehir = 9 bucket'ın 9'u da ekonomik anlamlı.
     // Caller sadece prime'ı shuffle eder; secondary/demand rotation ile türer.
     {
+        // 5 şehir × 3 ham → her ham 1-2 şehirde prime olur.
+        // Bursa+Konya da dahil edildi — her seed'de farklı dağılım.
+        // 5 şehre 3 ham atamak için: [A,A,B,B,C] veya [A,A,B,C,C] karışımı.
+        // Yöntem: 3 ham'ı shuffle et, her ham bir ana şehre atanır, 2 artık
+        // şehir ham'lar arasından tekrar seçilir.
         let mut raws = ProductKind::RAW_MATERIALS;
         for i in (1..raws.len()).rev() {
             let j = rng.random_range(0..=i);
             raws.swap(i, j);
         }
-        // v0.6.0 Sprint A: 5 şehir. Bursa Pamuk (Marmara), Konya Bugday
-        // (İç Anadolu) — coğrafya tabanlı uzmanlaşma, eski 3 ile tutarlı.
+        let mut cities = CityId::ALL.to_vec();
+        for i in (1..cities.len()).rev() {
+            let j = rng.random_range(0..=i);
+            cities.swap(i, j);
+        }
+        // İlk 3 şehir → 3 farklı ham (her ham 1 kez), son 2 şehir → 2 ham tekrar
+        let extra0 = raws[rng.random_range(0..raws.len())];
+        let extra1 = raws[rng.random_range(0..raws.len())];
         let prime_per_city: [(CityId, ProductKind); 5] = [
-            (CityId::Istanbul, raws[0]),
-            (CityId::Ankara, raws[1]),
-            (CityId::Izmir, raws[2]),
-            (CityId::Bursa, ProductKind::Pamuk),
-            (CityId::Konya, ProductKind::Bugday),
+            (cities[0], raws[0]),
+            (cities[1], raws[1]),
+            (cities[2], raws[2]),
+            (cities[3], extra0),
+            (cities[4], extra1),
         ];
         s.seed_city_profiles(prime_per_city);
     }
@@ -1879,8 +1947,9 @@ fn seed_world(
         .unwrap()
         .with_kind(NpcKind::Tuccar)
         .with_personality(personality);
-        // v3: hammadde açığını kapatmak için Tüccar başlangıç stoğu 5k → 8k.
-        distribute_inventory(&mut npc, &mut rng, &s, 8_000);
+        // Başlangıç stoğu 8k → 2k. 8k stok ~40K₺ skor avantajı yaratıyordu
+        // (Sanayici 0 stokla başlarken). 2k ile ~10K₺ → fark kapandı.
+        distribute_inventory(&mut npc, &mut rng, &s, 2_000);
         let npc_id = npc.id;
         s.players.insert(npc_id, npc);
         if matches!(personality, Personality::EventTrader) {
@@ -1914,11 +1983,11 @@ fn seed_world(
         let starter_city = CityId::ALL[city_idx];
         // Raw starter: 300-500 birim (10× revizyon), ürün şehrin **bu sezonki** ucuz hamı.
         let starter_raw = s.cheap_raw_for(starter_city);
-        let raw_qty: u32 = rng.random_range(300..=500);
+        let raw_qty: u32 = rng.random_range(60..=100);
         let _ = npc.inventory.add(starter_city, starter_raw, raw_qty);
         // Finished starter: küçük — piyasaya erken birkaç emir versin.
         let finished_idx = rng.random_range(0usize..ProductKind::FINISHED_GOODS.len());
-        let fin_qty: u32 = rng.random_range(100..=200);
+        let fin_qty: u32 = rng.random_range(20..=40);
         let _ = npc.inventory.add(
             starter_city,
             ProductKind::FINISHED_GOODS[finished_idx],
@@ -2154,7 +2223,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Info => render_info_overlay(f, area, app),
         Mode::Holdings => render_holdings_overlay(f, area, app),
         Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
-        Mode::RecentTrades => render_recent_trades_overlay(f, area, app),
+        Mode::RecentTrades { scroll } => render_recent_trades_overlay(f, area, app, scroll),
         Mode::CaravanPanel => render_caravan_panel_overlay(f, area, app),
         Mode::MarketIntel => render_market_intel_overlay(f, area, app),
         Mode::Contracts => render_contracts_overlay(f, area, app),
@@ -2767,6 +2836,8 @@ fn render_market_intel_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App
 
     let widths = [
         Constraint::Length(12),
+        Constraint::Min(14),
+        Constraint::Min(14),
         Constraint::Min(14),
         Constraint::Min(14),
         Constraint::Min(14),
@@ -5217,31 +5288,54 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 app.state.current_tick,
                 moneywar_engine::IDLE_FACTORY_THRESHOLD,
             );
-            let last = factory
-                .last_production_tick
-                .map_or_else(|| "hiç".into(), |t| format!("tick {}", t.value()));
             let pending = factory.pending_units();
             let status_color = if is_idle { Color::Red } else { Color::Green };
             let status_label = if is_idle { "ATIL" } else { "ÜRETİYOR" };
+
+            // Hammadde durumu
+            let raw_info = if let Some(raw) = factory.product.raw_input() {
+                let have = app.state.players
+                    .get(&HUMAN_ID)
+                    .map(|p| p.inventory.get(factory.city, raw))
+                    .unwrap_or(0);
+                let batch = moneywar_domain::balance::FACTORY_BATCH_SIZE;
+                let partial_min = batch / 4;
+                if have >= batch {
+                    format!("{}✅ {}/{}", raw, have, batch)
+                } else if have >= partial_min {
+                    format!("{}⚡ {}/{} (kısmi)", raw, have, batch)
+                } else {
+                    format!("{}❌ {}/{} (+{})", raw, have, partial_min, partial_min.saturating_sub(have))
+                }
+            } else {
+                String::new()
+            };
+
+            // Bitiş tick'i
+            let finish_info = if !is_idle {
+                let prod_ticks = factory.product.production_ticks();
+                let last_t = factory.last_production_tick.map(|t| t.value()).unwrap_or(0);
+                let finish = last_t + prod_ticks;
+                let cur = app.state.current_tick.value();
+                if finish > cur {
+                    format!(" → t{} ({} kaldı)", finish, finish - cur)
+                } else {
+                    " → hazır!".into()
+                }
+            } else {
+                String::new()
+            };
+
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(
-                    format!("#{:<3}", factory.id.value()),
-                    Style::default().fg(Color::DarkGray),
-                ),
                 Span::styled(
                     format!("{:<10}", factory.product),
                     Style::default().fg(product_color(factory.product)),
                 ),
                 Span::styled(
-                    format!("{:<10}", city_short(factory.city)),
+                    format!("{:<8}", city_short(factory.city)),
                     Style::default().fg(Color::Blue),
                 ),
-                Span::raw("son üretim: "),
-                Span::styled(format!("{:<12}", last), Style::default().fg(Color::Gray)),
-                Span::raw("batches: "),
-                Span::styled(format!("{pending:<3}"), Style::default().fg(Color::Magenta)),
-                Span::raw("  "),
                 Span::styled(
                     format!(" {status_label} "),
                     Style::default()
@@ -5249,6 +5343,9 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                         .fg(Color::Black)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::raw("  "),
+                Span::styled(raw_info, Style::default().fg(if is_idle { Color::Red } else { Color::Green })),
+                Span::styled(finish_info, Style::default().fg(Color::Cyan)),
             ]));
         }
     }
@@ -5650,7 +5747,7 @@ fn truncate_speaker(s: &str, max: usize) -> String {
     out
 }
 
-fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, scroll: usize) {
     let popup = centered_rect(80, 80, area);
     f.render_widget(Clear, popup);
 
@@ -5678,29 +5775,30 @@ fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
     } else {
         // Başlık satırı.
         lines.push(Line::from(Span::styled(
-            "  Tick  Satıcı               →  Alıcı                 Miktar  Ürün         Şehir     Fiyat",
+            "  Tick  Satıcı (Meslek)         →  Alıcı (Meslek)          Miktar  Ürün         Şehir",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
-            "  ────  ──────────────────     ──────────────────      ──────  ───────────  ────────  ─────",
+            "  ────  ─────────────────────     ─────────────────────   ──────  ───────────  ────────",
             Style::default().fg(Color::DarkGray),
         )));
 
-        for t in app.recent_trades.iter().rev() {
-            let is_mine = t.buyer_name.starts_with("Sen") || t.seller_name.starts_with("Sen");
+        for t in app.recent_trades.iter().rev().skip(scroll) {
+            let is_mine = t.buyer_role == "Sen" || t.seller_role == "Sen";
             let color = if is_mine { Color::Yellow } else { Color::White };
+            let seller_label = format!("{} ({})", truncate_str(&t.seller_name, 12), t.seller_role);
+            let buyer_label = format!("{} ({})", truncate_str(&t.buyer_name, 12), t.buyer_role);
             lines.push(Line::from(Span::styled(
                 format!(
-                    "  {:>4}  {:<20}  →  {:<20}  {:>6}  {:<11}  {:<8}  {}",
+                    "  {:>4}  {:<21}  →  {:<21}  {:>6}  {:<11}  {}",
                     t.tick.value(),
-                    truncate_str(&t.seller_name, 20),
-                    truncate_str(&t.buyer_name, 20),
+                    seller_label,
+                    buyer_label,
                     t.quantity,
                     format!("{}", t.product),
                     city_short(t.city),
-                    t.price,
                 ),
                 Style::default().fg(color).add_modifier(if is_mine {
                     Modifier::BOLD
@@ -5713,7 +5811,7 @@ fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Esc / Enter / Space → kapat",
+        "  ↑↓ / j k / PgUp PgDn scroll  —  diğer tuş: kapat",
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
@@ -6191,6 +6289,22 @@ fn parse_decimal_as_cents(raw: &str) -> Option<u64> {
 }
 
 /// Stringi max uzunlukta kes, uzunsa `…` ile bitir.
+fn npc_role_label(state: &GameState, pid: PlayerId) -> &'static str {
+    if pid == HUMAN_ID {
+        return "Sen";
+    }
+    match state.players.get(&pid).and_then(|p| p.npc_kind) {
+        Some(NpcKind::Tuccar) => "Tüccar",
+        Some(NpcKind::Sanayici) => "Sanayici",
+        Some(NpcKind::Alici) => "Alıcı",
+        Some(NpcKind::Spekulator) => "Spek",
+        Some(NpcKind::Ciftci) => "Çiftçi",
+        Some(NpcKind::Banka) => "Banka",
+        Some(NpcKind::Esnaf) => "Esnaf",
+        None => "?",
+    }
+}
+
 fn truncate_str(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -6327,12 +6441,29 @@ fn render_game_over_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     if let Some(my) = board.iter().position(|s| s.player_id == HUMAN_ID) {
         let my_sc = &board[my];
         let rank = my + 1;
-        let comment = match rank {
-            1 => "🎉  Şampiyonsun! Stratejin işe yaradı.",
-            2 => "💪  İkincilik fena değil — sonraki sezona güçlü başlarsın.",
-            3 => "🥉  Podyumda yer aldın.",
-            r if r <= 5 => "👍  Top 5 — iyi bir sezon.",
-            _ => "📚  Kaybettin bu sezon — kalem dökümüne bak, nereyi kaçırdın?",
+        let total = board.len();
+        let pnl_positive = my_sc.total.as_cents() > 0;
+        // Yüzdelik dilim: üst %33 / orta %33 / alt %33
+        let top_third = total / 3;
+        let bottom_third = total - total / 3;
+        let comment = if rank == 1 {
+            "🎉  Şampiyonsun! Stratejin işe yaradı."
+        } else if rank == 2 {
+            "💪  İkincilik — sonraki sezona güçlü başlarsın."
+        } else if rank == 3 && total >= 6 {
+            "🥉  Podyumda yer aldın."
+        } else if rank <= top_third.max(3) && pnl_positive {
+            "👍  Üst dilimdesin, kârlı bir sezon."
+        } else if rank <= top_third.max(3) {
+            "⚠️  Üst dilimde ama zararda — maliyetlere dikkat."
+        } else if rank < bottom_third && pnl_positive {
+            "📊  Ortada bitirdin, gelişme var."
+        } else if rank < bottom_third {
+            "📊  Ortada ama zararda — stratejiyi gözden geçir."
+        } else if pnl_positive {
+            "📉  Alt dilimde ama en azından kârlısın."
+        } else {
+            "📚  Zararlı bir sezon — kalem dökümüne bak, nereyi kaçırdın?"
         };
         lines.push(Line::from(vec![
             Span::styled(
@@ -7018,6 +7149,8 @@ fn render_market_panel(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
     let widths = [
         Constraint::Length(12),
+        Constraint::Min(10),
+        Constraint::Min(10),
         Constraint::Min(10),
         Constraint::Min(10),
         Constraint::Min(10),
@@ -8378,6 +8511,17 @@ fn parse_order_cmd(
     }
     let city = parse_city(args[0])?;
     let product = parse_product(args[1])?;
+    // Sanayici mamul BUY yapamaz — üretir, almaz.
+    if side == OrderSide::Buy && product.is_finished() {
+        if let Some(p) = app.state.players.get(&HUMAN_ID) {
+            if p.has_npc_kind(NpcKind::Sanayici) {
+                return Err(format!(
+                    "Sanayici {} satın alamaz — sen üretiyorsun, Tüccardan almak yerine kendin üret.",
+                    product
+                ));
+            }
+        }
+    }
     let qty: u32 = args[2]
         .parse()
         .map_err(|_| format!("geçersiz miktar: {}", args[2]))?;

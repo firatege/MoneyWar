@@ -151,10 +151,12 @@ fn candidate_to_command(
             product,
             quantity,
             unit_price,
+            ttl_override,
         } => {
             if quantity == 0 || unit_price.as_cents() <= 0 {
                 return None;
             }
+            let ttl = ttl_override.unwrap_or(NPC_DEFAULT_ORDER_TTL);
             let order = MarketOrder::new_with_ttl(
                 OrderId::new(npc_order_id(pid, tick, seq)),
                 pid,
@@ -164,7 +166,7 @@ fn candidate_to_command(
                 quantity,
                 unit_price,
                 tick,
-                NPC_DEFAULT_ORDER_TTL,
+                ttl,
             )
             .ok()?;
             Some(Command::SubmitOrder(order))

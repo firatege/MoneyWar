@@ -18,14 +18,17 @@
 //! - `competition -0.2` — rakip baskı varsa bekle
 
 use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, Player, ProductKind, balance::TRANSACTION_TAX_PCT,
+    CaravanState, Cargo, CityId, Factory, GameState, Money, OrderSide, Player, ProductKind,
+    balance::TRANSACTION_TAX_PCT,
 };
 
 use crate::behavior::candidates::ActionCandidate;
 use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
 
-/// Yeni fabrika kurma eşiği — Sanayici en az bu kadar fab istemeli.
-const TARGET_FACTORIES: usize = 3;
+/// Yeni fabrika kurma eşiği. 5 şehir × 3 mamul = 15 slot, 3 Sanayici × 4 = 12
+/// = %80 kapsama. TARGET=5 denendi: 62K fab maliyeti 50K başlangıç nakit ile
+/// karşılanamıyor → Sanayici iflas. TARGET=4 ile maliyet 32K, sürdürülebilir.
+const TARGET_FACTORIES: usize = 4;
 
 /// Sanayici'nin bu tick için aday listesi.
 #[must_use]
@@ -88,7 +91,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             ) else {
                 continue;
             };
-            let quantity = affordable_qty(bucket_cash, unit_price, 15);
+            let quantity = affordable_qty(bucket_cash, unit_price, 20);
             if quantity > 0 {
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Buy,
@@ -96,34 +99,64 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     product,
                     quantity,
                     unit_price,
+                    ttl_override: None,
                 });
             }
         }
     } else {
-        // Fab var → SADECE fab şehirlerinde BUY. Spekülatör market maker
-        // off-fab şehirlerde Çiftçi malını alıp pazara likidite veriyor;
-        // Tüccar arbitraj zaten ucuz şehirden pahalı şehre taşıyor. Sanayici
-        // off-fab BUY yaparsa stok israfı + Spekülatör kanalını boğuyor.
+        // Fix 1: her şehirde SADECE o şehrin fabrikalarının ham maddesi.
+        // Global needed_raws × fab_cities cross-product yanlıştı: Ankara'da
+        // Zeytinyağı fab varsa Buğday (Un fab İzmir'de) için BUY yapmamalı.
         let fab_cities: std::collections::BTreeSet<CityId> = state
             .factories
             .values()
             .filter(|f| f.owner == player.id)
             .map(|f| f.city)
             .collect();
-        // CROSS policy: best_ask varsa ona kadar in (fab idle = para sızıntısı).
-        let bucket_count = (needed_raws.len() * fab_cities.len()).max(1) as i64;
-        let bucket_cash = Money::from_cents(player.cash.as_cents() / 2 / bucket_count);
+        // Bütçe: gerçek (city, raw) çifti sayısına böl.
+        let pair_count = state
+            .factories
+            .values()
+            .filter(|f| f.owner == player.id && f.product.raw_input().is_some())
+            .count()
+            .max(1) as i64;
+        let bucket_cash = Money::from_cents(player.cash.as_cents() / 2 / pair_count);
         for &city in &fab_cities {
-            for &product in &needed_raws {
-                let reference = state.reference_price(city, product).unwrap_or_else(|| {
-                    Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                        .unwrap_or(Money::ZERO)
-                });
-                // Cross tavanı: baseline × 1.15 (v0.4.1: 1.10 → 1.15 — sezon
-                // boyu BUY/SELL 3-6× kıtlık, fab idle %50 sebep "ham fiyatı
-                // ceiling'e ulaşmıyor". Sanayici daha pahalıya almaya razı,
-                // ham match akışı artar).
-                let cash_ceiling = scale_pct(reference, 115);
+            // Fix 1: bu şehirdeki fabrikaların ham maddeleri.
+            let city_raws: std::collections::BTreeSet<ProductKind> = state
+                .factories
+                .values()
+                .filter(|f| f.owner == player.id && f.city == city)
+                .filter_map(|f| f.product.raw_input())
+                .collect();
+            for &product in &city_raws {
+                // Fix 5: stok eksiği kadar iste — talep sinyali + gerçek ihtiyaç.
+                // Stok doluysa BUY yapma (gereksiz sinyal).
+                let have = player.inventory.get(city, product);
+                if have >= Factory::BATCH_SIZE {
+                    continue;
+                }
+                let shortage = Factory::BATCH_SIZE - have;
+                let want = shortage.min(50);
+
+                // effective_baseline: Walras clamp'lı referans — rolling_avg
+                // spiral'ini kırar (her yüksek fill bir sonraki ceiling'i daha
+                // da yükseltmez). initial × [%60, %160] aralığında kalır.
+                let baseline = state
+                    .effective_baseline(city, product)
+                    .unwrap_or_else(|| {
+                        Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                            .unwrap_or(Money::ZERO)
+                    });
+                // Kademeli premium: stok ne kadar azsa o kadar yüksek teklif.
+                // Kitapta hep tavana gitmek yerine organik fiyat keşfi.
+                let premium_pct: i64 = match shortage {
+                    0..=25  => 105, // az eksik → fazla ödeme
+                    26..=60 => 115, // orta eksik
+                    61..=99 => 125, // çok eksik
+                    _       => 130, // sıfır stok → max (Tüccar sinyali)
+                };
+                let cash_ceiling = scale_pct(baseline, premium_pct);
                 let Some(unit_price) = marketable_bid(
                     state,
                     player.id,
@@ -135,7 +168,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 ) else {
                     continue;
                 };
-                let quantity = affordable_qty(bucket_cash, unit_price, 15);
+                let quantity = affordable_qty(bucket_cash, unit_price, want);
                 if quantity > 0 {
                     out.push(ActionCandidate::SubmitOrder {
                         side: OrderSide::Buy,
@@ -143,6 +176,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                         product,
                         quantity,
                         unit_price,
+                        ttl_override: Some(6),
                     });
                 }
             }
@@ -168,19 +202,19 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                 .unwrap_or(Money::ZERO)
         });
-        let stock_floor_pct: i64 = match qty {
-            0..=49 => 95,    // taze mamul → kâr maks
-            50..=149 => 88,  // orta basınç
-            150..=299 => 78, // ağır basınç → fiyat aşağı kay
-            _ => 70,         // 300+ kriz, agresif erit
+        // Nakit kritikse taban düşür — ücret ödemek için satmak zorunda.
+        let cash_lira = player.cash.as_cents() / 100;
+        let stock_floor_pct: i64 = if cash_lira < 5_000 {
+            78  // kritik nakit → ne olursa satalım
+        } else {
+            match qty {
+                0..=49 => 95,  // taze mamul
+                50..=99 => 90, // orta stok
+                _ => 85,       // yüksek stok → kervan da dispatch edecek
+            }
         };
         let stock_floor = scale_pct(reference, stock_floor_pct);
-        // Stok>150 ise CROSS (alıcıya yetiş, depoyu boşalt).
-        let policy = if qty >= 150 {
-            CrossPolicy::Cross
-        } else {
-            CrossPolicy::Passive
-        };
+        let policy = CrossPolicy::Passive;
         let Some(unit_price) = marketable_ask(
             state,
             player.id,
@@ -198,6 +232,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             product,
             quantity,
             unit_price,
+            ttl_override: None,
         });
     }
 
@@ -205,12 +240,66 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     // Cap: Sanayici aynı anda max 1 aktif buyer kontratı.
     out.extend(enumerate_contract_accepts(state, player, &needed_raws));
 
-    // v8.26: NPC kontrat propose kapatıldı. Engine'de stok escrow yok →
-    // Sanayici 30 mamul stoklu kontrat açsa da aynı stoğu market'te satıyor
-    // → delivery_tick'te breach (%66-78 cay oranı). Sadece insan oyuncu
-    // propose etsin (manuel kontrol → %0 breach). NPC accept tarafında kalır.
-    // out.extend(enumerate_contract_proposals(state, player));
+    // Mamul kervan dispatch — stok yüksekse en pahalı şehre gönder.
+    out.extend(enumerate_mamul_dispatch(state, player));
 
+    out
+}
+
+/// Sanayici'nin mamul kervan dispatch adayları.
+/// Stok BATCH_SIZE × 2 birimi aşarsa, en yüksek referans fiyatlı şehre gönder.
+fn enumerate_mamul_dispatch(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    let mut out = Vec::new();
+    let dispatch_threshold = moneywar_domain::balance::FACTORY_BATCH_SIZE * 2;
+
+    for caravan in state.caravans.values() {
+        if caravan.owner != player.id {
+            continue;
+        }
+        let CaravanState::Idle { location: cur_city } = caravan.state else {
+            continue;
+        };
+        // En yüksek stoklu mamul ve en kârlı hedef şehri bul.
+        let mut best: Option<(ProductKind, CityId, u32, i64)> = None;
+        for product in ProductKind::FINISHED_GOODS {
+            let stock = player.inventory.get(cur_city, product);
+            if stock < dispatch_threshold {
+                continue;
+            }
+            let local_price = state
+                .reference_price(cur_city, product)
+                .map(|m| m.as_cents())
+                .unwrap_or(0);
+            for to_city in CityId::ALL {
+                if to_city == cur_city {
+                    continue;
+                }
+                let to_price = state
+                    .best_bid(to_city, product)
+                    .map(|(p, _)| p.as_cents())
+                    .or_else(|| state.reference_price(to_city, product).map(|m| m.as_cents()))
+                    .unwrap_or(0);
+                let profit = to_price - local_price;
+                if profit <= 0 {
+                    continue;
+                }
+                if best.is_none_or(|(_, _, _, p)| profit > p) {
+                    best = Some((product, to_city, stock.min(caravan.capacity), profit));
+                }
+            }
+        }
+        if let Some((product, to_city, qty, _)) = best {
+            let mut cargo = Cargo::new();
+            if cargo.add(product, qty).is_ok() {
+                out.push(ActionCandidate::DispatchCaravan {
+                    caravan_id: caravan.id,
+                    from: cur_city,
+                    to: to_city,
+                    cargo,
+                });
+            }
+        }
+    }
     out
 }
 
@@ -467,6 +556,27 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
         let competition_factor = 1 + 2 * rival_count + 3 * own_count + 3 * same_product_global;
         let base_score = margin / competition_factor;
 
+        // Specialty bonus: şehrin prime hammaddesi bu ürünün girdisiyle eşleşirse
+        // +%50 bonus. Sanayici hammadde bol olan şehre fabrika kurmayı tercih eder
+        // → idle azalır, üretim artar.
+        let city_prime = state.city_specialty.get(city).copied();
+        let product_raw = product.raw_input();
+        // Specialty bonus sadece hammadde gerçekten bol ve ucuzsa geçerli.
+        // Zeytin fiyatı 2× baseline'ı geçtiyse (kıtlık) bonus sıfır —
+        // Sanayici o şehre daha fazla Zeytinyağı fabrikası kurmamalı.
+        let raw_supply_ok = product_raw.map_or(true, |raw| {
+            let ref_price = state.reference_price(*city, raw)
+                .map(|m| m.as_cents()).unwrap_or(0);
+            let baseline = state.price_baseline.get(&(*city, raw))
+                .map(|m| m.as_cents()).unwrap_or(1).max(1);
+            ref_price > 0 && ref_price < baseline * 2
+        });
+        let specialty_bonus = if city_prime.is_some() && city_prime == product_raw && raw_supply_ok {
+            base_score / 2 / (1 + same_product_global / 2)
+        } else {
+            0
+        };
+
         // Jitter: NPC × tick × (city, product) hash'i ile. Marjın %20'si
         // kadar varyans → kararı sallar ama yön kaybetmez.
         let hash_seed = player
@@ -479,7 +589,7 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
             .wrapping_mul(7)
             .wrapping_add(*product as u64);
         let jitter = ((hash_seed % 100) as i64) * margin.max(1) / 500;
-        base_score + jitter
+        base_score + specialty_bonus + jitter
     })
 }
 

@@ -24,6 +24,8 @@ pub enum ActionCandidate {
         product: ProductKind,
         quantity: u32,
         unit_price: Money,
+        /// `None` → `NPC_DEFAULT_ORDER_TTL`. Ham madde BUY gibi uzun sinyaller için override.
+        ttl_override: Option<u32>,
     },
     /// Fabrika kur (Sanayici).
     BuildFactory { city: CityId, product: ProductKind },

@@ -47,7 +47,12 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         if !product.is_raw() || qty == 0 {
             continue;
         }
-        let quantity = (qty / 2).max(1).min(100);
+        // Minimum 10 birim olmadan satma — küçük stok biriktirsin.
+        // Böylece 1-5 birimlik mikro fill'ler ortadan kalkar.
+        if qty < 10 {
+            continue;
+        }
+        let quantity = (qty / 2).min(30);
         let reference = state.reference_price(city, product).unwrap_or_else(|| {
             // Baseline yoksa fallback — sim her zaman init eder, prod CLI de.
             Money::from_lira(default_raw_price(product)).unwrap_or(Money::ZERO)
@@ -90,6 +95,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             product,
             quantity,
             unit_price,
+            ttl_override: None,
         });
     }
     out
@@ -138,7 +144,7 @@ mod tests {
             panic!("expected SubmitOrder");
         };
         assert_eq!(*side, OrderSide::Sell);
-        assert_eq!(*quantity, 100);
+        assert_eq!(*quantity, 30); // 200/2=100, ama cap 30
     }
 
     #[test]
@@ -162,23 +168,27 @@ mod tests {
     }
 
     #[test]
-    fn quantity_caps_at_100() {
+    fn quantity_caps_at_30() {
         let (s, p) = ciftci_with_stock(500);
         let cands = enumerate(&s, &p);
         let ActionCandidate::SubmitOrder { quantity, .. } = &cands[0] else {
             panic!()
         };
-        // 500/2 = 250, ama cap 100.
-        assert_eq!(*quantity, 100);
+        // 500/2 = 250, ama cap 30.
+        assert_eq!(*quantity, 30);
     }
 
     #[test]
-    fn quantity_floor_at_1_for_tiny_stock() {
-        let (s, p) = ciftci_with_stock(1);
+    fn tiny_stock_below_threshold_yields_no_sell() {
+        // 10 birim altı — biriktirsin, satmasın.
+        let (s, p) = ciftci_with_stock(5);
+        assert!(enumerate(&s, &p).is_empty(), "küçük stok satılmamalı");
+    }
+
+    #[test]
+    fn exactly_threshold_yields_sell() {
+        let (s, p) = ciftci_with_stock(10);
         let cands = enumerate(&s, &p);
-        let ActionCandidate::SubmitOrder { quantity, .. } = &cands[0] else {
-            panic!()
-        };
-        assert_eq!(*quantity, 1);
+        assert!(!cands.is_empty(), "eşikte satış başlamalı");
     }
 }

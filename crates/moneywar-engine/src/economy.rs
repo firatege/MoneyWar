@@ -28,6 +28,16 @@ use crate::report::{LogEntry, TickReport};
 /// `WAGE_PER_FACTORY_LIRA` da yarıya indi. Akışın sıklığı 2× → Alıcı cash'i
 /// daha pürüzsüz akıyor → t40 cliff yumuşaması.
 const WAGE_PERIOD: u32 = 5;
+
+/// Depolama maliyeti periyodu — her N tick'te stok ücreti kesilir.
+const STORAGE_PERIOD: u32 = 10;
+/// Ücretsiz stok eşiği (birim) — bu miktarın altı ücretlendirilmez.
+/// Sanayici'nin çalışma stoğunu (BATCH_SIZE=100) korur.
+const STORAGE_FREE_UNITS: u32 = 25;
+/// Standart depolama maliyeti (cents/birim/periyot) — Tüccar, Spek, Çiftçi.
+const STORAGE_COST_CENTS: i64 = 6;
+/// Sanayici depolama maliyeti — fabrika deposu var, daha ucuz.
+const STORAGE_COST_SANAYICI_CENTS: i64 = 1;
 /// Sanayici fabrikası başına ücret (lira) — her wage period'da Sanayici'den
 /// çıkar, Alıcı'lara eşit dağıtılır. Closed-loop ekonomi.
 /// v0.5.1: 1500 → 3500. Sim 10 seed Hard: Sanayici PnL +116K (eşik 80K üst
@@ -40,7 +50,7 @@ const WAGE_PERIOD: u32 = 5;
 /// v0.6.0 Faz 1 (talep cliff): 5000 → 2500. WAGE_PERIOD 10→5 ile birlikte
 /// toplam transfer sabit (5000×9 = 2500×18 = 45K). Hedef: cash akışı
 /// pürüzsüz, miktar değişmez.
-const WAGE_PER_FACTORY_LIRA: i64 = 2500;
+const WAGE_PER_FACTORY_LIRA: i64 = 500;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
@@ -60,15 +70,6 @@ const MAINTENANCE_PER_FACTORY_LIRA: i64 = 250;
 // tâtonnement asimetrisi yumuşar (fiyatlar monoton artmaz). Bkz. fiyat
 // trend analizi: 18/18 bucket sezonda +50-99% kayıyordu.
 const CONSUME_PERIOD: u32 = 8;
-/// Alıcı'nın stoğundan her cycle ne yüzdesi tüketilsin.
-/// Faz E tuning: 50 → 25. Behavior'da Alıcı çok agresif alım, %50/5tick
-/// tüketim cash'i hızla erittirdi. %25 ile mamul daha uzun kalır, alım
-/// baskısı azalır → Alıcı PnL kaybı yumuşar.
-/// v0.6.0: 25 → 20 → 15. 5 şehir × 3 mamul × 7 cycle ile Alıcı yine -131K
-/// kaybediyordu (eşik -110K). Stok daha uzun durduğu için urgency fiyatı
-/// (baseline×1.0 vs ×1.10) sürekli düşük seviyede kalır → BUY toplam
-/// ödemesi azalır.
-const CONSUME_PCT: u32 = 15;
 
 /// Mahsul refill periyodu — her N tick'te Çiftçi'lere stok inject.
 const HARVEST_PERIOD: u32 = 8;
@@ -77,8 +78,8 @@ const HARVEST_PERIOD: u32 = 8;
 /// (Sanayici 5 + Spek 3 alıcı, Çiftçi 6 × 80 birim/tick = 480 ham/tick arz
 /// emilemiyor). Match eff %12-39, FactoryIdle 1260. Mahsul %40 düşürülür
 /// → Çiftçi sezon başına ~3500 birim üretir (eski 5800).
-const HARVEST_QTY_MIN: u32 = 120;
-const HARVEST_QTY_MAX: u32 = 240;
+const HARVEST_QTY_MIN: u32 = 60;
+const HARVEST_QTY_MAX: u32 = 120;
 
 /// Vergi periyodu — şu an aktif değil (wages closed loop yeterli).
 const TAX_PERIOD: u32 = 10;
@@ -108,6 +109,12 @@ pub(crate) fn tick_economy(
     // Wages — Sanayici fab'ları işçilere (Alıcı'lara) ücret ödesin (closed loop)
     if t > 0 && t % WAGE_PERIOD == 0 {
         pay_factory_wages(state, report, tick);
+    }
+
+    // Depolama maliyeti — büyük stok tutmanın bedeli.
+    // Sanayici'ye indirimli (fabrika deposu), diğerlerine standart fiyat.
+    if t > 0 && t % STORAGE_PERIOD == 0 {
+        charge_storage_costs(state, report, tick);
     }
 
     // Alıcı sabit maaş — havadan basılan ek gelir. Sanayici-bound wage tek
@@ -146,6 +153,57 @@ pub(crate) fn tick_economy(
     let _ = TAX_PERIOD;
 }
 
+/// Depolama maliyeti — eşik üzeri stok için nakit keser, sisteme sink eder.
+/// Sanayici fabrika deposu avantajıyla daha düşük ücret öder.
+fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Tick) {
+    let player_ids: Vec<moneywar_domain::PlayerId> =
+        state.players.keys().copied().collect();
+
+    for pid in player_ids {
+        let is_sanayici = state
+            .players
+            .get(&pid)
+            .map(|p| p.npc_kind == Some(NpcKind::Sanayici))
+            .unwrap_or(false);
+        let cost_per_unit = if is_sanayici {
+            STORAGE_COST_SANAYICI_CENTS
+        } else {
+            STORAGE_COST_CENTS
+        };
+
+        let mut total_cost_cents: i64 = 0;
+        for city in moneywar_domain::CityId::ALL {
+            for product in moneywar_domain::ProductKind::ALL {
+                let qty = state
+                    .players
+                    .get(&pid)
+                    .map(|p| p.inventory.get(city, product))
+                    .unwrap_or(0);
+                let chargeable = qty.saturating_sub(STORAGE_FREE_UNITS) as i64;
+                if chargeable > 0 {
+                    total_cost_cents += chargeable * cost_per_unit;
+                }
+            }
+        }
+
+        if total_cost_cents <= 0 {
+            continue;
+        }
+        let Some(player) = state.players.get_mut(&pid) else { continue };
+        let cost = moneywar_domain::Money::from_cents(
+            total_cost_cents.min(player.cash.as_cents()),
+        );
+        if cost.as_cents() > 0 {
+            let _ = player.debit(cost);
+            report.push(LogEntry {
+                tick,
+                actor: Some(pid),
+                event: crate::LogEvent::StorageCost { player: pid, amount: cost },
+            });
+        }
+    }
+}
+
 /// Wages — Sanayici fabrikalarından ücret keser, Alıcı'lara eşit dağıtır.
 /// Closed loop: Alıcı'nın geliri Sanayici cebinden gelir (eski sabit maaş yerine).
 /// Vic3 inspiration: building wages → pop income.
@@ -172,11 +230,23 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
         return;
     }
 
-    // Toplam wage havuzu — her Sanayici cebinden kesilir.
+    // Toplam wage havuzu — sadece AKTİF fabrikalardan kesilir (idle = ücret yok).
     let mut wage_pool_cents: i64 = 0;
-    for (owner, count) in &factories_by_owner {
+    for (owner, _count) in &factories_by_owner {
+        // Aktif fab sayısı: son WAGE_PERIOD tick'te üretim yapmış olanlar.
+        // IDLE_THRESHOLD (10) çok gevşekti — fabrika 3-4 tick'te bir üretip
+        // her zaman "aktif" sayılıyordu. WAGE_PERIOD (5) ile gerçekten
+        // son dönemde üretim yaptıysa ücret öde, yapmadıysa ödeme.
+        let active_count = state
+            .factories
+            .values()
+            .filter(|f| f.owner == *owner && !f.is_atil(tick, WAGE_PERIOD))
+            .count() as i64;
+        if active_count == 0 {
+            continue;
+        }
         let wage_per_owner_cents = WAGE_PER_FACTORY_LIRA
-            .saturating_mul(i64::from(*count))
+            .saturating_mul(active_count)
             .saturating_mul(100);
         if let Some(p) = state.players.get_mut(owner) {
             let actual_cents = wage_per_owner_cents.min(p.cash.as_cents());
@@ -253,10 +323,11 @@ fn consume_alici_inventory(state: &mut GameState, tick: Tick) {
         };
         let entries: Vec<(CityId, ProductKind, u32)> = player.inventory.entries().collect();
         for (city, product, qty) in entries {
-            if !product.is_finished() {
+            let pct = product.alici_consume_pct();
+            if pct == 0 {
                 continue;
             }
-            let consumed = (qty.saturating_mul(CONSUME_PCT)) / 100;
+            let consumed = (qty.saturating_mul(pct)) / 100;
             if consumed > 0 {
                 let _ = player.inventory.remove(city, product, consumed);
             }
@@ -331,7 +402,33 @@ fn harvest_ciftci_stock(
             .get(&city)
             .copied()
             .unwrap_or_else(|| city.cheap_raw());
-        let prime_qty = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+        // Dinamik hasat: piyasa fiyatı baseline'ın 2×'inden yüksekse (kıtlık)
+        // daha fazla üret, 0.6×'inden düşükse (bolluk) daha az üret.
+        // Ekonomiyi kırmadan doğal denge sağlar — Çiftçi de fiyata bakar.
+        let price_factor_pct = {
+            let ref_price = state.reference_price(city, prime)
+                .map(|m| m.as_cents()).unwrap_or(0);
+            let baseline = state.price_baseline.get(&(city, prime))
+                .map(|m| m.as_cents()).unwrap_or(1).max(1);
+            let ratio = if baseline > 0 { ref_price * 100 / baseline } else { 100 };
+            if ref_price == 0 {
+                100
+            } else if ratio > 300 {
+                300 // 3× baseline → 3× üretim (kıtlık agresif baskılansın)
+            } else if ratio > 150 {
+                200 // 1.5× baseline → 2× üretim
+            } else if ratio > 110 {
+                130 // hafif yüksek → %30 fazla
+            } else if ratio < 50 {
+                50  // yarı fiyat → yarı üretim
+            } else if ratio < 80 {
+                75  // düşük → az üretim
+            } else {
+                100
+            }
+        };
+        let base_qty = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+        let prime_qty = (base_qty * price_factor_pct as u32 / 100).max(1);
 
         let secondary = state.city_secondary.get(&city).copied();
         let secondary_qty = secondary.map(|_| {
@@ -341,9 +438,6 @@ fn harvest_ciftci_stock(
 
         let demand = state.city_demand.get(&city).copied();
         let demand_qty = demand.map(|_| {
-            // v8.13: qty/6 → qty/4. Demand-bucket sec ile eşit; prime hâlâ 4×
-            // baskın (felsefe korunur) ama demand-bucket "kuru raf" değil.
-            // Tüccar arbitrage yetmediğinde demand-raw doğal akış sağlanır.
             let base = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
             base / 4
         });

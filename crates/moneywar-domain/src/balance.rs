@@ -44,7 +44,7 @@
 /// Üretim batch boyutu. 100 sezon başına ~30 batch potansiyel sağlar.
 /// 50'ye düşürmek Çiftçi'yi kazandırdı (+6.7K) ama Sanayici'yi -32K'ya
 /// sürükledi (kâr marjı erimişti). 100 koru.
-pub const FACTORY_BATCH_SIZE: u32 = 100;
+pub const FACTORY_BATCH_SIZE: u32 = 50;
 
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
 /// Eski yolculuk: 2 → 3 (Sanayici aşırı kârlı diye yavaşlatıldı), şimdi
@@ -285,7 +285,9 @@ pub const NPC_ORDER_ID_OFFSET: u64 = 10_000_000_000;
 pub const WORLD_PLAYER_ID_VALUE: u64 = 0;
 
 /// World Fab'ı kaç tickte bir üretim yapar.
-pub const WORLD_FAB_PERIOD: u32 = 2;
+/// 2 → 5: Sanayici 12 fab ile slotların %80'ini kaplıyor, World çok agresif
+/// rekabet ediyordu (820 fill vs Sanayici 447). Frekans düşürüldü.
+pub const WORLD_FAB_PERIOD: u32 = 5;
 
 /// World Fab her periyotta her (city, mamul) için bu kadar birim üretir.
 /// Sanayici NPC fab batch=100/3tick ≈ 33/tick. World fab daha küçük (15)

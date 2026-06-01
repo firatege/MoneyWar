@@ -918,6 +918,9 @@ pub enum LogEvent {
     /// Ekonomi: Alıcı NPC maaş aldı.
     EconomySalary { player: PlayerId, amount: Money },
 
+    /// Ekonomi: depolama maliyeti — eşik üzeri stok için nakit kesildi.
+    StorageCost { player: PlayerId, amount: Money },
+
     /// Ekonomi: Çiftçi NPC mahsul refill aldı.
     EconomyHarvest {
         player: PlayerId,

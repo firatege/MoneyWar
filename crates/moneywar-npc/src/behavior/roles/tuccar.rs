@@ -122,12 +122,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     continue;
                 }
                 let qty = stock.min(caravan.capacity);
-                // Min eşik: caravan'ın %50'si altında dispatch yapma. Aksi
-                // halde Tüccar 50 birim stokla %4 dolu caravan göndererek
-                // boş seyahat ediyor, hedef şehirde küçük arz dümpü yapıp
-                // spot SELL fırsatlarını kaçırıyor (Cartel personality
-                // dispatch'e meyilli olduğu için bilhassa zarar ediyor).
-                let min_qty = caravan.capacity / 2;
+                // Ham madde: 80 birim (eski capacity/4=300 çok yüksekti,
+                // 60-birim emirlerle Tüccar 300'e ulaşamıyordu → 0 dispatch).
+                // Mamul: 50 sabit.
+                let min_qty = if product.is_raw() { 80 } else { 50 };
                 if qty < min_qty {
                     continue;
                 }
@@ -137,9 +135,13 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         if targets.is_empty() {
             continue;
         }
-        // Kâr azalan + tie-break (city, product) ASC
+        // Toplam kâr azalan + tie-break (city, product) ASC.
+        // qty × profit/birim — 50 birim 1₺ kâr, 5 birim 8₺ kârdan iyidir.
         targets.sort_by(|a, b| {
-            b.3.cmp(&a.3)
+            let total_a = i64::from(a.2) * a.3;
+            let total_b = i64::from(b.2) * b.3;
+            total_b
+                .cmp(&total_a)
                 .then_with(|| a.1.cmp(&b.1))
                 .then_with(|| a.0.cmp(&b.0))
         });
@@ -185,7 +187,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             OrderSide::Buy,
             player.id,
         );
-        let buy_qty = affordable_qty(bucket_cash, buy_price, 25);
+        let buy_qty = affordable_qty(bucket_cash, buy_price, 30);
         if buy_qty > 0 {
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Buy,
@@ -193,6 +195,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 product,
                 quantity: buy_qty,
                 unit_price: buy_price,
+                ttl_override: None,
             });
         }
 
@@ -232,13 +235,14 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 OrderSide::Sell,
                 player.id,
             );
-            let sell_qty = stock.min(25);
+            let sell_qty = stock.min(30);
             out.push(ActionCandidate::SubmitOrder {
                 side: OrderSide::Sell,
                 city: to_city,
                 product,
                 quantity: sell_qty,
                 unit_price: sell_price,
+                ttl_override: None,
             });
         }
         // rich_price kullanılmadı artık ama scope için referansta tut.

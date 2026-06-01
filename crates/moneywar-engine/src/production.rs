@@ -142,10 +142,9 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         return;
     };
     let have_raw = player.inventory.get(city, raw);
-    // Shortage soft penalty (Vic3 inspiration): tam batch yoksa, yarı batch
-    // üret. Eski "100 yoksa idle" katı kuralı kâr akışını koparıyordu.
-    // Min threshold = BATCH_SIZE/2. Altında idle.
-    let partial_min = Factory::BATCH_SIZE / 2;
+    // Shortage soft penalty: tam batch yoksa kısmi üret.
+    // Girdi = BATCH_SIZE (sabit), çıktı = batch_size × output_ratio_pct/100.
+    let partial_min = (Factory::BATCH_SIZE / 4).max(1);
     let batch_size = if have_raw >= Factory::BATCH_SIZE {
         Factory::BATCH_SIZE
     } else if have_raw >= partial_min {
@@ -347,7 +346,7 @@ mod tests {
 
     #[test]
     fn production_starts_when_raw_available_and_completes_after_kumas_ticks() {
-        // v0.4.1: Kumaş 4 tick + %80 verim. 100 Pamuk → 80 Kumaş.
+        // v0.4.1: Kumaş 4 tick + %80 verim. BATCH_SIZE Pamuk → 80% Kumaş.
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
         s.players
@@ -367,13 +366,14 @@ mod tests {
         )
         .unwrap();
 
-        // Tick 1: batch başlar (100 Pamuk → 80 Kumaş, completion=5).
+        // Tick 1: batch başlar (BATCH_SIZE Pamuk → 80% Kumaş, completion=5).
         advance_production(&mut s, &mut r, Tick::new(1));
+        let batch = moneywar_domain::balance::FACTORY_BATCH_SIZE;
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            900
+            1000 - batch
         );
         assert_eq!(s.factories.values().next().unwrap().batches.len(), 1);
 
@@ -390,21 +390,23 @@ mod tests {
             0
         );
 
-        // Tick 5: ilk batch tamamlanır (1+4=5), yeni 5. batch başlar.
-        // 80 Kumaş üretilir (verim %80). Pamuk 1000-500=500.
+        // Tick 5: ilk batch tamamlanır, yeni 5. batch başlar.
+        // BATCH_SIZE×80% Kumaş üretilir. Pamuk: 1000 - 5×BATCH_SIZE.
         let mut r5 = TickReport::new(Tick::new(5));
         advance_production(&mut s, &mut r5, Tick::new(5));
+        let expected_kumas = batch * 80 / 100;
+        let expected_pamuk = 1000 - 5 * batch;
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Kumas),
-            80
+            expected_kumas
         );
         assert_eq!(
             s.players[&pid]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
-            500
+            expected_pamuk
         );
     }
 

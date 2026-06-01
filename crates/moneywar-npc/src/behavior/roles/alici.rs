@@ -34,13 +34,17 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
     for city in moneywar_domain::CityId::ALL {
         for product in ProductKind::FINISHED_GOODS {
-            let reference = state.reference_price(city, product).unwrap_or_else(|| {
+            // effective_baseline: Walras clamp'lı referans (initial × [%60,%160]).
+            // reference_price (rolling avg) kullanmak Sanayici'de olduğu gibi
+            // fiyat spirali yaratıyordu — yüksek fill → avg artar → daha yüksek
+            // bid → daha yüksek fill. Clamp'lı baseline spirali keser.
+            let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
                 Money::from_lira(default_finished_price()).unwrap_or(Money::ZERO)
             });
             if reference.as_cents() <= 0 {
                 continue;
             }
-            // v8.20: Alıcı CROSS policy — tüketici talep esnek değil, best_ask
+            // Alıcı CROSS policy — tüketici talep esnek değil, best_ask
             // üzerine atlar. Cash_ceiling = stok-based urgency (100-110%).
             let cash_ceiling = bid_with_urgency(reference, player, city, product);
             let Some(unit_price) = marketable_bid(
@@ -54,7 +58,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             ) else {
                 continue;
             };
-            let quantity = affordable_qty(bucket_cash, unit_price, 30);
+            let quantity = affordable_qty(bucket_cash, unit_price, 10);
             if quantity == 0 {
                 continue;
             }
@@ -64,6 +68,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 product,
                 quantity,
                 unit_price,
+                ttl_override: None,
             });
         }
     }

@@ -51,8 +51,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 continue;
             }
 
-        // BID — reference × 0.99 + jitter (dar spread, v8.15 mantığı).
-        let bid_base = scale_pct(reference, 99);
+        // BID — Sanayici fabrikası olan şehirlerde penaltılı bid (×85),
+        // yoksa normal (×99). Sanayici zaten ×105-130 bid atıyor, penaltı
+        // ile fill sırası Sanayici > Spek olur, hammadde önce fabrikaya gider.
+        let has_sanayici_fab = state
+            .factories
+            .values()
+            .any(|f| f.product.raw_input() == Some(product) && f.city == city);
+        let bid_pct = if has_sanayici_fab { 85 } else { 99 };
+        let bid_base = scale_pct(reference, bid_pct);
         let bid_price = apply_jitter(
             bid_base,
             state.current_tick,
@@ -62,7 +69,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             player.id,
         );
         if bid_price.as_cents() > 0 {
-            let qty = affordable_qty(bucket_cash, bid_price, 25);
+            let qty = affordable_qty(bucket_cash, bid_price, 30);
             if qty > 0 {
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Buy,
@@ -70,6 +77,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     product,
                     quantity: qty,
                     unit_price: bid_price,
+                    ttl_override: None,
                 });
             }
         }
@@ -91,13 +99,14 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 player.id,
             );
             if ask_price.as_cents() > 0 {
-                let qty = (stock / 2).max(1).min(25);
+                let qty = (stock / 2).max(1).min(30);
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Sell,
                     city,
                     product,
                     quantity: qty,
                     unit_price: ask_price,
+                    ttl_override: None,
                 });
             }
         }

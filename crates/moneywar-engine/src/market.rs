@@ -310,6 +310,15 @@ fn match_continuous(
             } else {
                 (best.id, incoming.id, best.player, incoming.player)
             };
+            // Self-trade önleme: aynı oyuncu kendi emriyle eşleşemez.
+            if buyer == seller {
+                if incoming.side.is_buy() {
+                    sell_book.remove(idx);
+                } else {
+                    buy_book.remove(idx);
+                }
+                continue;
+            }
             fills.push(Fill {
                 buy_order_id: buy_id,
                 sell_order_id: sell_id,

@@ -102,6 +102,34 @@ impl ProductKind {
         }
     }
 
+    /// Bir batch mamul üretmek için gereken ham madde miktarı çarpanı.
+    /// BATCH_SIZE × bu çarpan = tüketilen ham madde.
+    /// Un 1:1, Kumaş 0.8:1 (dokuma verimi), Zeytinyağı 3:1 (gerçekçi sıkım).
+    #[must_use]
+    pub const fn raw_input_ratio_num(self) -> u32 {
+        match self {
+            Self::Un => 1,
+            Self::Kumas => 4,       // 4/5 = 0.8: 40 Pamuk → 50 Kumaş
+            Self::Zeytinyagi => 3,  // 3/1 = 3.0: 150 Zeytin → 50 Zeytinyağı
+            _ => 1,
+        }
+    }
+
+    /// Çarpan paydası (raw_input_ratio_num / raw_input_ratio_den).
+    #[must_use]
+    pub const fn raw_input_ratio_den(self) -> u32 {
+        match self {
+            Self::Kumas => 5,  // 4/5 = 0.8
+            _ => 1,
+        }
+    }
+
+    /// BATCH_SIZE için gereken ham madde miktarı.
+    #[must_use]
+    pub fn raw_input_qty(self, batch_size: u32) -> u32 {
+        batch_size * self.raw_input_ratio_num() / self.raw_input_ratio_den()
+    }
+
     /// Bozulma kuralı. Dayanıklı ürünler için `None`.
     #[must_use]
     pub const fn perishability(self) -> Option<Perishability> {
@@ -131,6 +159,22 @@ impl ProductKind {
             Self::Un => 90,
             Self::Zeytinyagi => 50,
             _ => 100,
+        }
+    }
+
+    /// Alıcı tüketim hızı (yüzde/periyot). Her tüketim periyodunda Alıcı
+    /// stoğunun bu yüzdesi silinir. Gerçek kullanım hızını yansıtır:
+    /// - `Un`: %20 — temel gıda, günlük tüketim
+    /// - `Kumas`: %12 — mevsimlik, yavaş yıpranır
+    /// - `Zeytinyagi`: %7 — lüks, az tüketilir
+    /// Ham ürünler için 0 (Alıcı ham tüketmez).
+    #[must_use]
+    pub const fn alici_consume_pct(self) -> u32 {
+        match self {
+            Self::Un => 20,       // temel gıda, hızlı tüketim
+            Self::Kumas => 15,    // eski CONSUME_PCT — stok baskısı Sanayici'yi eziyor
+            Self::Zeytinyagi => 8, // lüks ama çok düşük olunca stok birikti
+            _ => 0,
         }
     }
 
