@@ -206,7 +206,8 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Enter => app.start_game(Role::Sanayici),
             // v0.4: 'p' tuşu kaldırıldı — sadece Hızlı sezon. İsim yazımında
             // 'p' artık serbest. 'd' difficulty switcher korundu.
-            KeyCode::Char('d') => {
+            // Tab ile zorluk değiştir — 'd' artık isim girişinde kullanılabilir.
+            KeyCode::Tab => {
                 app.difficulty = app.difficulty.next();
             }
             // İsim input — alfabetik + boşluk + Türkçe karakter, max 20 char.
@@ -243,7 +244,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             KeyCode::Char('m') => app.mode = Mode::Holdings,
             KeyCode::Char('r') => app.mode = Mode::MarketIntel,
             KeyCode::Char('y') => app.mode = Mode::Contracts,
-            KeyCode::Char('e') => app.mode = Mode::RecentTrades { scroll: 0 },
+            KeyCode::Char('e') => app.mode = Mode::RecentTrades { scroll: 0, only_mine: false, city_filter: None },
             KeyCode::Char('v') => app.mode = Mode::CaravanPanel,
             KeyCode::Char('g') => app.mode = Mode::DebugLog { scroll: 0 },
             // Wizard kısayolları — tek tuşla aksiyon menüsü.
@@ -402,20 +403,40 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
             }
             _ => {}
         },
-        Mode::RecentTrades { scroll } => {
-            let max_scroll = app.recent_trades.len().saturating_sub(1);
+        Mode::RecentTrades { scroll, only_mine, city_filter } => {
+            let filtered_len = app.recent_trades.iter().filter(|t| {
+                let mine_ok = !only_mine || t.buyer_role == "Sen" || t.seller_role == "Sen";
+                let city_ok = city_filter.map_or(true, |c| t.city == c);
+                mine_ok && city_ok
+            }).count();
+            let max_scroll = filtered_len.saturating_sub(1);
             match code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    app.mode = Mode::RecentTrades { scroll: scroll.saturating_sub(1) };
+                    app.mode = Mode::RecentTrades { scroll: scroll.saturating_sub(1), only_mine, city_filter };
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    app.mode = Mode::RecentTrades { scroll: (scroll + 1).min(max_scroll) };
+                    app.mode = Mode::RecentTrades { scroll: (scroll + 1).min(max_scroll), only_mine, city_filter };
                 }
                 KeyCode::PageUp => {
-                    app.mode = Mode::RecentTrades { scroll: scroll.saturating_sub(10) };
+                    app.mode = Mode::RecentTrades { scroll: scroll.saturating_sub(20), only_mine, city_filter };
                 }
                 KeyCode::PageDown => {
-                    app.mode = Mode::RecentTrades { scroll: (scroll + 10).min(max_scroll) };
+                    app.mode = Mode::RecentTrades { scroll: (scroll + 20).min(max_scroll), only_mine, city_filter };
+                }
+                KeyCode::Char('m') => {
+                    app.mode = Mode::RecentTrades { scroll: 0, only_mine: !only_mine, city_filter };
+                }
+                KeyCode::Char('c') => {
+                    // Şehir filtresi: sıradaki şehre geç
+                    let cities = CityId::ALL;
+                    let next = match city_filter {
+                        None => Some(cities[0]),
+                        Some(c) => {
+                            let idx = cities.iter().position(|&x| x == c).unwrap_or(0);
+                            if idx + 1 < cities.len() { Some(cities[idx + 1]) } else { None }
+                        }
+                    };
+                    app.mode = Mode::RecentTrades { scroll: 0, only_mine, city_filter: next };
                 }
                 _ => { app.mode = Mode::Normal; }
             }
@@ -560,7 +581,7 @@ enum Mode {
     /// Haber inbox overlay — n ile açılır.
     NewsInbox,
     /// Son eşleşmeler overlay — e ile açılır. Kim kime ne sattı, fiyat, tick.
-    RecentTrades { scroll: usize },
+    RecentTrades { scroll: usize, only_mine: bool, city_filter: Option<CityId> },
     /// Kervan kontrol paneli — v ile açılır. Detaylı kervan listesi + hızlı dispatch.
     CaravanPanel,
     /// Debug log overlay — g ile açılır. Son tick'lerin ham LogEntry akışı
@@ -797,7 +818,7 @@ struct TradeRecord {
     price: Money,
 }
 
-const RECENT_TRADES_WINDOW: usize = 30;
+const RECENT_TRADES_WINDOW: usize = 500;
 const DEBUG_LOG_WINDOW: usize = 300;
 
 struct App {
@@ -2223,7 +2244,7 @@ fn render(f: &mut ratatui::Frame<'_>, app: &App) {
         Mode::Info => render_info_overlay(f, area, app),
         Mode::Holdings => render_holdings_overlay(f, area, app),
         Mode::NewsInbox => render_news_inbox_overlay(f, area, app),
-        Mode::RecentTrades { scroll } => render_recent_trades_overlay(f, area, app, scroll),
+        Mode::RecentTrades { scroll, only_mine, city_filter } => render_recent_trades_overlay(f, area, app, scroll, only_mine, city_filter),
         Mode::CaravanPanel => render_caravan_panel_overlay(f, area, app),
         Mode::MarketIntel => render_market_intel_overlay(f, area, app),
         Mode::Contracts => render_contracts_overlay(f, area, app),
@@ -3337,7 +3358,7 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Style::default().fg(diff_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "  [d ile değiştir: Easy ↔ Hard]",
+                "  [Tab ile değiştir: Easy ↔ Hard]",
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
@@ -3379,7 +3400,7 @@ fn render_startup(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::raw(" başla   "),
             Span::styled(" p ", Style::default().bg(Color::Magenta).fg(Color::White)),
             Span::raw(" preset   "),
-            Span::styled(" d ", Style::default().bg(Color::Yellow).fg(Color::Black)),
+            Span::styled(" Tab ", Style::default().bg(Color::Yellow).fg(Color::Black)),
             Span::raw(" zorluk   "),
             Span::styled(" q ", Style::default().bg(Color::DarkGray).fg(Color::White)),
             Span::raw(" çık"),
@@ -4310,19 +4331,38 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
             FieldKind::City | FieldKind::CityTo => {
                 let cities = smart_cities_for_wizard(&app.state, wizard);
                 for (i, c) in cities.iter().enumerate() {
-                    let label = if matches!(wizard.kind, ActionKind::Offer) {
-                        let stock = app
-                            .state
-                            .players
-                            .get(&HUMAN_ID)
-                            .and_then(|p| {
-                                wizard.fields.first().and_then(|fv| match fv {
-                                    FieldValue::Product(prod) => Some(p.inventory.get(*c, *prod)),
-                                    _ => None,
-                                })
-                            })
+                    let player = app.state.players.get(&HUMAN_ID);
+                    let selected_prod = wizard.fields.first().and_then(|fv| match fv {
+                        FieldValue::Product(prod) => Some(*prod),
+                        _ => None,
+                    });
+                    let label = if matches!(wizard.kind, ActionKind::Sell | ActionKind::Offer) {
+                        // Stok + fabrika durumu göster
+                        let stock = player.zip(selected_prod)
+                            .map(|(p, prod)| p.inventory.get(*c, prod))
                             .unwrap_or(0);
-                        format!("{}  (stok {})", city_short(*c), stock)
+                        let fab_info = {
+                            let fabs: Vec<String> = app.state.factories.values()
+                                .filter(|f| f.owner == HUMAN_ID && f.city == *c)
+                                .map(|f| format!("{}", f.product))
+                                .collect();
+                            if fabs.is_empty() { String::new() } else { format!(" 🏭{}", fabs.join(",")) }
+                        };
+                        if stock > 0 {
+                            format!("{}  📦{}{}",  city_short(*c), stock, fab_info)
+                        } else {
+                            format!("{}{}", city_short(*c), fab_info)
+                        }
+                    } else if matches!(wizard.kind, ActionKind::Buy) {
+                        // Fabrika var mı + hammadde fiyatı göster
+                        let fab_info = {
+                            let fabs: Vec<String> = app.state.factories.values()
+                                .filter(|f| f.owner == HUMAN_ID && f.city == *c)
+                                .map(|f| format!("{}", f.product))
+                                .collect();
+                            if fabs.is_empty() { String::new() } else { format!(" 🏭{}", fabs.join(",")) }
+                        };
+                        format!("{}{}", city_short(*c), fab_info)
                     } else {
                         city_short(*c).to_string()
                     };
@@ -5747,27 +5787,35 @@ fn truncate_speaker(s: &str, max: usize) -> String {
     out
 }
 
-fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, scroll: usize) {
+fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, scroll: usize, only_mine: bool, city_filter: Option<CityId>) {
     let popup = centered_rect(80, 80, area);
     f.render_widget(Clear, popup);
 
+    let mine_label = if only_mine { "🔵 SADECE BEN" } else { "Tüm işlemler" };
+    let city_label = city_filter.map_or("Tüm şehirler".into(), |c| format!("📍 {c}"));
+    let title = format!(" 🔄 Eşleşmeler  [{mine_label}] [{city_label}] ");
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 🔄  Son Eşleşmeler  —  kim kime ne sattı ")
+        .title(title)
         .border_style(Style::default().fg(Color::Green));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
+    // Filtreli trade listesi
+    let filtered: Vec<&TradeRecord> = app.recent_trades.iter().filter(|t| {
+        let mine_ok = !only_mine || t.buyer_role == "Sen" || t.seller_role == "Sen";
+        let city_ok = city_filter.map_or(true, |c| t.city == c);
+        mine_ok && city_ok
+    }).collect();
+
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        "  En yeni eşleşmeler üstte. Kendi işlemlerin sarı.",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
+        "  m=Ben/Hepsi  c=Şehir filtresi  ↑↓ scroll",
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(""));
 
-    if app.recent_trades.is_empty() {
+    if filtered.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (henüz eşleşme yok — SPACE ile tick ilerlet)",
             Style::default().fg(Color::DarkGray),
@@ -5785,7 +5833,7 @@ fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
             Style::default().fg(Color::DarkGray),
         )));
 
-        for t in app.recent_trades.iter().rev().skip(scroll) {
+        for t in filtered.iter().rev().skip(scroll) {
             let is_mine = t.buyer_role == "Sen" || t.seller_role == "Sen";
             let color = if is_mine { Color::Yellow } else { Color::White };
             let seller_label = format!("{} ({})", truncate_str(&t.seller_name, 12), t.seller_role);
@@ -5811,7 +5859,7 @@ fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  ↑↓ / j k / PgUp PgDn scroll  —  diğer tuş: kapat",
+        "  m=Ben/Hepsi  c=Şehir  ↑↓/jk/PgUp/PgDn scroll  —  diğer tuş: kapat",
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::ITALIC),
