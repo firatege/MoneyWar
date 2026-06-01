@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn batch_size_and_duration_constants() {
-        assert_eq!(Factory::BATCH_SIZE, 100);
+        assert_eq!(Factory::BATCH_SIZE, crate::balance::FACTORY_BATCH_SIZE);
         assert_eq!(Factory::PRODUCTION_TICKS, 2);
     }
 

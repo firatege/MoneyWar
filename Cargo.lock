@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-domain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "moneywar-domain",
  "proptest",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-net"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-npc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "moneywar-domain",
  "moneywar-engine",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "moneywar-sim"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "moneywar-domain",
  "moneywar-engine",

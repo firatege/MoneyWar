@@ -23,7 +23,6 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
-use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
 
 /// Yeni fabrika kurma eşiği. 5 şehir × 3 mamul = 15 slot, 3 Sanayici × 4 = 12
 /// = %80 kapsama. TARGET=5 denendi: 62K fab maliyeti 50K başlangıç nakit ile
@@ -62,35 +61,13 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         .filter(|f| f.owner == player.id)
         .filter_map(|f| f.product.raw_input())
         .collect();
-    // v8.20: Cross policy = fab var ise CROSS (ham açlığı, agresif al).
-    // Fab yoksa PASSIVE (gelecek fab planı için seyrek alım, kâr odaklı).
-    let buy_policy = if needed_raws.is_empty() {
-        CrossPolicy::Passive
-    } else {
-        CrossPolicy::Cross
-    };
     if needed_raws.is_empty() {
         // Fab yok → fallback: her şehir kendi specialty raw'ı (3 BUY).
         let bucket_cash = Money::from_cents((player.cash.as_cents() / 6).max(0));
         for city in CityId::ALL {
             let product = city.cheap_raw();
-            let reference = state.reference_price(city, product).unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                    .unwrap_or(Money::ZERO)
-            });
-            // Pasif tavan: baseline × 1.05 (Çiftçi'nin baz fiyatına yakın).
-            let cash_ceiling = scale_pct(reference, 105);
-            let Some(unit_price) = marketable_bid(
-                state,
-                player.id,
-                city,
-                product,
-                cash_ceiling,
-                buy_policy,
-                state.current_tick,
-            ) else {
-                continue;
-            };
+            let unit_price = state.derive_market_price(city, product, OrderSide::Buy);
+            if unit_price.as_cents() == 0 { continue; }
             let quantity = affordable_qty(bucket_cash, unit_price, 20);
             if quantity > 0 {
                 out.push(ActionCandidate::SubmitOrder {
@@ -138,36 +115,8 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 }
                 let shortage = Factory::BATCH_SIZE - have;
                 let want = shortage.min(50);
-
-                // effective_baseline: Walras clamp'lı referans — rolling_avg
-                // spiral'ini kırar (her yüksek fill bir sonraki ceiling'i daha
-                // da yükseltmez). initial × [%60, %160] aralığında kalır.
-                let baseline = state
-                    .effective_baseline(city, product)
-                    .unwrap_or_else(|| {
-                        Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                            .unwrap_or(Money::ZERO)
-                    });
-                // Kademeli premium: stok ne kadar azsa o kadar yüksek teklif.
-                // Kitapta hep tavana gitmek yerine organik fiyat keşfi.
-                let premium_pct: i64 = match shortage {
-                    0..=25  => 105, // az eksik → fazla ödeme
-                    26..=60 => 115, // orta eksik
-                    61..=99 => 125, // çok eksik
-                    _       => 130, // sıfır stok → max (Tüccar sinyali)
-                };
-                let cash_ceiling = scale_pct(baseline, premium_pct);
-                let Some(unit_price) = marketable_bid(
-                    state,
-                    player.id,
-                    city,
-                    product,
-                    cash_ceiling,
-                    buy_policy,
-                    state.current_tick,
-                ) else {
-                    continue;
-                };
+                let unit_price = state.derive_market_price(city, product, OrderSide::Buy);
+                if unit_price.as_cents() == 0 { continue; }
                 let quantity = affordable_qty(bucket_cash, unit_price, want);
                 if quantity > 0 {
                     out.push(ActionCandidate::SubmitOrder {
@@ -194,38 +143,8 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).max(1).min(50);
-        // v0.5.1: rolling_avg self-reinforcing loop (eski yüksek clearing'ler
-        // NPC fiyat tavanını yukarı tutuyordu, Alıcı bütçesi yetmiyordu) için
-        // Sanayici reference = effective_baseline (Walras-shifted). Rolling avg
-        // değil. Walras imbalance'a göre kayan baseline gerçek piyasa dengesi.
-        let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
-            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
-                .unwrap_or(Money::ZERO)
-        });
-        // Nakit kritikse taban düşür — ücret ödemek için satmak zorunda.
-        let cash_lira = player.cash.as_cents() / 100;
-        let stock_floor_pct: i64 = if cash_lira < 5_000 {
-            78  // kritik nakit → ne olursa satalım
-        } else {
-            match qty {
-                0..=49 => 95,  // taze mamul
-                50..=99 => 90, // orta stok
-                _ => 85,       // yüksek stok → kervan da dispatch edecek
-            }
-        };
-        let stock_floor = scale_pct(reference, stock_floor_pct);
-        let policy = CrossPolicy::Passive;
-        let Some(unit_price) = marketable_ask(
-            state,
-            player.id,
-            city,
-            product,
-            stock_floor,
-            policy,
-            state.current_tick,
-        ) else {
-            continue;
-        };
+        let unit_price = state.derive_market_price(city, product, OrderSide::Sell);
+        if unit_price.as_cents() == 0 { continue; }
         out.push(ActionCandidate::SubmitOrder {
             side: OrderSide::Sell,
             city,

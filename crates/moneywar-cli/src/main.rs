@@ -686,7 +686,7 @@ impl ActionKind {
     fn schema(self) -> &'static [FieldKind] {
         use FieldKind::*;
         match self {
-            Self::Buy | Self::Sell => &[City, Product, QtyU32, PriceLira, OrderTtl],
+            Self::Buy | Self::Sell => &[City, Product, QtyU32, OrderTtl],
             Self::Build => &[City, FinishedProduct],
             Self::Caravan => &[City],
             // `from` kervanın konumundan otomatik alınır — wizard sormaz.
@@ -4553,8 +4553,9 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                     }
                 }
             }
+            // PriceLira artık Buy/Sell schema'sında kullanılmıyor (kontrat için hâlâ enum'da).
+            FieldKind::PriceLira => {}
             FieldKind::QtyU32
-            | FieldKind::PriceLira
             | FieldKind::AmountLira
             | FieldKind::DurationTicks
             | FieldKind::DeliveryTick
@@ -4574,9 +4575,6 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         "rakamlar → miktar, M → max yükle (stok × kapasite min), Enter onay"
                     }
                     FieldKind::QtyU32 => "rakam tuşları → birim sayısı, Enter onay",
-                    FieldKind::PriceLira => {
-                        "rakamlar + '.' veya ',' ile ondalık (örn 15.75), Enter onay"
-                    }
                     FieldKind::AmountLira => {
                         "rakamlar + '.' veya ',' ile ondalık (örn 10000.50), Enter onay"
                     }
@@ -4601,15 +4599,9 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                 )));
                 if let Some(default) = offer_default_for(&app.state, wizard, field) {
                     if default > 0 {
-                        let pretty = match field {
-                            FieldKind::PriceLira => i64::try_from(default)
-                                .map(|c| format!("{}", Money::from_cents(c)))
-                                .unwrap_or_else(|_| default.to_string()),
-                            _ => default.to_string(),
-                        };
+                        let pretty = default.to_string();
                         let label = match field {
                             FieldKind::QtyU32 => "stoğum",
-                            FieldKind::PriceLira => "piyasa × 1.05",
                             FieldKind::DeliveryTick => "5 tick sonra",
                             _ => "",
                         };
@@ -4621,84 +4613,36 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                         )));
                     }
                 }
-                // v8.20: PriceLira adımında pazar bilgisi (best_bid/ask/last) +
-                // 'M' tuşu marketable fiyatı text_buf'a yazıyor (NPC parite).
-                if matches!(field, FieldKind::PriceLira) {
-                    if let Some((city, product)) = wizard_market_target(wizard) {
-                        let bid = app.state.best_bid(city, product);
-                        let ask = app.state.best_ask(city, product);
-                        let last = app
-                            .state
-                            .price_history
-                            .get(&(city, product))
-                            .and_then(|h| h.last())
-                            .map(|(_, p)| *p);
-                        let bid_str = bid
-                            .map(|(p, q)| format!("{}₺ ({})", p, q))
-                            .unwrap_or_else(|| "—".into());
-                        let ask_str = ask
-                            .map(|(p, q)| format!("{}₺ ({})", p, q))
-                            .unwrap_or_else(|| "—".into());
-                        let last_str = last
-                            .map(|p| format!("{}₺", p))
-                            .unwrap_or_else(|| "—".into());
+                // QtyU32 adımında tahmini execute fiyatı göster (Buy/Sell).
+                if matches!(field, FieldKind::QtyU32)
+                    && matches!(wizard.kind, ActionKind::Buy | ActionKind::Sell)
+                {
+                    if let (Some(FieldValue::City(city)), Some(FieldValue::Product(product))) =
+                        (wizard.fields.first(), wizard.fields.get(1))
+                    {
+                        let side = if matches!(wizard.kind, ActionKind::Buy) {
+                            OrderSide::Buy
+                        } else {
+                            OrderSide::Sell
+                        };
+                        let market_price = app.state.derive_market_price(*city, *product, side);
+                        let qty_input: u64 =
+                            wizard.text_buf.parse().unwrap_or(0);
+                        let total = if qty_input > 0 {
+                            let total_cents = market_price.as_cents().saturating_mul(qty_input as i64);
+                            let tax = total_cents * moneywar_domain::balance::TRANSACTION_TAX_PCT / 100;
+                            let net = match wizard.kind {
+                                ActionKind::Buy  => Money::from_cents(total_cents + tax),
+                                _                => Money::from_cents(total_cents - tax),
+                            };
+                            format!("  ≈ {market_price}₺/birim × {qty_input} = {net}")
+                        } else {
+                            format!("  ≈ piyasa fiyatı: {market_price}₺/birim")
+                        };
                         lines.push(Line::from(Span::styled(
-                            format!("  📊 Pazar: bid {bid_str}  ask {ask_str}  last {last_str}"),
+                            total,
                             Style::default().fg(Color::Cyan),
                         )));
-                        let hint = match wizard.kind {
-                            ActionKind::Buy => "M → marketable (best_ask + 1k)",
-                            ActionKind::Sell => "M → marketable (best_bid + 1k)",
-                            _ => "",
-                        };
-                        if !hint.is_empty() {
-                            lines.push(Line::from(Span::styled(
-                                format!("  ⚡ {hint}"),
-                                Style::default().fg(Color::Magenta),
-                            )));
-                        }
-                        // v8.23: Net maliyet/kâr hesabı — text_buf'taki fiyatla canlı.
-                        if let Some(qty) = wizard.fields.get(2).and_then(|fv| match fv {
-                            FieldValue::Number(n) => Some(*n),
-                            _ => None,
-                        }) {
-                            let price_input: f64 =
-                                wizard.text_buf.replace(',', ".").parse().unwrap_or(0.0);
-                            if price_input > 0.0 && qty > 0 {
-                                let total_cents = (price_input * qty as f64 * 100.0) as i64;
-                                let tax_cents = total_cents
-                                    * moneywar_domain::balance::TRANSACTION_TAX_PCT
-                                    / 100;
-                                let with_tax = total_cents + tax_cents;
-                                let total = Money::from_cents(total_cents);
-                                let with_tax_money = Money::from_cents(with_tax);
-                                let label = match wizard.kind {
-                                    ActionKind::Buy => format!(
-                                        "  💰 {} × {}₺ = {}  +  %{} tax  →  {} öde",
-                                        qty,
-                                        price_input,
-                                        total,
-                                        moneywar_domain::balance::TRANSACTION_TAX_PCT,
-                                        with_tax_money
-                                    ),
-                                    ActionKind::Sell => format!(
-                                        "  💰 {} × {}₺ = {}  -  %{} tax  →  {} al",
-                                        qty,
-                                        price_input,
-                                        total,
-                                        moneywar_domain::balance::TRANSACTION_TAX_PCT,
-                                        Money::from_cents(total_cents - tax_cents)
-                                    ),
-                                    _ => String::new(),
-                                };
-                                if !label.is_empty() {
-                                    lines.push(Line::from(Span::styled(
-                                        label,
-                                        Style::default().fg(Color::Yellow),
-                                    )));
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -5068,20 +5012,6 @@ fn offer_default_for(state: &GameState, wizard: &Wizard, field: FieldKind) -> Op
                 .map(|c| u64::from(p.inventory.get(*c, product)))
                 .sum::<u64>()
         }),
-        FieldKind::PriceLira => {
-            let prices: Vec<i64> = CityId::ALL
-                .iter()
-                .filter_map(|c| state.effective_baseline(*c, product).map(Money::as_cents))
-                .collect();
-            if prices.is_empty() {
-                return None;
-            }
-            let len = i64::try_from(prices.len()).ok()?;
-            let avg: i64 = prices.iter().sum::<i64>() / len;
-            // %5 üstü — kontrat marjı.
-            let suggested = (avg * 105) / 100;
-            u64::try_from(suggested).ok().filter(|n| *n > 0)
-        }
         FieldKind::DeliveryTick => {
             // v8.23: Göreceli — kaç tick sonra teslim. Default 5.
             Some(5)
@@ -7955,7 +7885,7 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
         return WizardOutcome::Continue;
     }
     if field.is_text() {
-        let is_money = matches!(field, FieldKind::PriceLira | FieldKind::AmountLira);
+        let is_money = matches!(field, FieldKind::AmountLira);
         // Ship wizard Qty adımında `M` ile max yükle — stok × kalan kapasite min.
         if matches!(wizard.kind, ActionKind::Ship)
             && matches!(field, FieldKind::QtyU32)
@@ -7992,26 +7922,6 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
             }
             wizard.text_buf = max_load.to_string();
             return WizardOutcome::Continue;
-        }
-        // v8.20: Buy/Sell PriceLira adımında M → marketable fiyat (NPC parite).
-        if matches!(wizard.kind, ActionKind::Buy | ActionKind::Sell)
-            && matches!(field, FieldKind::PriceLira)
-            && matches!(code, KeyCode::Char('m') | KeyCode::Char('M'))
-        {
-            match marketable_price_hint(&app.state, wizard) {
-                Some(price) => {
-                    let lira_str = format!("{}", price);
-                    // "1234.56₺" → "1234.56" (₺ sembolünü temizle)
-                    let cleaned = lira_str.trim_end_matches('₺').trim().to_string();
-                    wizard.text_buf = cleaned;
-                    return WizardOutcome::Continue;
-                }
-                None => {
-                    return WizardOutcome::Error(
-                        "Pazarda likidite yok — manuel fiyat gir".to_string(),
-                    );
-                }
-            }
         }
         match code {
             KeyCode::Char(c) if c.is_ascii_digit() => wizard.text_buf.push(c),
@@ -8215,15 +8125,15 @@ fn build_command_from_wizard(app: &mut App, wizard: &Wizard) -> Result<Command, 
             let city = pick_city(0)?;
             let product = pick_product(1)?;
             let qty = u32::try_from(pick_number(2)?).map_err(|_| "miktar çok büyük")?;
-            // PriceLira alanı zaten cents olarak saklanıyor (wizard'da ondalık → cents).
-            let price_cents = i64::try_from(pick_number(3)?).map_err(|_| "fiyat çok büyük")?;
-            let price = Money::from_cents(price_cents);
-            let ttl = u32::try_from(pick_number(4)?).map_err(|_| "TTL çok büyük")?;
+            // TTL artık fields[3] (fiyat adımı kaldırıldı).
+            let ttl = u32::try_from(pick_number(3)?).map_err(|_| "TTL çok büyük")?;
             let side = if matches!(wizard.kind, ActionKind::Buy) {
                 OrderSide::Buy
             } else {
                 OrderSide::Sell
             };
+            // Fiyat piyasadan türetilir.
+            let price = app.state.derive_market_price(city, product, side);
             let order = MarketOrder::new_with_ttl(
                 app.next_order_id(),
                 HUMAN_ID,
@@ -8554,8 +8464,8 @@ fn parse_order_cmd(
     args: &[&str],
     tick: Tick,
 ) -> Result<Command, String> {
-    if !(4..=5).contains(&args.len()) {
-        return Err("kullanım: buy/sell <şehir> <ürün> <miktar> <fiyat> [ttl]".into());
+    if !(3..=4).contains(&args.len()) {
+        return Err("kullanım: buy/sell <şehir> <ürün> <miktar> [ttl]".into());
     }
     let city = parse_city(args[0])?;
     let product = parse_product(args[1])?;
@@ -8564,7 +8474,7 @@ fn parse_order_cmd(
         if let Some(p) = app.state.players.get(&HUMAN_ID) {
             if p.has_npc_kind(NpcKind::Sanayici) {
                 return Err(format!(
-                    "Sanayici {} satın alamaz — sen üretiyorsun, Tüccardan almak yerine kendin üret.",
+                    "Sanayici {} satın alamaz — sen üretiyorsun, kendin üret.",
                     product
                 ));
             }
@@ -8573,13 +8483,10 @@ fn parse_order_cmd(
     let qty: u32 = args[2]
         .parse()
         .map_err(|_| format!("geçersiz miktar: {}", args[2]))?;
-    // Fiyat ondalık destekli: "15" veya "15.75" veya "15,75" → cents.
-    let price_cents: i64 = parse_decimal_as_cents(args[3])
-        .and_then(|c| i64::try_from(c).ok())
-        .ok_or_else(|| format!("geçersiz fiyat: {} (örn: 15 veya 15.75)", args[3]))?;
-    let price = Money::from_cents(price_cents);
+    // Fiyat piyasadan türetilir — artık kullanıcı girmez.
+    let price = app.state.derive_market_price(city, product, side);
     let balance = app.state.config.balance;
-    let ttl: u32 = if let Some(arg) = args.get(4) {
+    let ttl: u32 = if let Some(arg) = args.get(3) {
         let n: u32 = arg.parse().map_err(|_| format!("geçersiz ttl: {arg}"))?;
         if n == 0 || n > balance.max_order_ttl {
             return Err(format!(

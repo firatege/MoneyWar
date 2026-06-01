@@ -143,9 +143,8 @@ pub(crate) fn tick_economy(
     // Sanayici NPC fab dağılımı 9 mamul bucket'ı kapsayamadığında (5 NPC ×
     // 1-2 fab = 6-7 fab) kalan bucket'lara baseline arz garanti. World
     // player yoksa (sim) no-op — TUI seed_world World'u oluşturur.
-    if t > 0 && t % WORLD_FAB_PERIOD == 0 {
-        tick_world_factories(state, report, tick);
-    }
+    // World fab kapatıldı — mamul arzı tamamen Sanayici + Tüccar'a bırakıldı.
+    // let _ = WORLD_FAB_PERIOD;
 
     // Vergi KALDIRILDI — wages ile çakışıyordu (çift gelir transferi).
     // Closed loop artık sadece wages üzerinden: Sanayici → Alıcı.

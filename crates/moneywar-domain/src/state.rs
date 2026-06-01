@@ -297,6 +297,48 @@ impl GameState {
         ))
     }
 
+    /// Piyasa fiyatı türet — hem insan hem NPC emirleri için merkezi fiyat kaynağı.
+    ///
+    /// Öncelik zinciri (BUY için):
+    ///   1. `best_ask` — kitapta satıcı varsa anında eşleşme
+    ///   2. `reference_price` — son 5 clearing ortalaması
+    ///   3. `effective_baseline` — Walras-adjusted taban
+    ///   4. sabit fallback — sezon başı, henüz işlem yok
+    ///
+    /// SELL için aynı zincir ama `best_bid` kullanılır.
+    /// Sonuç `price_baseline × [60%, 160%]` ile clamp'lenir.
+    #[must_use]
+    pub fn derive_market_price(
+        &self,
+        city: CityId,
+        product: ProductKind,
+        side: crate::OrderSide,
+    ) -> Money {
+        let counterpart = match side {
+            crate::OrderSide::Buy => self.best_ask(city, product).map(|(p, _)| p),
+            crate::OrderSide::Sell => self.best_bid(city, product).map(|(p, _)| p),
+        };
+        let fallback_lira = if product.is_raw() {
+            crate::balance::NPC_BASE_PRICE_RAW_LIRA
+        } else {
+            crate::balance::NPC_BASE_PRICE_FINISHED_LIRA
+        };
+        let base = counterpart
+            .or_else(|| self.reference_price(city, product))
+            .or_else(|| self.effective_baseline(city, product))
+            .unwrap_or_else(|| {
+                Money::from_lira(fallback_lira).unwrap_or(Money::ZERO)
+            });
+        // Clamp: initial_baseline × [60%, 160%]
+        if let Some(init) = self.price_baseline.get(&(city, product)) {
+            let lo = init.as_cents() * 60 / 100;
+            let hi = init.as_cents() * 160 / 100;
+            Money::from_cents(base.as_cents().max(lo).min(hi).max(1))
+        } else {
+            Money::from_cents(base.as_cents().max(1))
+        }
+    }
+
     /// Tick'e gelindiğinde expire olan tüm şokları temizler. Tick lifecycle'ın
     /// en başında çağrılır.
     pub fn clear_expired_shocks(&mut self, current: Tick) {
