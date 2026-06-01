@@ -1,0 +1,72 @@
+/* ===========================================================================
+   MoneyWar — sade, koyu borsa terminali tasarım token'ları.
+   Düşük doygunluk, parıltı yok, süs yok. Ciddi finansal terminal tonu.
+   =========================================================================== */
+
+:root {
+  /* --- Zemin & yüzeyler (koyu, nötr, çok hafif soğuk tint) --- */
+  --bg: oklch(13% 0.004 250);
+  --bg-deep: oklch(10% 0.003 250);
+  --surface: oklch(16% 0.004 250);
+  --surface-2: oklch(19% 0.005 250);
+  --surface-hi: oklch(23% 0.006 250);
+
+  /* --- Çizgiler / hairline ızgara --- */
+  --line: oklch(28% 0.005 250 / 0.7);
+  --line-soft: oklch(26% 0.004 250 / 0.4);
+  --line-strong: oklch(38% 0.006 250 / 0.8);
+
+  /* --- Metin --- */
+  --text: oklch(88% 0.004 250);
+  --text-dim: oklch(68% 0.005 250);
+  --text-faint: oklch(50% 0.005 250);
+  --text-ghost: oklch(38% 0.004 250);
+
+  /* --- Aksan (mat bronz/altın — nötr, parıltısız) --- */
+  --accent: oklch(72% 0.06 75);
+  --accent-dim: oklch(58% 0.05 70);
+  --accent-faint: oklch(45% 0.04 70);
+
+  /* --- Kazanç / kayıp (mat, doygunluğu düşük) --- */
+  --gain: oklch(70% 0.08 155);
+  --gain-dim: oklch(55% 0.06 155);
+  --loss: oklch(62% 0.1 28);
+  --loss-dim: oklch(50% 0.08 28);
+
+  /* --- Rol rozet renkleri (NpcKind) — düşük chroma, mat --- */
+  --role-tuccar: oklch(70% 0.06 80);
+  --role-sanayici: oklch(66% 0.06 235);
+  --role-alici: oklch(66% 0.06 305);
+  --role-ciftci: oklch(68% 0.06 140);
+  --role-spekulator: oklch(64% 0.08 350);
+  --role-banka: oklch(64% 0.015 250);
+  --role-toptanci: oklch(66% 0.05 200);
+
+  /* --- Tipografi --- */
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Instrument Serif", "Times New Roman", serif;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: clamp(1.75rem, 1.1rem + 2.4vw, 2.75rem);
+  --text-mega: clamp(3rem, 1.8rem + 6vw, 6rem);
+
+  /* --- Spacing ritmi --- */
+  --gap: 1px;
+  --pad-panel: clamp(1rem, 0.6rem + 1vw, 1.5rem);
+  --radius: 2px;
+  --radius-lg: 4px;
+
+  /* --- Motion (ölçülü) --- */
+  --dur-fast: 130ms;
+  --dur: 240ms;
+  --dur-slow: 500ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-snap: cubic-bezier(0.4, 0, 0.1, 1);
+
+  /* --- Gölge / derinlik (yumuşak, parıltısız) --- */
+  --shadow-panel: 0 6px 24px oklch(0% 0 0 / 0.4);
+}

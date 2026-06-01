@@ -1,0 +1,103 @@
+.feed {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.feed__list {
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.feed__row {
+  display: grid;
+  grid-template-columns: 3rem 4.5rem 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.4rem var(--pad-panel);
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid transparent;
+  font-size: var(--text-sm);
+  animation: feed-in var(--dur) var(--ease);
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.feed__tick {
+  color: var(--text-ghost);
+  font-size: var(--text-xs);
+}
+.feed__kind {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.feed__summary {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* kind renk kodları — sol kenar + etiket */
+.feed__row--match {
+  border-left-color: var(--gain-dim);
+}
+.feed__row--match .feed__kind {
+  color: var(--gain-dim);
+}
+.feed__row--production {
+  border-left-color: var(--role-sanayici);
+}
+.feed__row--production .feed__kind {
+  color: var(--role-sanayici);
+}
+.feed__row--factory_built {
+  border-left-color: var(--accent);
+}
+.feed__row--factory_built .feed__kind {
+  color: var(--accent);
+}
+.feed__row--caravan {
+  border-left-color: var(--role-toptanci);
+}
+.feed__row--caravan .feed__kind {
+  color: var(--role-toptanci);
+}
+.feed__row--harvest {
+  border-left-color: var(--role-ciftci);
+}
+.feed__row--harvest .feed__kind {
+  color: var(--role-ciftci);
+}
+.feed__row--loan {
+  border-left-color: var(--role-banka);
+}
+.feed__row--expired,
+.feed__row--factory_idle {
+  border-left-color: var(--loss-dim);
+}
+.feed__row--expired .feed__kind,
+.feed__row--factory_idle .feed__kind {
+  color: var(--loss-dim);
+}
+.feed__row--news {
+  border-left-color: var(--role-alici);
+}
+
+.feed__empty {
+  padding: 2rem var(--pad-panel);
+  color: var(--text-ghost);
+  font-size: var(--text-sm);
+}

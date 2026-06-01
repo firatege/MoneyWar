@@ -1,0 +1,54 @@
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-height: 0;
+}
+
+.app__grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 1px;
+  background: var(--line);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --- Paylaşılan panel kabuğu --- */
+.panel {
+  background: var(--bg);
+  min-height: 0;
+}
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.7rem var(--pad-panel);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.panel__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+.panel__sub {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  color: var(--text-ghost);
+}
+
+@media (max-width: 880px) {
+  .app {
+    overflow-y: auto;
+  }
+  .app__grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(45vh, auto);
+    overflow: visible;
+  }
+}
