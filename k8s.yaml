@@ -1,3 +1,32 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: moneywar-tls
+  namespace: feb
+spec:
+  dnsNames:
+    - moneywar.byfeb.com
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  secretName: moneywar-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: moneywar-gw
+  namespace: feb
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: https-moneywar
+      hostname: moneywar.byfeb.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: moneywar-tls
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,8 +84,8 @@ spec:
   hostnames:
     - moneywar.byfeb.com
   parentRefs:
-    - name: front-gw-2
-      namespace: envoy-gateway-system
+    - name: feb-gw
+      namespace: feb
   rules:
     - matches:
         - path:
