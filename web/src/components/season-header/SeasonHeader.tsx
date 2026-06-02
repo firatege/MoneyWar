@@ -6,6 +6,7 @@ import "./season-header.css";
 interface Props {
   snapshot: Snapshot | null;
   status: ConnStatus;
+  onHelp: () => void;
 }
 
 const STATUS_LABEL: Record<ConnStatus, string> = {
@@ -14,7 +15,7 @@ const STATUS_LABEL: Record<ConnStatus, string> = {
   closed: "KOPTU",
 };
 
-export function SeasonHeader({ snapshot, status }: Props) {
+export function SeasonHeader({ snapshot, status, onHelp }: Props) {
   const season = snapshot?.season ?? 0;
   const tick = snapshot?.tick ?? 0;
   const total = snapshot?.season_ticks ?? 90;
@@ -31,6 +32,9 @@ export function SeasonHeader({ snapshot, status }: Props) {
           <i className="hdr__dot" />
           {STATUS_LABEL[status]}
         </span>
+        <button className="hdr__help" onClick={onHelp} title="nasıl çalışır">
+          nasıl çalışır?
+        </button>
       </div>
 
       <div className="hdr__season">

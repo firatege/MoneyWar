@@ -1,7 +1,11 @@
 import { Logo } from "../brand/Logo";
 import "./footer.css";
 
-export function Footer() {
+interface Props {
+  onHelp: () => void;
+}
+
+export function Footer({ onHelp }: Props) {
   return (
     <footer className="ftr">
       <div className="ftr__left">
@@ -11,6 +15,10 @@ export function Footer() {
       </div>
 
       <nav className="ftr__nav" aria-label="bağlantılar">
+        <button className="ftr__link ftr__link--btn" onClick={onHelp}>
+          nasıl çalışır
+        </button>
+        <span className="ftr__sep">·</span>
         <a
           className="ftr__link"
           href="https://byfeb.com"

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useGameSocket } from "./hooks/useGameSocket";
 import { SeasonHeader } from "./components/season-header/SeasonHeader";
 import { TickerTape } from "./components/ticker-tape/TickerTape";
@@ -9,10 +9,12 @@ import { MarketOverview } from "./components/market-overview/MarketOverview";
 import { OrderBook } from "./components/order-book/OrderBook";
 import { PlayerDetail } from "./components/player-detail/PlayerDetail";
 import { Footer } from "./components/footer/Footer";
+import { HelpOverlay } from "./components/help/HelpOverlay";
 import "./app.css";
 
 const DEFAULT_CITY = "istanbul";
 const DEFAULT_PRODUCT = "pamuk";
+const INTRO_SEEN_KEY = "mw_intro_seen";
 
 export default function App() {
   const { snapshot, prev, feed, status, history, bucketHistory, market } =
@@ -20,6 +22,19 @@ export default function App() {
   const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
   const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+
+  // İlk ziyarette tanıtımı otomatik aç.
+  useEffect(() => {
+    if (localStorage.getItem(INTRO_SEEN_KEY) == null) {
+      setShowHelp(true);
+    }
+  }, []);
+
+  const closeHelp = () => {
+    setShowHelp(false);
+    localStorage.setItem(INTRO_SEEN_KEY, "1");
+  };
 
   const handleCellSelect = (city: string, product: string) => {
     setSelectedCity(city);
@@ -29,7 +44,8 @@ export default function App() {
 
   return (
     <div className="app">
-      <SeasonHeader snapshot={snapshot} status={status} />
+      {showHelp && <HelpOverlay onClose={closeHelp} />}
+      <SeasonHeader snapshot={snapshot} status={status} onHelp={() => setShowHelp(true)} />
       <TickerTape snapshot={snapshot} prev={prev} />
       <main className="app__grid">
         {/* Sol sütun: sıralama + akış */}
@@ -72,7 +88,7 @@ export default function App() {
           />
         </div>
       </main>
-      <Footer />
+      <Footer onHelp={() => setShowHelp(true)} />
     </div>
   );
 }

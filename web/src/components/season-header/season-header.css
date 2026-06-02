@@ -18,6 +18,26 @@
 .hdr__logo {
   flex-shrink: 0;
 }
+.hdr__help {
+  all: unset;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: all var(--dur-fast) var(--ease);
+}
+.hdr__help:hover {
+  color: var(--accent);
+  border-color: var(--accent-faint);
+}
+@media (max-width: 500px) {
+  .hdr__help {
+    display: none;
+  }
+}
 .hdr__wordmark {
   font-size: var(--text-base);
   font-weight: 600;

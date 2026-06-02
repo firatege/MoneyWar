@@ -46,6 +46,19 @@
   color: var(--accent);
   border-bottom-color: var(--accent-faint);
 }
+.ftr__link--btn {
+  all: unset;
+  cursor: pointer;
+  color: var(--accent-dim);
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid transparent;
+  transition: color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.ftr__link--btn:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent-faint);
+}
 .ftr__sep {
   color: var(--text-ghost);
 }
