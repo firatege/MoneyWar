@@ -61,15 +61,15 @@
   all: unset;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 0.2rem;
-  padding: 0.45rem 0.5rem;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.4rem 0.5rem 0.3rem;
   border-bottom: 1px solid var(--line-soft);
   border-right: 1px solid var(--line-soft);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease);
   position: relative;
+  min-height: 3.4rem;
 }
 .pg__cell:hover {
   background: var(--surface-2);
@@ -81,8 +81,15 @@
 .pg__cell--empty {
   background: var(--bg-deep);
   cursor: default;
+  min-height: 3.4rem;
 }
 
+.pg__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
 .pg__price {
   font-size: var(--text-sm);
   font-weight: 500;
@@ -102,19 +109,14 @@
   color: var(--text-ghost);
 }
 
-/* Mini alış/satış bar'ı */
-.pg__minibar {
+/* Hücre sparkline'ı */
+.pg__spark {
   display: block;
   width: 100%;
-  height: 2px;
-  background: var(--loss-dim);
-  border-radius: 1px;
-  overflow: hidden;
-  margin-top: 0.1rem;
+  height: 26px;
 }
-.pg__minibar-buy {
+.spark {
   display: block;
+  width: 100%;
   height: 100%;
-  background: var(--gain-dim);
-  transition: width var(--dur) var(--ease-snap);
 }

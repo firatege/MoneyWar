@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useGameSocket } from "./hooks/useGameSocket";
-import { useSeriesCache } from "./hooks/useSeriesCache";
 import { SeasonHeader } from "./components/season-header/SeasonHeader";
 import { TickerTape } from "./components/ticker-tape/TickerTape";
 import { Leaderboard } from "./components/leaderboard/Leaderboard";
 import { EventFeed } from "./components/event-feed/EventFeed";
 import { PriceGrid } from "./components/price-grid/PriceGrid";
-import { MarketChart } from "./components/market-chart/MarketChart";
+import { MarketOverview } from "./components/market-overview/MarketOverview";
 import { OrderBook } from "./components/order-book/OrderBook";
 import { PlayerDetail } from "./components/player-detail/PlayerDetail";
 import { Footer } from "./components/footer/Footer";
@@ -16,16 +15,11 @@ const DEFAULT_CITY = "istanbul";
 const DEFAULT_PRODUCT = "pamuk";
 
 export default function App() {
-  const { snapshot, prev, feed, status, history } = useGameSocket();
+  const { snapshot, prev, feed, status, history, bucketHistory, market } =
+    useGameSocket();
   const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
   const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
   const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
-
-  const points = useSeriesCache(selectedCity, selectedProduct, snapshot);
-  const selectedCell =
-    snapshot?.prices.find(
-      (p) => p.city === selectedCity && p.product === selectedProduct,
-    ) ?? null;
 
   const handleCellSelect = (city: string, product: string) => {
     setSelectedCity(city);
@@ -49,10 +43,11 @@ export default function App() {
           <EventFeed feed={feed} />
         </div>
 
-        {/* Orta: fiyat ızgarası + grafik / oyuncu detayı */}
+        {/* Orta: fiyat ızgarası (sparkline) + piyasa geneli / oyuncu detayı */}
         <div className="app__col app__col--center">
           <PriceGrid
             snapshot={snapshot}
+            bucketHistory={bucketHistory}
             selected={{ city: selectedCity, product: selectedProduct }}
             onSelect={handleCellSelect}
           />
@@ -64,7 +59,7 @@ export default function App() {
               onClose={() => setSelectedPlayer(null)}
             />
           ) : (
-            <MarketChart cell={selectedCell} points={points} feed={feed} />
+            <MarketOverview market={market} snapshot={snapshot} />
           )}
         </div>
 
