@@ -120,10 +120,72 @@ fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
     }
 }
 
+/// NPC firma isim havuzu — sıralamada "Tüccar-102" yerine gerçek tüccar/firma
+/// ismi görünsün. ID'ye göre deterministik atanır (id - 100 = havuz indeksi).
+/// 35 NPC için 48 isim → çakışmasız.
+const NPC_NAMES: &[&str] = &[
+    "Demir Ticaret",
+    "Kaya Holding",
+    "Yıldız A.Ş.",
+    "Aslan Lojistik",
+    "Çelik Group",
+    "Deniz Ticaret",
+    "Ova Tarım",
+    "Bereket Gıda",
+    "Anadolu Pazarı",
+    "Ege Tüccar",
+    "Marmara A.Ş.",
+    "Toros Holding",
+    "Fırat Ticaret",
+    "Dicle Group",
+    "Selçuk Han",
+    "Akın Ticaret",
+    "Boran Holding",
+    "Çınar A.Ş.",
+    "Doğan Group",
+    "Şahin Ticaret",
+    "Korkmaz Holding",
+    "Aydın A.Ş.",
+    "Güneş Ticaret",
+    "Bulut Group",
+    "Kartal Han",
+    "Ülker Pazarı",
+    "Özkan Ticaret",
+    "Tunç Holding",
+    "Mavi Liman",
+    "Altın Çarşı",
+    "Sedef Ticaret",
+    "Pamukçu A.Ş.",
+    "Değirmenci Group",
+    "Zeytinoğlu Holding",
+    "Balcı Ticaret",
+    "Tahılcı Han",
+    "Kervan Lojistik",
+    "Liman Ticaret",
+    "Çarşı Group",
+    "Has Tüccar",
+    "Köprü Holding",
+    "Meydan Ticaret",
+    "Saray Pazarı",
+    "Kale Group",
+    "Nehir Ticaret",
+    "Dağ Holding",
+    "Sahil A.Ş.",
+    "Bedesten Ticaret",
+];
+
+/// ID'ye göre firma ismi; havuz biterse `{prefix}-{id}` fallback'i.
+fn npc_name(id: u64, prefix: &str) -> String {
+    let idx = id.saturating_sub(100) as usize;
+    NPC_NAMES
+        .get(idx)
+        .map_or_else(|| format!("{prefix}-{id}"), |name| (*name).to_string())
+}
+
 fn make_npc(id: u64, prefix: &str, role: Role, cash_lira: i64, kind: NpcKind) -> Player {
     Player::new(
         PlayerId::new(id),
-        format!("{prefix}-{id}"),
+        npc_name(id, prefix),
         role,
         Money::from_lira(cash_lira).unwrap_or(Money::ZERO),
         true,
