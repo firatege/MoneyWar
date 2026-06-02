@@ -9,6 +9,7 @@ import { PriceGrid } from "./components/price-grid/PriceGrid";
 import { MarketChart } from "./components/market-chart/MarketChart";
 import { OrderBook } from "./components/order-book/OrderBook";
 import { PlayerDetail } from "./components/player-detail/PlayerDetail";
+import { Footer } from "./components/footer/Footer";
 import "./app.css";
 
 const DEFAULT_CITY = "istanbul";
@@ -63,7 +64,7 @@ export default function App() {
               onClose={() => setSelectedPlayer(null)}
             />
           ) : (
-            <MarketChart cell={selectedCell} points={points} />
+            <MarketChart cell={selectedCell} points={points} feed={feed} />
           )}
         </div>
 
@@ -76,6 +77,7 @@ export default function App() {
           />
         </div>
       </main>
+      <Footer />
     </div>
   );
 }

@@ -12,8 +12,11 @@
 .hdr__brand {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.7rem;
   justify-self: start;
+}
+.hdr__logo {
+  flex-shrink: 0;
 }
 .hdr__wordmark {
   font-size: var(--text-base);

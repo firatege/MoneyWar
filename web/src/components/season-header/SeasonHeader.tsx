@@ -1,5 +1,6 @@
 import type { ConnStatus, Snapshot } from "../../types";
 import { clock } from "../../lib/format";
+import { Logo } from "../brand/Logo";
 import "./season-header.css";
 
 interface Props {
@@ -24,6 +25,7 @@ export function SeasonHeader({ snapshot, status }: Props) {
   return (
     <header className="hdr">
       <div className="hdr__brand">
+        <Logo size={22} className="hdr__logo" />
         <span className="hdr__wordmark">MONEYWAR</span>
         <span className={`hdr__status hdr__status--${status}`}>
           <i className="hdr__dot" />

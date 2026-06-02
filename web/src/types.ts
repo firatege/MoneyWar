@@ -46,6 +46,10 @@ export interface EventDto {
   tick: number;
   kind: string;
   summary: string;
+  city: string | null;
+  product: string | null;
+  qty: number | null;
+  price_lira: number | null;
 }
 
 export interface Snapshot {

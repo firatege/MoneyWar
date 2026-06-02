@@ -1,0 +1,61 @@
+.ftr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem var(--pad-panel);
+  background: var(--surface);
+  border-top: 1px solid var(--line-strong);
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+}
+
+.ftr__left {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.ftr__logo {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.ftr__brand {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.ftr__tag {
+  color: var(--text-ghost);
+  letter-spacing: 0.04em;
+}
+
+.ftr__nav {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.ftr__link {
+  color: var(--text-faint);
+  text-decoration: none;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid transparent;
+  transition: color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.ftr__link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent-faint);
+}
+.ftr__sep {
+  color: var(--text-ghost);
+}
+.ftr__copy {
+  color: var(--text-ghost);
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 720px) {
+  .ftr__tag {
+    display: none;
+  }
+}

@@ -89,14 +89,132 @@
   color: var(--text-faint);
 }
 
+/* --- Gövde: grafik + işlem listesi yan yana --- */
+.mc__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.mc__chart-side {
+  flex: 1.6;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mc__trades {
+  flex: 1;
+  min-width: 13rem;
+  max-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--bg-deep);
+  min-height: 0;
+}
+.mc__trades-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem var(--pad-panel);
+  border-bottom: 1px solid var(--line-soft);
+  flex-shrink: 0;
+}
+.mc__trades-title {
+  font-size: var(--text-xs);
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+}
+.mc__trades-meta {
+  font-size: var(--text-xs);
+  color: var(--text-ghost);
+  white-space: nowrap;
+}
+.mc__trades-list {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+.mc__trades-empty {
+  padding: 1.2rem var(--pad-panel);
+  color: var(--text-ghost);
+  font-size: var(--text-sm);
+}
+.mc__trade {
+  display: grid;
+  grid-template-columns: 2.4rem 1fr auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.35rem var(--pad-panel);
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid var(--gain-dim);
+  font-size: var(--text-xs);
+  animation: feed-in var(--dur) var(--ease);
+}
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.mc__trade-tick {
+  color: var(--text-ghost);
+}
+.mc__trade-parties {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mc__trade-qp {
+  color: var(--gain);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* --- Alt çubuk: bid / spread / ask --- */
 .mc__foot {
   display: flex;
   justify-content: space-between;
-  padding: 0.4rem var(--pad-panel);
+  align-items: center;
+  padding: 0.45rem var(--pad-panel);
   font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-  color: var(--text-ghost);
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
   border-top: 1px solid var(--line-soft);
   background: var(--surface);
   flex-shrink: 0;
+}
+.mc__foot-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.mc__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.mc__dot--bid {
+  background: var(--gain-dim);
+}
+.mc__dot--ask {
+  background: var(--loss-dim);
+}
+
+@media (max-width: 900px) {
+  .mc__body {
+    flex-direction: column;
+  }
+  .mc__trades {
+    max-width: none;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    max-height: 40%;
+  }
 }

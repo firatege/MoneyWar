@@ -56,6 +56,12 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          volumeMounts:
+            - name: debug-logs
+              mountPath: /app/debug
+      volumes:
+        - name: debug-logs
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

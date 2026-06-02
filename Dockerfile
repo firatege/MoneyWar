@@ -26,6 +26,8 @@ WORKDIR /app
 COPY --from=rust-builder /app/target/release/moneywar-web /usr/local/bin/moneywar-web
 COPY --from=frontend-builder /app/web/dist /app/web/dist
 
+RUN mkdir -p /app/debug
+
 EXPOSE 8080
 
 ENV RUST_LOG=info

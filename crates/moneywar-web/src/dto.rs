@@ -81,6 +81,12 @@ pub struct EventDto {
     pub tick: u32,
     pub kind: String,
     pub summary: String,
+    /// Olayın bucket'ı (varsa) — frontend bucket-özel filtreleme için.
+    pub city: Option<String>,
+    pub product: Option<String>,
+    /// Eşleşme miktarı + fiyatı (match olayları için) — bucket işlem listesi.
+    pub qty: Option<u32>,
+    pub price_lira: Option<f64>,
 }
 
 /// Grafik için (şehir, ürün) fiyat zaman serisi.
@@ -400,5 +406,41 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
         LogEvent::EventScheduled { .. } => ("news", "Piyasa olayı planlandı".to_string()),
         other => ("other", format!("{other:?}")),
     };
-    EventDto { tick, kind: kind.to_string(), summary }
+    let (city, product, qty, price_lira) = event_bucket(&entry.event);
+    EventDto {
+        tick,
+        kind: kind.to_string(),
+        summary,
+        city,
+        product,
+        qty,
+        price_lira,
+    }
+}
+
+/// Olaya bağlı bucket bilgisi (frontend bucket-özel filtreleme + işlem listesi).
+fn event_bucket(
+    event: &LogEvent,
+) -> (Option<String>, Option<String>, Option<u32>, Option<f64>) {
+    match event {
+        LogEvent::OrderMatched { city, product, quantity, price, .. } => (
+            Some(city_slug(*city).to_string()),
+            Some(product_slug(*product).to_string()),
+            Some(*quantity),
+            Some(lira(*price)),
+        ),
+        LogEvent::ProductionCompleted { city, product, units, .. } => (
+            Some(city_slug(*city).to_string()),
+            Some(product_slug(*product).to_string()),
+            Some(*units),
+            None,
+        ),
+        LogEvent::OrderExpired { city, product, .. } => (
+            Some(city_slug(*city).to_string()),
+            Some(product_slug(*product).to_string()),
+            None,
+            None,
+        ),
+        _ => (None, None, None, None),
+    }
 }

@@ -5,10 +5,12 @@
 //! `WS /ws` ile canlı snapshot alır, `GET /api/snapshot` ile anlık durumu,
 //! `GET /api/series` ile fiyat zaman serisini çeker.
 
+mod debuglog;
 mod driver;
 mod dto;
 mod world;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +21,7 @@ use moneywar_npc::Difficulty;
 use serde::Deserialize;
 use tokio::sync::{RwLock, broadcast};
 
+use debuglog::{LogSink, format_tick_block};
 use driver::SimDriver;
 
 /// Sezon uzunluğu (tick). Plan: 90 tick ≈ 3 dk.
@@ -34,6 +37,8 @@ struct AppState {
     driver: Arc<RwLock<SimDriver>>,
     /// Her tick serileştirilmiş snapshot yayını.
     tx: broadcast::Sender<Arc<str>>,
+    /// Tick-by-tick ekonomi debug log'u (ring buffer + opsiyonel dosya).
+    log: Arc<LogSink>,
 }
 
 #[actix_web::main]
@@ -63,9 +68,22 @@ async fn main() -> std::io::Result<()> {
     )));
     let (tx, _rx) = broadcast::channel::<Arc<str>>(BROADCAST_CAPACITY);
 
-    spawn_tick_loop(driver.clone(), tx.clone());
+    // Debug log: MONEYWAR_LOG env > /app/debug/economy.log (dizin varsa) > sadece bellek.
+    let log_file: Option<PathBuf> = std::env::var("MONEYWAR_LOG")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            if std::path::Path::new("/app/debug").is_dir() {
+                Some(PathBuf::from("/app/debug/economy.log"))
+            } else {
+                None
+            }
+        });
+    let log = Arc::new(LogSink::new(log_file));
 
-    let app_state = web::Data::new(AppState { driver, tx });
+    spawn_tick_loop(driver.clone(), tx.clone(), log.clone());
+
+    let app_state = web::Data::new(AppState { driver, tx, log });
 
     // Frontend dist dizini: STATIC_DIR env > /app/web/dist (Docker) > web/dist (dev)
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| {
@@ -83,6 +101,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_state.clone())
             .route("/api/snapshot", web::get().to(get_snapshot))
             .route("/api/series", web::get().to(get_series))
+            .route("/api/log", web::get().to(get_log))
             .route("/ws", web::get().to(ws_handler));
 
         if static_dir_exists {
@@ -97,17 +116,24 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-/// Arka plan sezon loop'u — her `TICK_SECONDS` bir tick ilerletir + yayınlar.
-fn spawn_tick_loop(driver: Arc<RwLock<SimDriver>>, tx: broadcast::Sender<Arc<str>>) {
+/// Arka plan sezon loop'u — her `TICK_SECONDS` bir tick ilerletir, yayınlar
+/// ve debug log'a yazar.
+fn spawn_tick_loop(
+    driver: Arc<RwLock<SimDriver>>,
+    tx: broadcast::Sender<Arc<str>>,
+    log: Arc<LogSink>,
+) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(TICK_SECONDS));
         loop {
             interval.tick().await;
-            let json = {
+            let (json, block) = {
                 let mut d = driver.write().await;
                 d.step();
-                serde_json::to_string(&d.snapshot())
+                let block = format_tick_block(&d.state, &d.last_report, d.season);
+                (serde_json::to_string(&d.snapshot()), block)
             };
+            log.push_block(&block);
             match json {
                 Ok(s) => {
                     // Alıcı yoksa hata önemsiz (kimse izlemiyor).
@@ -137,6 +163,20 @@ async fn get_series(state: web::Data<AppState>, q: web::Query<SeriesQuery>) -> i
     };
     let series = dto::build_series(&state.driver.read().await.state, city, product);
     HttpResponse::Ok().json(series)
+}
+
+#[derive(Debug, Deserialize)]
+struct LogQuery {
+    /// Son kaç satır (varsayılan 2000, 0 → tümü).
+    tail: Option<usize>,
+}
+
+/// Tick-by-tick ekonomi debug log'unu düz metin döndürür (sim formatı).
+async fn get_log(state: web::Data<AppState>, q: web::Query<LogQuery>) -> impl Responder {
+    let n = q.tail.unwrap_or(2000);
+    HttpResponse::Ok()
+        .content_type("text/plain; charset=utf-8")
+        .body(state.log.tail(n))
 }
 
 /// WS upgrade — bağlanan izleyiciye önce mevcut snapshot, sonra her tick yayını.
