@@ -6,14 +6,11 @@ interface Props {
   feed: FeedItem[];
 }
 
-// kind → kısa etiket + renk sınıfı.
 const KIND_LABEL: Record<string, string> = {
-  match: "EŞLEŞ",
+  match: "EŞLEŞME",
   factory_built: "FABRİKA",
-  factory_idle: "ATIL",
   production: "ÜRETİM",
   caravan: "KERVAN",
-  expired: "SÜRE",
   harvest: "HASAT",
   loan: "KREDİ",
   news: "OLAY",
@@ -25,14 +22,16 @@ export function EventFeed({ feed }: Props) {
     <section className="feed panel">
       <div className="panel__head">
         <h2 className="panel__title">AKIŞ</h2>
-        <span className="panel__sub">son {feed.length} olay</span>
+        <span className="panel__sub">canlı olaylar</span>
       </div>
       <ul className="feed__list">
         {feed.map((e) => (
           <li key={e.key} className={`feed__row feed__row--${e.kind}`}>
-            <span className="feed__tick num">{tickLabel(e.tick)}</span>
-            <span className="feed__kind">{KIND_LABEL[e.kind] ?? e.kind}</span>
-            <span className="feed__summary">{e.summary}</span>
+            <div className="feed__meta">
+              <span className="feed__kind">{KIND_LABEL[e.kind] ?? e.kind}</span>
+              <span className="feed__tick num">{tickLabel(e.tick)}</span>
+            </div>
+            <div className="feed__summary">{e.summary}</div>
           </li>
         ))}
         {feed.length === 0 && <li className="feed__empty">olay bekleniyor…</li>}

@@ -23,8 +23,8 @@ use driver::SimDriver;
 
 /// Sezon uzunluğu (tick). Plan: 90 tick ≈ 3 dk.
 const SEASON_TICKS: u32 = 90;
-/// Tick aralığı (saniye). Plan: 2 sn/tick.
-const TICK_SECONDS: u64 = 2;
+/// Tick aralığı (saniye). 5 sn/tick — sezon ≈ 7.5 dk.
+const TICK_SECONDS: u64 = 5;
 /// WS broadcast kanal kapasitesi — yavaş izleyici taşarsa eski mesaj düşer.
 const BROADCAST_CAPACITY: usize = 64;
 

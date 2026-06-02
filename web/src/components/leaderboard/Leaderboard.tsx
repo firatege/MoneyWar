@@ -7,20 +7,33 @@ import "./leaderboard.css";
 interface Props {
   snapshot: Snapshot | null;
   prev: Snapshot | null;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
 }
 
-export function Leaderboard({ snapshot, prev }: Props) {
-  const rows = snapshot?.leaderboard ?? [];
-  const prevMap = new Map<number, number>(
-    (prev?.leaderboard ?? []).map((p) => [p.id, p.pnl_lira]),
+// Sadece bu roller sıralamada gösterilir (kullanıcı isteği).
+const SHOWN_KINDS = new Set(["Sanayici", "Tüccar"]);
+
+function filterRanked(snap: Snapshot | null): PlayerDto[] {
+  return (snap?.leaderboard ?? []).filter(
+    (p) => p.npc_kind != null && SHOWN_KINDS.has(p.npc_kind),
   );
+}
+
+export function Leaderboard({ snapshot, prev, selectedId, onSelect }: Props) {
+  const rows = filterRanked(snapshot);
+
+  // Önceki sıraları (filtrelenmiş liste içinde) hesapla → sıra değişimi.
+  const prevRank = new Map<number, number>();
+  filterRanked(prev).forEach((p, i) => prevRank.set(p.id, i));
+
   const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.pnl_lira)));
 
   return (
     <section className="lb panel">
       <div className="panel__head">
         <h2 className="panel__title">SIRALAMA</h2>
-        <span className="panel__sub">{rows.length} oyuncu · PnL</span>
+        <span className="panel__sub">Sanayici · Tüccar</span>
       </div>
       <div className="lb__cols">
         <span>#</span>
@@ -31,15 +44,22 @@ export function Leaderboard({ snapshot, prev }: Props) {
         <span />
       </div>
       <div className="lb__body">
-        {rows.map((p, i) => (
-          <LeaderRow
-            key={p.id}
-            rank={i + 1}
-            player={p}
-            prevPnl={prevMap.get(p.id)}
-            maxAbs={maxAbs}
-          />
-        ))}
+        {rows.map((p, i) => {
+          const pr = prevRank.get(p.id);
+          const rankDelta = pr === undefined ? 0 : pr - i; // + = yükseldi
+          return (
+            <LeaderRow
+              key={p.id}
+              rank={i + 1}
+              rankDelta={rankDelta}
+              player={p}
+              prevPnl={prev?.leaderboard.find((x) => x.id === p.id)?.pnl_lira}
+              maxAbs={maxAbs}
+              selected={selectedId === p.id}
+              onSelect={() => onSelect(p.id)}
+            />
+          );
+        })}
         {rows.length === 0 && <div className="lb__empty">veri bekleniyor…</div>}
       </div>
     </section>
@@ -48,14 +68,20 @@ export function Leaderboard({ snapshot, prev }: Props) {
 
 function LeaderRow({
   rank,
+  rankDelta,
   player,
   prevPnl,
   maxAbs,
+  selected,
+  onSelect,
 }: {
   rank: number;
+  rankDelta: number;
   player: PlayerDto;
   prevPnl: number | undefined;
   maxAbs: number;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
   const lastPnl = useRef(player.pnl_lira);
@@ -75,8 +101,17 @@ function LeaderRow({
   const barW = (Math.abs(player.pnl_lira) / maxAbs) * 100;
 
   return (
-    <div className={`lb__row ${flash ? `lb__row--flash-${flash}` : ""}`} data-rank={rank}>
-      <span className="lb__rank num">{rank}</span>
+    <button
+      className={`lb__row ${flash ? `lb__row--flash-${flash}` : ""}${
+        selected ? " lb__row--selected" : ""
+      }`}
+      data-rank={rank}
+      onClick={onSelect}
+    >
+      <span className="lb__rank-cell">
+        <span className="lb__rank num">{rank}</span>
+        <RankDelta delta={rankDelta} />
+      </span>
       <span className="lb__role" style={{ color, borderColor: color }}>
         {roleCode(player.npc_kind)}
       </span>
@@ -86,6 +121,17 @@ function LeaderRow({
       <span className="lb__bar">
         <span className={`lb__bar-fill lb__bar-fill--${sign}`} style={{ width: `${barW}%` }} />
       </span>
-    </div>
+    </button>
   );
+}
+
+/** Sıra değişimi göstergesi: ▲n yükseldi, ▼n düştü, — sabit. */
+function RankDelta({ delta }: { delta: number }) {
+  if (delta > 0) {
+    return <span className="lb__delta lb__delta--up">▲{delta}</span>;
+  }
+  if (delta < 0) {
+    return <span className="lb__delta lb__delta--down">▼{-delta}</span>;
+  }
+  return <span className="lb__delta lb__delta--flat">·</span>;
 }

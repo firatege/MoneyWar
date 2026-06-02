@@ -165,15 +165,15 @@ fn build_feed(state: &GameState, report: &TickReport) -> Vec<EventDto> {
 const FEED_LIMIT: usize = 40;
 
 fn is_feed_worthy(event: &LogEvent) -> bool {
+    // Sadece anlamlı, takip edilebilir olaylar. OrderExpired/FactoryIdle
+    // gürültüsü feed'i boğuyordu — çıkarıldı.
     matches!(
         event,
         LogEvent::OrderMatched { .. }
             | LogEvent::FactoryBuilt { .. }
-            | LogEvent::FactoryIdle { .. }
             | LogEvent::ProductionCompleted { .. }
             | LogEvent::CaravanDispatched { .. }
             | LogEvent::CaravanArrived { .. }
-            | LogEvent::OrderExpired { .. }
             | LogEvent::EconomyHarvest { .. }
             | LogEvent::LoanTaken { .. }
             | LogEvent::EventScheduled { .. }

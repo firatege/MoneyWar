@@ -6,8 +6,8 @@
 
 .lb__cols {
   display: grid;
-  grid-template-columns: 2.2rem 3.2rem 1fr 6rem 5.5rem 5rem;
-  gap: 0.75rem;
+  grid-template-columns: 3.4rem 3rem 1fr 5.5rem 5rem 4rem;
+  gap: 0.6rem;
   padding: 0.4rem var(--pad-panel);
   font-size: var(--text-xs);
   letter-spacing: 0.12em;
@@ -26,21 +26,27 @@
 }
 
 .lb__row {
+  all: unset;
+  box-sizing: border-box;
   display: grid;
-  grid-template-columns: 2.2rem 3.2rem 1fr 6rem 5.5rem 5rem;
-  gap: 0.75rem;
+  grid-template-columns: 3.4rem 3rem 1fr 5.5rem 5rem 4rem;
+  gap: 0.6rem;
   align-items: center;
+  width: 100%;
   padding: 0.5rem var(--pad-panel);
   border-bottom: 1px solid var(--line-soft);
   font-size: var(--text-sm);
-  position: relative;
+  cursor: pointer;
   transition: background var(--dur) var(--ease);
 }
 .lb__row:hover {
   background: var(--surface-2);
 }
+.lb__row--selected {
+  background: var(--surface-hi);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 
-/* İlk üçe sıra vurgusu — abartısız */
 .lb__row[data-rank="1"] .lb__rank,
 .lb__row[data-rank="2"] .lb__rank,
 .lb__row[data-rank="3"] .lb__rank {
@@ -48,9 +54,27 @@
   font-weight: 600;
 }
 
+.lb__rank-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
 .lb__rank {
   color: var(--text-faint);
-  text-align: center;
+  min-width: 1.2ch;
+  text-align: right;
+}
+.lb__delta {
+  font-size: var(--text-xs);
+}
+.lb__delta--up {
+  color: var(--gain-dim);
+}
+.lb__delta--down {
+  color: var(--loss-dim);
+}
+.lb__delta--flat {
+  color: var(--text-ghost);
 }
 
 .lb__role {
@@ -111,7 +135,6 @@
   background: var(--text-ghost);
 }
 
-/* PnL değişim flash'i — kısa, ölçülü zemin parlaması */
 .lb__row--flash-up {
   animation: flash-up 0.7s var(--ease);
 }
