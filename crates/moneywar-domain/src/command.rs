@@ -76,6 +76,12 @@ pub enum Command {
     /// Kredi geri öde (Faz 5.5).
     RepayLoan { player: PlayerId, loan_id: LoanId },
 
+    /// Fabrika yükselt (level 1→2→3) — üretim hızı ve batch boyutu artar.
+    UpgradeFactory {
+        owner: PlayerId,
+        factory_id: crate::FactoryId,
+    },
+
     /// Fabrika kapat — geri ödeme nakit olarak alınır.
     /// Sadece Sanayici, sadece kendi fabrikası. Üretim bekleyen fabrika da
     /// kapatılabilir (yarım batch fire olur).
@@ -103,7 +109,8 @@ impl Command {
             Self::AcceptContract { acceptor, .. } => *acceptor,
             Self::BuildFactory { owner, .. }
             | Self::BuyCaravan { owner, .. }
-            | Self::DemolishFactory { owner, .. } => *owner,
+            | Self::DemolishFactory { owner, .. }
+            | Self::UpgradeFactory { owner, .. } => *owner,
             Self::DispatchCaravan { .. } => {
                 // Dispatch'in sahibi caravan'ın sahibi — motor validate eder.
                 // Burada placeholder: komut engine'e gidince caravan lookup yapılır.

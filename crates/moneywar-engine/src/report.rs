@@ -181,6 +181,31 @@ impl LogEntry {
         }
     }
 
+    /// Fabrika yükseltildi.
+    #[must_use]
+    pub fn factory_upgraded(
+        tick: Tick,
+        owner: PlayerId,
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        new_level: u8,
+        cost: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::FactoryUpgraded {
+                factory_id,
+                owner,
+                city,
+                product,
+                new_level,
+                cost,
+            },
+        }
+    }
+
     /// Fabrika kapatıldı.
     #[must_use]
     pub fn factory_demolished(
@@ -782,6 +807,16 @@ pub enum LogEvent {
         owner: PlayerId,
         city: CityId,
         product: ProductKind,
+        cost: Money,
+    },
+
+    /// Fabrika seviye atladı.
+    FactoryUpgraded {
+        factory_id: FactoryId,
+        owner: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        new_level: u8,
         cost: Money,
     },
 

@@ -44,6 +44,7 @@ use crate::{
         advance_production,
         process_build_factory as build_factory_impl,
         process_demolish_factory as demolish_factory_impl,
+        process_upgrade_factory as upgrade_factory_impl,
     },
     report::{LogEntry, TickReport},
     rng::rng_for,
@@ -186,6 +187,9 @@ fn dispatch(
         Command::CreditNpcCash { player, amount } => credit_npc_cash_impl(state, *player, *amount),
         Command::DemolishFactory { owner, factory_id } => {
             demolish_factory_impl(state, report, tick, *owner, *factory_id)
+        }
+        Command::UpgradeFactory { owner, factory_id } => {
+            upgrade_factory_impl(state, report, tick, *owner, *factory_id)
         }
     }
 }

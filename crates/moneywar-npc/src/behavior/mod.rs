@@ -97,9 +97,9 @@ pub fn decide_behavior(
                 match &cand {
                     ActionCandidate::BuyCaravan { .. } => 0.4,
                     ActionCandidate::DispatchCaravan { .. } => 0.4,
-                    // Kapatma kararı NPC enumerate'de zaten filtreli —
-                    // skora gelirse mutlaka işlensin (yüksek sabit skor).
                     ActionCandidate::DemolishFactory { .. } => 0.7,
+                    // Yükseltme de filtreli — yüksek sabit skor.
+                    ActionCandidate::UpgradeFactory { .. } => 0.65,
                     ActionCandidate::ProposeContract(_)
                     | ActionCandidate::AcceptContract { .. } => 0.2,
                     // SubmitOrder/BuildFactory context döner, buraya düşmez.
@@ -210,6 +210,10 @@ fn candidate_to_command(
             acceptor: pid,
         }),
         ActionCandidate::DemolishFactory { factory_id } => Some(Command::DemolishFactory {
+            owner: pid,
+            factory_id,
+        }),
+        ActionCandidate::UpgradeFactory { factory_id } => Some(Command::UpgradeFactory {
             owner: pid,
             factory_id,
         }),

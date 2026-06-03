@@ -265,9 +265,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
-    // 4) Fabrika kapatma — zarar ediyor + fabrika uzun süre atıl kalıyorsa çık.
-    //    Brain'deki pnl_trend bu kararın sinyalini verir ama enumerate
-    //    domain bilgisine eriştiği için doğrudan is_atil + cash kontrolü yapar.
+    // 4a) Fabrika yükseltme — bol nakit + aktif fab + makul seviye varsa güçlendir.
+    out.extend(enumerate_upgrade(state, player));
+
+    // 4b) Fabrika kapatma — nakit kritik + uzun atıl → kapat, sermaye kurtar.
     out.extend(enumerate_demolish(state, player));
 
     // v8.23: Açık Tüccar kontratlarını tara, fab ihtiyacına uyanı kabul et.
@@ -631,6 +632,50 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
 }
 
 /// Tax-aware satın alma qty.
+/// Yükseltmeye uygun fabrikaları listele.
+///
+/// Yükseltme koşulları:
+/// 1. Fabrika maksimum seviyenin altında (< 3).
+/// 2. Yükseltme maliyetini karşılayacak nakit var (maliyet × 1.5 güvenlik buffer).
+/// 3. Fabrika aktif — son IDLE_FACTORY_THRESHOLD tick içinde üretim yapmış.
+///
+/// Tick başına en fazla 1 yükseltme (kaynak dağılımı kontrolü).
+fn enumerate_upgrade(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::balance::FACTORY_MAX_LEVEL;
+
+    let mut upgradeable: Vec<moneywar_domain::FactoryId> = state
+        .factories
+        .values()
+        .filter(|f| f.owner == player.id)
+        .filter(|f| f.level < FACTORY_MAX_LEVEL)
+        .filter(|f| {
+            // Aktif fabrika — atıl değil.
+            !f.is_atil(state.current_tick, moneywar_domain::balance::IDLE_FACTORY_THRESHOLD)
+        })
+        .filter(|f| {
+            // Nakit yeterli mi (maliyet × 1.5 buffer)?
+            if let Some(cost) = moneywar_domain::Factory::upgrade_cost(f.level) {
+                let needed = moneywar_domain::Money::from_cents(
+                    cost.as_cents().saturating_mul(3) / 2
+                );
+                player.cash >= needed
+            } else {
+                false
+            }
+        })
+        .map(|f| f.id)
+        .collect();
+
+    // Deterministik sıra — en düşük ID'li fab önce (en eski, en köklü).
+    upgradeable.sort_unstable();
+
+    upgradeable
+        .into_iter()
+        .take(1)
+        .map(|factory_id| ActionCandidate::UpgradeFactory { factory_id })
+        .collect()
+}
+
 /// Kapatılabilecek fabrikaları listele.
 ///
 /// Kapatma koşulları (her ikisi de gerekli):

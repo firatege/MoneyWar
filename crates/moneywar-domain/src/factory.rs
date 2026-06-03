@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CityId, DomainError, FactoryId, Money, PlayerId, ProductKind, Tick};
 
+/// serde default helper — geriye dönük uyum için eski json'da level yoksa 1.
+fn default_factory_level() -> u8 { 1 }
+
 /// Üretim kuyruğundaki bir batch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FactoryBatch {
@@ -26,10 +29,13 @@ pub struct Factory {
     /// Üretilen bitmiş ürün. Ham madde üreten fabrika YOK (ham madde NPC arzından gelir).
     pub product: ProductKind,
     /// En son üretim tamamlanan tick. `None` = hiç üretim yapmadı.
-    /// Atıl fabrika (§9 skor kuralı) detection için.
     pub last_production_tick: Option<Tick>,
     /// İşlenmeyi bekleyen batch'ler.
     pub batches: Vec<FactoryBatch>,
+    /// Fabrika seviyesi (1–3). Seviye arttıkça batch büyür ve hızlanır.
+    /// Yeni fabrikalar seviye 1 başlar; `UpgradeFactory` komutuyla artar.
+    #[serde(default = "default_factory_level")]
+    pub level: u8,
 }
 
 impl Factory {
@@ -60,7 +66,37 @@ impl Factory {
             product,
             last_production_tick: None,
             batches: Vec::new(),
+            level: 1,
         })
+    }
+
+    /// Upgrade maliyeti — bu seviyeden bir üst seviyeye geçiş.
+    #[must_use]
+    pub fn upgrade_cost(current_level: u8) -> Option<crate::Money> {
+        match current_level {
+            1 => crate::Money::from_lira(crate::balance::FACTORY_UPGRADE_LV2_LIRA).ok(),
+            2 => crate::Money::from_lira(crate::balance::FACTORY_UPGRADE_LV3_LIRA).ok(),
+            _ => None,
+        }
+    }
+
+    /// Bu seviyedeki batch boyutu. Seviye 1=50, 2=75, 3=100.
+    #[must_use]
+    pub const fn batch_size(&self) -> u32 {
+        match self.level {
+            1 => Self::BATCH_SIZE,
+            2 => Self::BATCH_SIZE * 3 / 2,  // +%50
+            _ => Self::BATCH_SIZE * 2,       // 3+ → 2×
+        }
+    }
+
+    /// Bu seviyedeki üretim tick sayısı. Seviye 1=2, 2=2, 3=1 (daha hızlı).
+    #[must_use]
+    pub const fn production_ticks(&self) -> u32 {
+        match self.level {
+            1 | 2 => Self::PRODUCTION_TICKS,
+            _ => 1, // seviye 3 → tek tick'te üretim
+        }
     }
 
     /// `§10` kurulum maliyet tablosu. `existing_count` = sahip olunan mevcut

@@ -31,6 +31,8 @@ pub enum ActionCandidate {
     BuildFactory { city: CityId, product: ProductKind },
     /// Fabrika kapat — zarar eden / atıl fabrikadan çık, sermayeyi kurtar.
     DemolishFactory { factory_id: moneywar_domain::FactoryId },
+    /// Fabrika yükselt — kâr eden fabrikayı güçlendir (level 1→2→3).
+    UpgradeFactory { factory_id: moneywar_domain::FactoryId },
     /// Kervan satın al.
     BuyCaravan { starting_city: CityId },
     /// Kervan dispatch (Tüccar arbitraj).
@@ -57,6 +59,7 @@ impl ActionCandidate {
             Self::BuildFactory { city, product } => Some((*city, *product)),
             Self::BuyCaravan { .. }
             | Self::DemolishFactory { .. }
+            | Self::UpgradeFactory { .. }
             | Self::DispatchCaravan { .. }
             | Self::ProposeContract(_)
             | Self::AcceptContract { .. } => None,

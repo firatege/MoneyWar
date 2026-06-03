@@ -15,7 +15,7 @@
 
 use moneywar_domain::{
     CityId, DomainError, Factory, FactoryBatch, FactoryId, GameState, Money, PlayerId,
-    ProductKind, Role, Tick,
+    ProductKind, Role, Tick, balance::FACTORY_MAX_LEVEL,
 };
 
 use crate::{
@@ -81,6 +81,59 @@ pub(crate) fn process_build_factory(
 /// Geri ödeme yüzdesi: kaçıncı fabrika kapatılıyor.
 /// İlk fabrikalar daha pahalı kuruldu ama daha az geri alınır (hızlı kapatma caydırıcı).
 const DEMOLISH_REFUND_PCT: i64 = 50;
+
+/// `UpgradeFactory` komutunu uygula — level artar, batch büyür.
+pub(crate) fn process_upgrade_factory(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    owner: PlayerId,
+    factory_id: FactoryId,
+) -> Result<(), EngineError> {
+    let player = state.players.get(&owner).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!("player {owner} not found")))
+    })?;
+    if !matches!(player.role, Role::Sanayici) {
+        return Err(EngineError::Domain(DomainError::Validation(
+            "UpgradeFactory requires Sanayici role".into(),
+        )));
+    }
+    let factory = state.factories.get(&factory_id).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!("factory {factory_id} not found")))
+    })?;
+    if factory.owner != owner {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} not owned by {owner}"
+        ))));
+    }
+    let current_level = factory.level;
+    if current_level >= FACTORY_MAX_LEVEL {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} already at max level {FACTORY_MAX_LEVEL}"
+        ))));
+    }
+    let cost = Factory::upgrade_cost(current_level).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation("no upgrade cost available".into()))
+    })?;
+
+    let player_mut = state.players.get_mut(&owner).expect("validated above");
+    if player_mut.cash < cost {
+        return Err(EngineError::Domain(DomainError::InsufficientFunds {
+            have: player_mut.cash,
+            want: cost,
+        }));
+    }
+    player_mut.debit(cost)?;
+
+    let factory_mut = state.factories.get_mut(&factory_id).expect("validated above");
+    factory_mut.level += 1;
+    let new_level = factory_mut.level;
+    let city = factory_mut.city;
+    let product = factory_mut.product;
+
+    report.push(LogEntry::factory_upgraded(tick, owner, factory_id, city, product, new_level, cost));
+    Ok(())
+}
 
 /// `DemolishFactory` komutunu uygula. Sanayici kendi fabrikasını kapatır,
 /// kuruş maliyetinin %50'sini nakit olarak geri alır.
@@ -214,10 +267,11 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
     };
     let have_raw = player.inventory.get(city, raw);
     // Shortage soft penalty: tam batch yoksa kısmi üret.
-    // Girdi = BATCH_SIZE (sabit), çıktı = batch_size × output_ratio_pct/100.
-    let partial_min = (Factory::BATCH_SIZE / 4).max(1);
-    let batch_size = if have_raw >= Factory::BATCH_SIZE {
-        Factory::BATCH_SIZE
+    // Batch boyutu fabrika seviyesine göre değişir (level 1=50, 2=75, 3=100).
+    let level_batch = state.factories.get(&fid).map_or(Factory::BATCH_SIZE, |f| f.batch_size());
+    let partial_min = (level_batch / 4).max(1);
+    let batch_size = if have_raw >= level_batch {
+        level_batch
     } else if have_raw >= partial_min {
         have_raw
     } else {

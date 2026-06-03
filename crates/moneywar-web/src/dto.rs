@@ -470,6 +470,16 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
                 city.display_name(),
             ),
         ),
+        LogEvent::FactoryUpgraded { city, product, owner, new_level, .. } => (
+            "factory_upgraded",
+            format!(
+                "{} fabrika yükseltti Lv{} · {} / {}",
+                name_of(state, *owner),
+                new_level,
+                product.display_name(),
+                city.display_name(),
+            ),
+        ),
         LogEvent::FactoryDemolished { city, product, owner, .. } => (
             "factory_demolished",
             format!(

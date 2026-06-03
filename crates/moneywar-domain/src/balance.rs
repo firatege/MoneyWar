@@ -296,6 +296,17 @@ pub const WORLD_FAB_QTY_PER_PERIOD: u32 = 15;
 /// World Fab SELL emir TTL — 3 tick (kısa, sürekli yenilenir).
 pub const WORLD_FAB_SELL_TTL: u32 = 3;
 
+// =============================================================================
+// Fabrika yükseltme
+// =============================================================================
+
+/// Seviye 1→2 yükseltme maliyeti (lira). Yüksek — sadece kârlı fabrika yükseltilmeli.
+pub const FACTORY_UPGRADE_LV2_LIRA: i64 = 25_000;
+/// Seviye 2→3 yükseltme maliyeti (lira).
+pub const FACTORY_UPGRADE_LV3_LIRA: i64 = 50_000;
+/// Maksimum fabrika seviyesi.
+pub const FACTORY_MAX_LEVEL: u8 = 3;
+
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]
 mod tests {
