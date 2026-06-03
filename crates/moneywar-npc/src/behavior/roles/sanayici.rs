@@ -265,8 +265,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
-    // 4c) Özel çiftlik — ham madde açlığı varsa kendi kaynağını kur.
-    out.extend(enumerate_private_farm(state, player));
+    // 4c) Özel çiftlik — sadece fabrika hedefine ulaşıldıktan sonra.
+    // Önce fabrika → sonra tarla (sermaye sıralaması).
+    if owned >= TARGET_FACTORIES {
+        out.extend(enumerate_private_farm(state, player));
+    }
 
     // 4a) Fabrika yükseltme — bol nakit + aktif fab + makul seviye varsa güçlendir.
     out.extend(enumerate_upgrade(state, player));
