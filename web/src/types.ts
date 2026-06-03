@@ -54,6 +54,13 @@ export interface EventDto {
   seller_id: number | null;
 }
 
+export interface PrivateFarmDto {
+  id: number;
+  owner: number;
+  city: string;
+  product: string;
+}
+
 export interface Snapshot {
   season: number;
   tick: number;
@@ -63,6 +70,7 @@ export interface Snapshot {
   prices: PriceCell[];
   factories: FactoryDto[];
   caravans: CaravanDto[];
+  private_farms: PrivateFarmDto[];
   recent_events: EventDto[];
 }
 

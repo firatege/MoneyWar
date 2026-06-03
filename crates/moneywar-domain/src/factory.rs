@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn batch_size_and_duration_constants() {
-        assert_eq!(Factory::BATCH_SIZE, 50);
+        assert_eq!(Factory::BATCH_SIZE, 65); // Faz balance: 50→65
         assert_eq!(Factory::PRODUCTION_TICKS, 2);
     }
 

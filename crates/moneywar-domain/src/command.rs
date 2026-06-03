@@ -76,6 +76,14 @@ pub enum Command {
     /// Kredi geri öde (Faz 5.5).
     RepayLoan { player: PlayerId, loan_id: LoanId },
 
+    /// Özel çiftlik kur — sanayicinin münhasır ham madde kaynağı.
+    /// Çiftlik direkt envantere üretir, piyasaya satmaz.
+    BuildPrivateFarm {
+        owner: PlayerId,
+        city: crate::CityId,
+        product: crate::ProductKind,
+    },
+
     /// Fabrika yükselt (level 1→2→3) — üretim hızı ve batch boyutu artar.
     UpgradeFactory {
         owner: PlayerId,
@@ -110,7 +118,8 @@ impl Command {
             Self::BuildFactory { owner, .. }
             | Self::BuyCaravan { owner, .. }
             | Self::DemolishFactory { owner, .. }
-            | Self::UpgradeFactory { owner, .. } => *owner,
+            | Self::UpgradeFactory { owner, .. }
+            | Self::BuildPrivateFarm { owner, .. } => *owner,
             Self::DispatchCaravan { .. } => {
                 // Dispatch'in sahibi caravan'ın sahibi — motor validate eder.
                 // Burada placeholder: komut engine'e gidince caravan lookup yapılır.

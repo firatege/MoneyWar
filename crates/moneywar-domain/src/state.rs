@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Caravan, CaravanId, CityId, Contract, ContractId, Factory, FactoryId, GameEvent, Loan, LoanId,
-    MarketOrder, Money, NewsItem, NewsTier, Player, PlayerId, ProductKind, RoomConfig, RoomId,
-    Tick,
+    MarketOrder, Money, NewsItem, NewsTier, Player, PlayerId, PrivateFarm, PrivateFarmId,
+    ProductKind, RoomConfig, RoomId, Tick,
 };
 
 /// `ProductKind::RAW_MATERIALS` order'ında bir sonraki raw'ı döner.
@@ -51,6 +51,9 @@ pub struct GameState {
     /// İnsan + NPC oyuncuları.
     pub players: BTreeMap<PlayerId, Player>,
     pub factories: BTreeMap<FactoryId, Factory>,
+    /// Sanayici münhasır ham madde üreticileri — piyasaya satmaz, direkt envantere gider.
+    #[serde(default)]
+    pub private_farms: BTreeMap<PrivateFarmId, PrivateFarm>,
     pub caravans: BTreeMap<CaravanId, Caravan>,
 
     /// Hal Pazarı emir defteri. `(city, product) → [emirler]`.
@@ -197,6 +200,8 @@ pub struct IdCounters {
     pub next_news_id: u64,
     pub next_event_id: u64,
     pub next_loan_id: u64,
+    #[serde(default)]
+    pub next_private_farm_id: u64,
 }
 
 impl GameState {
@@ -209,6 +214,7 @@ impl GameState {
             current_tick: Tick::ZERO,
             players: BTreeMap::new(),
             factories: BTreeMap::new(),
+            private_farms: BTreeMap::new(),
             caravans: BTreeMap::new(),
             order_book: BTreeMap::new(),
             contracts: BTreeMap::new(),

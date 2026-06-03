@@ -15,7 +15,8 @@
 
 use moneywar_domain::{
     CityId, DomainError, Factory, FactoryBatch, FactoryId, GameState, Money, PlayerId,
-    ProductKind, Role, Tick, balance::FACTORY_MAX_LEVEL,
+    PrivateFarm, PrivateFarmId, ProductKind, Role, Tick,
+    balance::{FACTORY_MAX_LEVEL, PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER, PRIVATE_FARM_OUTPUT_PER_TICK},
 };
 
 use crate::{
@@ -81,6 +82,67 @@ pub(crate) fn process_build_factory(
 /// Geri ödeme yüzdesi: kaçıncı fabrika kapatılıyor.
 /// İlk fabrikalar daha pahalı kuruldu ama daha az geri alınır (hızlı kapatma caydırıcı).
 const DEMOLISH_REFUND_PCT: i64 = 50;
+
+/// Özel çiftlikleri ilerlet — her tick sahibinin envanterine ham madde ekle.
+pub(crate) fn advance_private_farms(state: &mut GameState, _tick: Tick) {
+    let farm_ids: Vec<PrivateFarmId> = state.private_farms.keys().copied().collect();
+    for fid in farm_ids {
+        let (owner, city, product) = {
+            let f = &state.private_farms[&fid];
+            (f.owner, f.city, f.product)
+        };
+        if let Some(player) = state.players.get_mut(&owner) {
+            let _ = player.inventory.add(city, product, PRIVATE_FARM_OUTPUT_PER_TICK);
+        }
+    }
+}
+
+/// `BuildPrivateFarm` komutunu uygula.
+pub(crate) fn process_build_private_farm(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    owner: PlayerId,
+    city: CityId,
+    product: ProductKind,
+) -> Result<(), EngineError> {
+    let player = state.players.get(&owner).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!("player {owner} not found")))
+    })?;
+    if !matches!(player.role, Role::Sanayici) {
+        return Err(EngineError::Domain(DomainError::Validation(
+            "BuildPrivateFarm requires Sanayici role".into(),
+        )));
+    }
+    if !product.is_raw() {
+        return Err(EngineError::Domain(DomainError::Validation(
+            "PrivateFarm only produces raw materials".into(),
+        )));
+    }
+    let owned = state.private_farms.values().filter(|f| f.owner == owner).count();
+    if owned >= PRIVATE_FARM_MAX_PER_OWNER {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "max private farms ({PRIVATE_FARM_MAX_PER_OWNER}) reached"
+        ))));
+    }
+    let cost = Money::from_lira(PRIVATE_FARM_BUILD_COST_LIRA)
+        .map_err(|e| EngineError::Domain(e))?;
+    let player_mut = state.players.get_mut(&owner).expect("validated");
+    if player_mut.cash < cost {
+        return Err(EngineError::Domain(DomainError::InsufficientFunds {
+            have: player_mut.cash,
+            want: cost,
+        }));
+    }
+    player_mut.debit(cost)?;
+
+    let fid = PrivateFarmId::new(state.counters.next_private_farm_id);
+    state.counters.next_private_farm_id = state.counters.next_private_farm_id.saturating_add(1);
+    state.private_farms.insert(fid, PrivateFarm::new(fid, owner, city, product));
+
+    report.push(LogEntry::private_farm_built(tick, owner, fid, city, product, cost));
+    Ok(())
+}
 
 /// `UpgradeFactory` komutunu uygula — level artar, batch büyür.
 pub(crate) fn process_upgrade_factory(

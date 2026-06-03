@@ -8800,6 +8800,9 @@ fn describe_command_short(cmd: &Command) -> String {
         Command::UpgradeFactory { factory_id, .. } => {
             format!("fab yükselt #{}", factory_id.value())
         }
+        Command::BuildPrivateFarm { city, product, .. } => {
+            format!("özel çiftlik · {product:?}/{city:?}")
+        }
     }
 }
 
@@ -8851,6 +8854,9 @@ fn describe_command(cmd: &Command) -> String {
         }
         Command::UpgradeFactory { factory_id, .. } => {
             format!("fab yükselt: {factory_id}")
+        }
+        Command::BuildPrivateFarm { city, product, .. } => {
+            format!("özel çiftlik: {product:?}/{city:?}")
         }
     }
 }

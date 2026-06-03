@@ -41,8 +41,10 @@ use crate::{
     market::clear_markets,
     news::process_subscribe_news as subscribe_news_impl,
     production::{
+        advance_private_farms,
         advance_production,
         process_build_factory as build_factory_impl,
+        process_build_private_farm as build_private_farm_impl,
         process_demolish_factory as demolish_factory_impl,
         process_upgrade_factory as upgrade_factory_impl,
     },
@@ -106,6 +108,7 @@ pub fn advance_tick(
     //   5. Hal Pazarı clearing
     new_state.clear_expired_shocks(next_tick);
     advance_events(&mut new_state, &mut rng, &mut report, next_tick);
+    advance_private_farms(&mut new_state, next_tick);
     advance_production(&mut new_state, &mut report, next_tick);
     advance_caravans(&mut new_state, &mut report, next_tick);
     advance_contracts(&mut new_state, &mut report, next_tick);
@@ -190,6 +193,9 @@ fn dispatch(
         }
         Command::UpgradeFactory { owner, factory_id } => {
             upgrade_factory_impl(state, report, tick, *owner, *factory_id)
+        }
+        Command::BuildPrivateFarm { owner, city, product } => {
+            build_private_farm_impl(state, report, tick, *owner, *city, *product)
         }
     }
 }

@@ -101,6 +101,7 @@ pub fn decide_behavior(
                 match &cand {
                     ActionCandidate::BuyCaravan { .. } => 0.4,
                     ActionCandidate::DispatchCaravan { .. } => 0.4,
+                    ActionCandidate::BuildPrivateFarm { .. } => 0.65,
                     ActionCandidate::DemolishFactory { .. } => 0.7,
                     // Yükseltme de filtreli — yüksek sabit skor.
                     ActionCandidate::UpgradeFactory { .. } => 0.65,
@@ -212,6 +213,11 @@ fn candidate_to_command(
         ActionCandidate::AcceptContract { contract_id } => Some(Command::AcceptContract {
             contract_id,
             acceptor: pid,
+        }),
+        ActionCandidate::BuildPrivateFarm { city, product } => Some(Command::BuildPrivateFarm {
+            owner: pid,
+            city,
+            product,
         }),
         ActionCandidate::DemolishFactory { factory_id } => Some(Command::DemolishFactory {
             owner: pid,

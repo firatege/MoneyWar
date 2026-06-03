@@ -6,7 +6,7 @@
 //! (`f64`, cents/100) olarak gönderilir.
 
 use moneywar_domain::{
-    CityId, GameState, Money, NpcKind, OrderSide, PlayerId, ProductKind,
+    CityId, GameState, Money, NpcKind, OrderSide, PlayerId, PrivateFarm, ProductKind,
 };
 use moneywar_engine::{LogEntry, LogEvent, TickReport, leaderboard};
 use serde::Serialize;
@@ -22,6 +22,7 @@ pub struct Snapshot {
     pub prices: Vec<PriceCell>,
     pub factories: Vec<FactoryDto>,
     pub caravans: Vec<CaravanDto>,
+    pub private_farms: Vec<PrivateFarmDto>,
     pub recent_events: Vec<EventDto>,
 }
 
@@ -63,6 +64,15 @@ pub struct FactoryDto {
     pub product: String,
     pub pending_units: u64,
     pub idle: bool,
+}
+
+/// Özel çiftlik durum kartı.
+#[derive(Debug, Clone, Serialize)]
+pub struct PrivateFarmDto {
+    pub id: u64,
+    pub owner: u64,
+    pub city: String,
+    pub product: String,
 }
 
 /// Kervan durum kartı.
@@ -149,6 +159,7 @@ pub fn build_snapshot(
         prices: build_prices(state),
         factories: build_factories(state),
         caravans: build_caravans(state),
+        private_farms: build_private_farms(state),
         recent_events: build_feed(state, report),
     }
 }
@@ -179,6 +190,7 @@ fn is_feed_worthy(event: &LogEvent) -> bool {
     matches!(
         event,
         LogEvent::OrderMatched { .. }
+            | LogEvent::PrivateFarmBuilt { .. }
             | LogEvent::FactoryBuilt { .. }
             | LogEvent::ProductionCompleted { .. }
             | LogEvent::CaravanDispatched { .. }
@@ -263,6 +275,15 @@ fn build_factories(state: &GameState) -> Vec<FactoryDto> {
             idle: f.is_atil(state.current_tick, moneywar_engine::IDLE_FACTORY_THRESHOLD),
         })
         .collect()
+}
+
+fn build_private_farms(state: &GameState) -> Vec<PrivateFarmDto> {
+    state.private_farms.values().map(|f| PrivateFarmDto {
+        id: f.id.value(),
+        owner: f.owner.value(),
+        city: city_slug(f.city).to_string(),
+        product: product_slug(f.product).to_string(),
+    }).collect()
 }
 
 fn build_caravans(state: &GameState) -> Vec<CaravanDto> {
@@ -482,6 +503,15 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
                 name_of(state, *player),
                 side_label(*side),
                 leftover_qty,
+                product.display_name(),
+                city.display_name(),
+            ),
+        ),
+        LogEvent::PrivateFarmBuilt { owner, city, product, .. } => (
+            "private_farm",
+            format!(
+                "{} özel çiftlik kurdu · {} ({})",
+                name_of(state, *owner),
                 product.display_name(),
                 city.display_name(),
             ),

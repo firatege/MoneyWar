@@ -265,6 +265,9 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
+    // 4c) Özel çiftlik — ham madde açlığı varsa kendi kaynağını kur.
+    out.extend(enumerate_private_farm(state, player));
+
     // 4a) Fabrika yükseltme — bol nakit + aktif fab + makul seviye varsa güçlendir.
     out.extend(enumerate_upgrade(state, player));
 
@@ -632,6 +635,71 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
 }
 
 /// Tax-aware satın alma qty.
+/// Özel çiftlik kurma adayını listele.
+///
+/// Koşullar:
+/// 1. Sanayicinin fabrikası var ve ham madde sıkıntısı çekiyor
+///    (son N tickte FactoryIdle oranı yüksek → proxy: ham stok düşük)
+/// 2. O ham madde için zaten özel çiftlik yok
+/// 3. Yeterli nakit (PRIVATE_FARM_BUILD_COST_LIRA + buffer)
+fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::balance::{PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER};
+
+    let owned_farms = state.private_farms.values()
+        .filter(|f| f.owner == player.id)
+        .count();
+    if owned_farms >= PRIVATE_FARM_MAX_PER_OWNER {
+        return Vec::new();
+    }
+
+    let build_cost = moneywar_domain::Money::from_lira(PRIVATE_FARM_BUILD_COST_LIRA)
+        .unwrap_or(moneywar_domain::Money::ZERO);
+    let needed_cash = moneywar_domain::Money::from_cents(
+        build_cost.as_cents().saturating_mul(3) / 2
+    );
+    if player.cash < needed_cash {
+        return Vec::new();
+    }
+
+    // Fabrikalarımın ham madde ihtiyaçlarını bul
+    let needed_raws: std::collections::BTreeSet<(moneywar_domain::CityId, moneywar_domain::ProductKind)> =
+        state.factories.values()
+            .filter(|f| f.owner == player.id)
+            .filter_map(|f| f.product.raw_input().map(|raw| (f.city, raw)))
+            .collect();
+
+    // Bu ham maddeler için zaten çiftlik var mı?
+    let existing: std::collections::BTreeSet<(moneywar_domain::CityId, moneywar_domain::ProductKind)> =
+        state.private_farms.values()
+            .filter(|f| f.owner == player.id)
+            .map(|f| (f.city, f.product))
+            .collect();
+
+    // En çok ihtiyaç duyulan (stok en az) ham madde için çiftlik öner
+    let mut best: Option<(moneywar_domain::CityId, moneywar_domain::ProductKind, u32)> = None;
+    for (city, raw) in &needed_raws {
+        if existing.contains(&(*city, *raw)) {
+            continue;
+        }
+        let stock = player.inventory.get(*city, *raw);
+        // Stok eşiği: BATCH_SIZE'ın yarısından az → sıkıntı var
+        let threshold = Factory::BATCH_SIZE / 2;
+        if stock < threshold {
+            match best {
+                None => best = Some((*city, *raw, stock)),
+                Some((_, _, best_stock)) if stock < best_stock => {
+                    best = Some((*city, *raw, stock));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    best.map(|(city, product, _)| {
+        vec![ActionCandidate::BuildPrivateFarm { city, product }]
+    }).unwrap_or_default()
+}
+
 /// Yükseltmeye uygun fabrikaları listele.
 ///
 /// Yükseltme koşulları:

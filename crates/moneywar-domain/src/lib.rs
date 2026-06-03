@@ -21,6 +21,7 @@ mod order;
 mod personality;
 mod player;
 mod product;
+mod private_farm;
 mod state;
 mod time;
 
@@ -35,6 +36,7 @@ pub use factory::{Factory, FactoryBatch};
 pub use ids::{
     CaravanId, ContractId, EventId, FactoryId, LoanId, NewsId, OrderId, PlayerId, RoomId,
 };
+pub use private_farm::{PrivateFarm, PrivateFarmId};
 pub use loan::Loan;
 pub use money::Money;
 pub use news::{NewsItem, NewsTier};

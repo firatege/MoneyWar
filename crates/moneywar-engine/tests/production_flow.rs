@@ -55,12 +55,12 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
     };
     let (s1, _r1) = advance_tick(&s0, &[build]).unwrap();
     assert_eq!(s1.factories.len(), 1);
-    // Tick 1 sonu: batch başladı, pamuk BATCH_SIZE tüketildi → 950 kaldı.
+    // Tick 1 sonu: batch başladı, pamuk BATCH_SIZE (65) tüketildi → 935 kaldı.
     assert_eq!(
         s1.players[&PlayerId::new(1)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Pamuk),
-        950
+        935
     );
     assert_eq!(s1.factories.values().next().unwrap().batches.len(), 1);
 
@@ -99,7 +99,7 @@ fn sanayici_builds_factory_produces_and_sells_to_tuccar() {
             CityId::Istanbul,
             ProductKind::Kumas,
             OrderSide::Buy,
-            50,
+            produced_qty + 10, // tüm üretimi almaya yetecek kadar
             Money::from_lira(20).unwrap(),
             Tick::new(5),
         )

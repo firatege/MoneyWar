@@ -12,7 +12,7 @@
 
 use moneywar_domain::{
     CaravanId, CityId, Command, ContractId, ContractState, EventId, FactoryId, GameEvent,
-    ListingKind, LoanId, Money, NewsTier, OrderId, OrderSide, PlayerId, ProductKind, Tick,
+    ListingKind, LoanId, Money, NewsTier, OrderId, OrderSide, PlayerId, PrivateFarmId, ProductKind, Tick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -178,6 +178,23 @@ impl LogEntry {
                 product,
                 cost,
             },
+        }
+    }
+
+    /// Özel çiftlik kuruldu.
+    #[must_use]
+    pub fn private_farm_built(
+        tick: Tick,
+        owner: PlayerId,
+        farm_id: PrivateFarmId,
+        city: CityId,
+        product: ProductKind,
+        cost: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::PrivateFarmBuilt { farm_id, owner, city, product, cost },
         }
     }
 
@@ -804,6 +821,15 @@ pub enum LogEvent {
     /// Oyuncu yeni fabrika kurdu. Sanayici tekeli.
     FactoryBuilt {
         factory_id: FactoryId,
+        owner: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        cost: Money,
+    },
+
+    /// Özel çiftlik kuruldu.
+    PrivateFarmBuilt {
+        farm_id: PrivateFarmId,
         owner: PlayerId,
         city: CityId,
         product: ProductKind,

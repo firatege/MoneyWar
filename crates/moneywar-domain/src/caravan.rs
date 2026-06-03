@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn capacity_matches_role() {
         assert_eq!(Caravan::capacity_for(Role::Sanayici), 500);
-        assert_eq!(Caravan::capacity_for(Role::Tuccar), 1200);
+        assert_eq!(Caravan::capacity_for(Role::Tuccar), 1080); // %10 kısıtlama
     }
 
     #[test]

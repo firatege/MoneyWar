@@ -44,7 +44,7 @@
 /// Üretim batch boyutu. 100 sezon başına ~30 batch potansiyel sağlar.
 /// 50'ye düşürmek Çiftçi'yi kazandırdı (+6.7K) ama Sanayici'yi -32K'ya
 /// sürükledi (kâr marjı erimişti). 100 koru.
-pub const FACTORY_BATCH_SIZE: u32 = 50;
+pub const FACTORY_BATCH_SIZE: u32 = 65; // 50→65: sanayici ROI dengesi
 
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
 /// Eski yolculuk: 2 → 3 (Sanayici aşırı kârlı diye yavaşlatıldı), şimdi
@@ -82,7 +82,7 @@ pub const CARAVAN_CAPACITY_SANAYICI: u32 = 500;
 /// taşıyor (off-specialty bucket'ları besler). 4 Tüccar × 3 caravan ×
 /// 800 = 9600 birim/dispatch, ölü bucket'lara daha çok arz akışı.
 /// Faz F5: 800 → 1200 (Tüccar buff — Sanayici tekeli karşı denge).
-pub const CARAVAN_CAPACITY_TUCCAR: u32 = 1200;
+pub const CARAVAN_CAPACITY_TUCCAR: u32 = 1080; // 1200→1080: %10 kısıtlama, arbitraj dengesi
 
 /// Sanayici kervan maliyet tablosu (§10).
 pub const CARAVAN_COSTS_SANAYICI_LIRA: [i64; 3] = [0, 5_000, 10_000];
@@ -295,6 +295,21 @@ pub const WORLD_FAB_QTY_PER_PERIOD: u32 = 15;
 
 /// World Fab SELL emir TTL — 3 tick (kısa, sürekli yenilenir).
 pub const WORLD_FAB_SELL_TTL: u32 = 3;
+
+// =============================================================================
+// Özel çiftlik (PrivateFarm)
+// =============================================================================
+
+/// Özel çiftlik kurulum maliyeti (lira). Fabrika maliyetinden ucuz —
+/// ham madde üretimi düşük teknoloji.
+pub const PRIVATE_FARM_BUILD_COST_LIRA: i64 = 15_000;
+
+/// Özel çiftlik tick başına üretim (birim ham madde).
+/// Piyasa Çiftçisi ortalama ~8-12/tick; özel çiftlik biraz daha az (özel = küçük tarla).
+pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 10;
+
+/// Sanayici başına max özel çiftlik sayısı.
+pub const PRIVATE_FARM_MAX_PER_OWNER: usize = 3;
 
 // =============================================================================
 // Fabrika yükseltme

@@ -58,6 +58,7 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
     prices: [],
     factories: [],
     caravans: [],
+    private_farms: [],
     recent_events: [],
     ...over,
   };

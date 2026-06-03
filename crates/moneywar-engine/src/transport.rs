@@ -228,14 +228,14 @@ mod tests {
     }
 
     #[test]
-    fn buy_caravan_tuccar_starter_zero_cost_capacity_1200() {
+    fn buy_caravan_tuccar_starter_zero_cost_capacity_1080() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Tuccar, 0);
         process_buy_caravan(&mut s, &mut r, Tick::new(1), pid, CityId::Istanbul).unwrap();
         assert_eq!(s.caravans.len(), 1);
         let c = s.caravans.values().next().unwrap();
-        assert_eq!(c.capacity, 1200);
+        assert_eq!(c.capacity, 1080);
         assert_eq!(c.state.current_city(), Some(CityId::Istanbul));
     }
 
@@ -339,7 +339,7 @@ mod tests {
             cid,
             CityId::Istanbul,
             CityId::Ankara,
-            &cargo(ProductKind::Pamuk, 1201), // capacity 1200
+            &cargo(ProductKind::Pamuk, 1081), // capacity 1080
         )
         .unwrap_err();
         assert!(err.to_string().contains("capacity"));
