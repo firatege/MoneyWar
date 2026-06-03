@@ -61,6 +61,14 @@ export interface PrivateFarmDto {
   product: string;
 }
 
+export interface RelationDto {
+  player_a: number;
+  player_b: number;
+  trade_count: number;
+  total_units: number;
+  trust_score: number;
+}
+
 export interface Snapshot {
   season: number;
   tick: number;
@@ -71,6 +79,7 @@ export interface Snapshot {
   factories: FactoryDto[];
   caravans: CaravanDto[];
   private_farms: PrivateFarmDto[];
+  relations: RelationDto[];
   recent_events: EventDto[];
 }
 

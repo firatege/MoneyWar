@@ -44,5 +44,5 @@ pub use order::{MarketOrder, OrderSide};
 pub use personality::Personality;
 pub use player::{Inventory, NpcKind, Player, Role};
 pub use product::{Perishability, ProductClass, ProductKind};
-pub use state::{ActiveShock, GameState, IdCounters, MAX_NO_MATCH_STREAK};
+pub use state::{ActiveShock, GameState, IdCounters, MAX_NO_MATCH_STREAK, RelationScore};
 pub use time::{SeasonProgress, Tick};

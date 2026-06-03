@@ -6,7 +6,7 @@
 //! (`f64`, cents/100) olarak gönderilir.
 
 use moneywar_domain::{
-    CityId, GameState, Money, NpcKind, OrderSide, PlayerId, PrivateFarm, ProductKind,
+    CityId, GameState, Money, NpcKind, OrderSide, PlayerId, ProductKind,
 };
 use moneywar_engine::{LogEntry, LogEvent, TickReport, leaderboard};
 use serde::Serialize;
@@ -23,6 +23,7 @@ pub struct Snapshot {
     pub factories: Vec<FactoryDto>,
     pub caravans: Vec<CaravanDto>,
     pub private_farms: Vec<PrivateFarmDto>,
+    pub relations: Vec<RelationDto>,
     pub recent_events: Vec<EventDto>,
 }
 
@@ -64,6 +65,17 @@ pub struct FactoryDto {
     pub product: String,
     pub pending_units: u64,
     pub idle: bool,
+}
+
+/// İki oyuncu arasındaki ilişki/güven özeti.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelationDto {
+    pub player_a: u64,
+    pub player_b: u64,
+    pub trade_count: u32,
+    pub total_units: u64,
+    /// [0,1] normalize güven skoru.
+    pub trust_score: f64,
 }
 
 /// Özel çiftlik durum kartı.
@@ -160,6 +172,7 @@ pub fn build_snapshot(
         factories: build_factories(state),
         caravans: build_caravans(state),
         private_farms: build_private_farms(state),
+        relations: build_relations(state),
         recent_events: build_feed(state, report),
     }
 }
@@ -273,6 +286,19 @@ fn build_factories(state: &GameState) -> Vec<FactoryDto> {
             product: product_slug(f.product).to_string(),
             pending_units: f.pending_units(),
             idle: f.is_atil(state.current_tick, moneywar_engine::IDLE_FACTORY_THRESHOLD),
+        })
+        .collect()
+}
+
+fn build_relations(state: &GameState) -> Vec<RelationDto> {
+    state.relationships.iter()
+        .filter(|(_, r)| r.trade_count > 0)
+        .map(|((a, b), r)| RelationDto {
+            player_a: a.value(),
+            player_b: b.value(),
+            trade_count: r.trade_count,
+            total_units: r.total_units,
+            trust_score: r.trust_score(),
         })
         .collect()
 }
