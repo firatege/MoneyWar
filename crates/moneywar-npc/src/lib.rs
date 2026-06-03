@@ -21,6 +21,8 @@ pub use error::NpcError;
 use moneywar_domain::{Command, GameState, PlayerId, Tick};
 use rand_chacha::ChaCha8Rng;
 
+pub use behavior::{AgentBrain, BrainPool};
+
 /// NPC zorluk seviyesi.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Difficulty {
@@ -83,6 +85,7 @@ pub fn decide_all_npcs(
     rng: &mut ChaCha8Rng,
     tick: Tick,
     difficulty: Difficulty,
+    brains: &mut BrainPool,
 ) -> Vec<Command> {
     let world_id = PlayerId::new(moneywar_domain::balance::WORLD_PLAYER_ID_VALUE);
     let npc_ids: Vec<PlayerId> = state
@@ -97,16 +100,21 @@ pub fn decide_all_npcs(
             if p.is_npc { Some(*id) } else { None }
         })
         .collect();
+    // Brain sync: yeni NPC'lere boş beyin ekle, sonra tüm beyinleri gözlemle.
+    brains.sync_players(state);
+    brains.observe_all(state);
+
     // Shadow state: NPC'ler sıralı işlenir, her birinin kararı bir sonrakine
     // görünür. Tick içi state immutable problemi çözülür → 5 Sanayici aynı
     // anda "Ist-Kumas boş" diyemez, ikinci NPC ilkini görür.
     let mut shadow = state.clone();
     let mut cmds = Vec::new();
     for pid in npc_ids {
+        let brain = brains.0.get(&pid).map(|b| b as &AgentBrain);
         let next = match difficulty {
             Difficulty::Synthetic => synthetic::decide_synthetic(&shadow, pid, tick),
             Difficulty::Easy | Difficulty::Medium | Difficulty::Hard => {
-                behavior::decide_behavior(&shadow, pid, rng, tick, difficulty.behavior())
+                behavior::decide_behavior(&shadow, pid, rng, tick, difficulty.behavior(), brain)
             }
         };
         // BuildFactory komutlarını shadow'a yansıt — sonraki NPC görür.

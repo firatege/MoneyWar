@@ -96,6 +96,11 @@ const fn ciftci_default() -> Weights {
         price_rel_avg: 0.3,
         competition: -0.2,
         cash: -0.3,
+        // Brain: pazar varsa sat (sahiplik), nakit azsa daha çok sat
+        market_ownership: 0.3,
+        cash_surplus: -0.2, // nakit azsa sat
+        pnl_trend: 0.2,     // kazanıyorsa fiyatı biraz koru
+        rival_threat: -0.1, // rakip fazlaysa biraz çekil (fiyat savaşı değer etmez)
         ..Weights::ZERO
     }
 }
@@ -116,6 +121,12 @@ const fn sanayici_default() -> Weights {
         price_rel_avg: 0.2,
         local_raw_advantage: 0.2,
         competition: -0.2,
+        // Brain: kazanıyorsam daha fazla fab kur, nakit varsa harcamalıyım,
+        // sahip olduğum bucket'ı koruyayım, rakip girince çıktıyı artır.
+        pnl_trend: 0.5,       // PnL artıyorsa cesurca yatırım yap
+        cash_surplus: 0.5,    // bol nakit = fabrika/ham madde zamanı
+        market_ownership: 0.4, // sahip olduğum bucket'a odaklan
+        rival_threat: 0.3,    // rakip girince üretimi artır (flood)
         ..Weights::ZERO
     }
 }
@@ -133,6 +144,12 @@ const fn spekulator_default() -> Weights {
         event: 0.3,
         momentum: 0.2,
         competition: -0.1,
+        // Brain: kazanıyorsa pozisyonu koru; nakit varsa al;
+        // çok kalabalık bucket'tan çekil (diversify).
+        pnl_trend: 0.4,        // kazanıyorsa aynı stratejiyi sürdür
+        cash_surplus: 0.3,     // nakit varsa pozisyon aç
+        market_ownership: -0.2, // zaten sahip olduğum yer → çeşitlen
+        rival_threat: -0.3,    // rakip kalabalıksa başka pazara geç
         ..Weights::ZERO
     }
 }
@@ -150,6 +167,11 @@ const fn tuccar_default() -> Weights {
         urgency: 0.2,
         momentum: 0.1,
         competition: -0.2,
+        // Brain: kazandığım rotayı sahiplen; rakip girince yeni rota bul.
+        pnl_trend: 0.3,        // kazanıyorsa mevcut rotayı sürdür
+        cash_surplus: 0.3,     // nakit varsa daha fazla dispatch
+        market_ownership: 0.5, // "benim" rota → oraya öncelik ver
+        rival_threat: -0.4,    // rakip kalabalıksa başka rotaya geç (verimli)
         ..Weights::ZERO
     }
 }
@@ -172,6 +194,10 @@ const fn esnaf_default() -> Weights {
         urgency: 0.2,
         local_raw_advantage: 0.2,
         competition: -0.2,
+        pnl_trend: 0.2,
+        cash_surplus: 0.2,
+        market_ownership: 0.3,
+        rival_threat: -0.2,
         ..Weights::ZERO
     }
 }
@@ -191,6 +217,12 @@ const fn alici_default() -> Weights {
         momentum: 0.2,
         urgency: 0.2,
         competition: -0.2,
+        // Brain: güvenilir tedarikçi bucket'ını tercih et (ilişki temeli),
+        // kazanıyorsa alımları artır.
+        pnl_trend: 0.3,        // kazanıyorsa daha fazla al
+        cash_surplus: 0.4,     // nakit varsa stok yap
+        market_ownership: 0.4, // sürekli aldığım bucket'a sadık kal
+        rival_threat: -0.1,    // rakip kalabalıksa alternatife bak
         ..Weights::ZERO
     }
 }

@@ -649,11 +649,20 @@ mod tests {
     #[test]
     fn target_factories_reached_no_build() {
         let mut s = fresh();
-        let p = sanayici(50_000);
-        // 3 fab kurulu say
-        for (i, city) in CityId::ALL.iter().enumerate() {
+        // TARGET_FACTORIES = 8, yüksek başlangıç nakdiyle tavan sanayici.
+        let p = sanayici(500_000);
+        // 5 şehir × 3 mamul = 15 slot ama TARGET=8; tam 8 fab kuruyoruz.
+        let combos = [(CityId::Istanbul, ProductKind::Kumas),
+                      (CityId::Istanbul, ProductKind::Un),
+                      (CityId::Istanbul, ProductKind::Zeytinyagi),
+                      (CityId::Ankara, ProductKind::Kumas),
+                      (CityId::Ankara, ProductKind::Un),
+                      (CityId::Ankara, ProductKind::Zeytinyagi),
+                      (CityId::Izmir, ProductKind::Kumas),
+                      (CityId::Izmir, ProductKind::Un)];
+        for (i, (city, product)) in combos.iter().enumerate() {
             let fid = FactoryId::new(i as u64 + 1);
-            let f = Factory::new(fid, p.id, *city, ProductKind::Kumas).unwrap();
+            let f = Factory::new(fid, p.id, *city, *product).unwrap();
             s.factories.insert(fid, f);
         }
         s.players.insert(p.id, p.clone());
@@ -661,7 +670,7 @@ mod tests {
         let has_build = cands
             .iter()
             .any(|c| matches!(c, ActionCandidate::BuildFactory { .. }));
-        assert!(!has_build, "hedef sayıda fab varsa Build durur");
+        assert!(!has_build, "TARGET_FACTORIES sayıda fab varsa Build durur");
     }
 
     #[test]

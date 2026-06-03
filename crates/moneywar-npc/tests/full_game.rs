@@ -26,7 +26,7 @@ use moneywar_domain::{
     Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{advance_tick, rng_for};
-use moneywar_npc::{Difficulty, decide_all_npcs};
+use moneywar_npc::{BrainPool, Difficulty, decide_all_npcs};
 
 fn init_world() -> GameState {
     let mut s = GameState::new(RoomId::new(42), RoomConfig::hizli());
@@ -97,7 +97,7 @@ fn twenty_tick_simulation_with_humans_and_npcs() {
     for t in 1..=20u32 {
         // NPC komutları RNG'den deterministik üretilir.
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
-        let npc_cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Easy);
+        let npc_cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Easy, &mut BrainPool::default());
 
         // İnsan oyuncu bazı tick'lerde pamuk satıyor.
         let mut cmds = npc_cmds;
@@ -249,7 +249,7 @@ fn liquidity_smoke_twenty_ticks_produces_matches() {
 
     for t in 1..=20u32 {
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
-        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Medium);
+        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Medium, &mut BrainPool::default());
         let (new_state, report) = advance_tick(&state, &cmds).expect("advance");
         state = new_state;
         for entry in &report.entries {
@@ -317,7 +317,7 @@ fn behavior_runs_without_crash_and_produces_commands() {
     let mut total_commands = 0;
     for t in 1..=30u32 {
         let mut npc_rng = rng_for(state.room_id, Tick::new(t));
-        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Hard);
+        let cmds = decide_all_npcs(&state, &mut npc_rng, Tick::new(t), Difficulty::Hard, &mut BrainPool::default());
         total_commands += cmds.len();
         let (new_state, _report) = advance_tick(&state, &cmds).expect("advance");
         state = new_state;

@@ -166,7 +166,10 @@ async fn advance_one_tick(state: &Arc<Mutex<ServerState>>) -> TickOutcome {
 
     // NPC emirlerini hesapla.
     let mut npc_rng = rng_for(room_id, next_tick);
-    let npc_commands = decide_all_npcs(&snapshot, &mut npc_rng, next_tick, SERVER_DIFFICULTY);
+    let npc_commands = {
+        let mut s = state.lock().await;
+        decide_all_npcs(&snapshot, &mut npc_rng, next_tick, SERVER_DIFFICULTY, &mut s.brains)
+    };
     commands.extend(npc_commands);
 
     // advance_tick saf fonksiyon — uzun değilse Mutex dışında çalıştır.

@@ -45,6 +45,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use moneywar_domain::{Command, GameState, PlayerId, RoomId};
+use moneywar_npc::BrainPool;
 use moneywar_net::{
     ClientMessage, PROTOCOL_VERSION, RejectReason, ServerMessage, decode_client, encode_server,
 };
@@ -132,6 +133,8 @@ pub struct ServerState {
     pub advance_pending: std::collections::BTreeSet<PlayerId>,
     /// Manual loop bunu bekler; tüm oyuncular ready basınca uyandırılır.
     pub advance_notify: std::sync::Arc<tokio::sync::Notify>,
+    /// Ajan hafıza havuzu — tick'ler arası yaşar.
+    pub brains: BrainPool,
 }
 
 impl ServerState {
@@ -149,6 +152,7 @@ impl ServerState {
             pending_commands: Vec::new(),
             advance_pending: std::collections::BTreeSet::new(),
             advance_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            brains: BrainPool::default(),
         }
     }
 

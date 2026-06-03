@@ -31,6 +31,7 @@
 use std::collections::BTreeMap;
 
 use moneywar_domain::{CityId, GameState, OrderSide, PlayerId, ProductKind};
+use super::brain::AgentBrain;
 
 /// NPC sinyalleri map'i. Anahtar `&'static str` — ağırlık tablolarıyla eşleşir.
 pub type Inputs = BTreeMap<&'static str, f64>;
@@ -173,6 +174,21 @@ pub fn compute_inputs(
     inputs.insert("local_raw_advantage", local_advantage);
 
     inputs
+}
+
+/// Brain sinyallerini mevcut inputs map'ine ekle.
+/// Brain yoksa (None) ekleme yapılmaz — önceki davranış korunur.
+pub fn inject_brain_signals(
+    inputs: &mut Inputs,
+    brain: &AgentBrain,
+    city: CityId,
+    product: ProductKind,
+    player_id: PlayerId,
+) {
+    inputs.insert("pnl_trend", brain.pnl_trend);
+    inputs.insert("cash_surplus", brain.cash_surplus);
+    inputs.insert("market_ownership", brain.ownership_of(city, product));
+    inputs.insert("rival_threat", brain.rival_threat_for(city, product, player_id));
 }
 
 // ============================================================================

@@ -54,7 +54,7 @@ use moneywar_domain::{
     OrderId, OrderSide, Personality, Player, PlayerId, ProductKind, Role, RoomConfig, RoomId, Tick,
 };
 use moneywar_engine::{LogEvent, PlayerScore, advance_tick, leaderboard, rng_for, score_player};
-use moneywar_npc::{Difficulty, decide_all_npcs};
+use moneywar_npc::{BrainPool, Difficulty, decide_all_npcs};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use ratatui::Terminal;
@@ -840,6 +840,8 @@ struct App {
     selected_preset: PresetChoice,
     /// NPC zorluk — Easy (basit likidite) veya Hard (akıllı, rekabetçi).
     difficulty: Difficulty,
+    /// Ajan hafıza havuzu — tick'ler arası yaşar.
+    brains: BrainPool,
     /// İnsan komutları — tick ilerledikçe NPC komutlarıyla birlikte advance'e iletilir.
     pending_human_cmds: Vec<Command>,
     /// Tek seferlik status satırı (başarı/hata). Bir sonraki tick'te temizlenir.
@@ -1193,6 +1195,7 @@ impl App {
             market_intel_show_finished: false,
             selected_preset: PresetChoice::Hizli,
             difficulty: Difficulty::default(), // Medium — yeni oyuncuya dengeli
+            brains: BrainPool::default(),
             pending_human_cmds: Vec::new(),
             status: None,
             next_human_order_id: 1,
@@ -1397,7 +1400,7 @@ impl App {
         }
         let next_tick = self.state.current_tick.next();
         let mut rng = rng_for(self.state.room_id, next_tick);
-        let npc_cmds = decide_all_npcs(&self.state, &mut rng, next_tick, self.difficulty);
+        let npc_cmds = decide_all_npcs(&self.state, &mut rng, next_tick, self.difficulty, &mut self.brains);
 
         // İnsan komutları önce (sıra fark etmez ama insan kararını önce
         // göstermek log'da daha okunur).

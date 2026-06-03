@@ -24,6 +24,15 @@ pub struct Weights {
     pub event: f64,
     pub competition: f64,
     pub local_raw_advantage: f64,
+    // ── Brain sinyalleri (Faz 2) ──────────────────────────────────────────────
+    /// PnL trendi: pozitif → kazanıyorsam daha agresif ol.
+    pub pnl_trend: f64,
+    /// Nakit fazlası: pozitif → para varsa yatırım/aksiyon.
+    pub cash_surplus: f64,
+    /// Pazar sahipliği: pozitif → sahip olduğum pazarı koru/genişlet.
+    pub market_ownership: f64,
+    /// Rakip tehdidi: pozitif → rakip varsa agresifleş, negatif → çekil.
+    pub rival_threat: f64,
 }
 
 impl Weights {
@@ -38,6 +47,10 @@ impl Weights {
         event: 0.0,
         competition: 0.0,
         local_raw_advantage: 0.0,
+        pnl_trend: 0.0,
+        cash_surplus: 0.0,
+        market_ownership: 0.0,
+        rival_threat: 0.0,
     };
 }
 
@@ -54,6 +67,10 @@ pub fn score_candidate(inputs: &Inputs, weights: &Weights) -> f64 {
         + g("event") * weights.event
         + g("competition") * weights.competition
         + g("local_raw_advantage") * weights.local_raw_advantage
+        + g("pnl_trend") * weights.pnl_trend
+        + g("cash_surplus") * weights.cash_surplus
+        + g("market_ownership") * weights.market_ownership
+        + g("rival_threat") * weights.rival_threat
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@
 //! aday sırası (enumerate) + skor karşılaştırma. Tie-break ihtimali `(score,
 //! city, product)` lex sırasıyla.
 
+pub mod brain;
 pub mod candidates;
 pub mod difficulty;
 pub mod personality;
@@ -42,6 +43,7 @@ use moneywar_domain::{
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
+pub use brain::{AgentBrain, BrainPool};
 pub use difficulty::BehaviorDifficulty;
 
 use crate::npc_order_id;
@@ -56,6 +58,7 @@ pub fn decide_behavior(
     rng: &mut ChaCha8Rng,
     tick: Tick,
     difficulty: BehaviorDifficulty,
+    brain: Option<&AgentBrain>,
 ) -> Vec<Command> {
     let Some(player) = state.players.get(&pid) else {
         return Vec::new();
@@ -85,7 +88,10 @@ pub fn decide_behavior(
             // akışıyla yarışta sürekli kaybediyordu: Tüccar 90 tick'te 1
             // dispatch atıyordu. Sabit skor onları top-K'da garantili tutar.
             let base_score = if let Some((city, product)) = cand.context() {
-                let inputs = signals::compute_inputs(state, pid, city, product);
+                let mut inputs = signals::compute_inputs(state, pid, city, product);
+                if let Some(b) = brain {
+                    signals::inject_brain_signals(&mut inputs, b, city, product, pid);
+                }
                 scoring::score_candidate(&inputs, &weights)
             } else {
                 match &cand {
@@ -221,6 +227,7 @@ mod tests {
             &mut rng,
             Tick::new(1),
             BehaviorDifficulty::HARD,
+            None,
         );
         assert!(cmds.is_empty());
     }
@@ -239,7 +246,7 @@ mod tests {
         .unwrap();
         s.players.insert(pid, p);
         let mut rng = ChaCha8Rng::from_seed([0u8; 32]);
-        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD);
+        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD, None);
         assert!(cmds.is_empty());
     }
 
@@ -262,7 +269,7 @@ mod tests {
         s.players.insert(pid, p);
 
         let mut rng = ChaCha8Rng::from_seed([42u8; 32]);
-        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD);
+        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD, None);
         assert!(!cmds.is_empty(), "Çiftçi stoğu varsa SELL emit etmeli");
         let Command::SubmitOrder(o) = &cmds[0] else {
             panic!("Çiftçi sadece SubmitOrder emit etmeli");
@@ -287,7 +294,7 @@ mod tests {
         s.players.insert(pid, p);
 
         let mut rng = ChaCha8Rng::from_seed([42u8; 32]);
-        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD);
+        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD, None);
         // Faz B: Tüccar henüz göç etmedi, behavior boş döner.
         assert!(cmds.is_empty());
     }
@@ -310,7 +317,7 @@ mod tests {
             .unwrap();
         s.players.insert(pid, p);
         let mut rng = ChaCha8Rng::from_seed([42u8; 32]);
-        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD);
+        let cmds = decide_behavior(&s, pid, &mut rng, Tick::new(1), BehaviorDifficulty::HARD, None);
         let Command::SubmitOrder(o) = &cmds[0] else {
             panic!()
         };
@@ -342,8 +349,8 @@ mod tests {
 
         let mut r1 = ChaCha8Rng::from_seed([7u8; 32]);
         let mut r2 = ChaCha8Rng::from_seed([7u8; 32]);
-        let a = decide_behavior(&s, pid, &mut r1, Tick::new(5), BehaviorDifficulty::HARD);
-        let b = decide_behavior(&s, pid, &mut r2, Tick::new(5), BehaviorDifficulty::HARD);
+        let a = decide_behavior(&s, pid, &mut r1, Tick::new(5), BehaviorDifficulty::HARD, None);
+        let b = decide_behavior(&s, pid, &mut r2, Tick::new(5), BehaviorDifficulty::HARD, None);
         assert_eq!(a, b);
     }
 }
