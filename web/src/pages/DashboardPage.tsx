@@ -2,6 +2,7 @@
 // Gelecek sayfalar: /analytics, /firms/:id, /market/:product
 
 import { useState } from "react";
+import "../app.css";
 
 import { useGameSocket } from "../hooks/useGameSocket";
 import { SeasonHeader } from "../components/season-header/SeasonHeader";
