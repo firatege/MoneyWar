@@ -87,10 +87,10 @@ pub const CARAVAN_CAPACITY_TUCCAR: u32 = 1200;
 /// Sanayici kervan maliyet tablosu (§10).
 pub const CARAVAN_COSTS_SANAYICI_LIRA: [i64; 3] = [0, 5_000, 10_000];
 
-/// Tüccar kervan maliyet tablosu (§10). Tüccar 4'e kadar alır, ucuz.
-/// Faz F5: [0, 6K, 10K, 15K] → [0, 3K, 6K, 10K]. Daha ucuz filo →
-/// Tüccar daha hızlı 3 caravan kurar, daha çok dağıtım = daha çok kâr.
-pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 4] = [0, 3_000, 6_000, 10_000];
+/// Tüccar kervan maliyet tablosu. Faz 5: 4→3 giriş.
+/// Tablo uzunluğu = doğal üst sınır. 1. bedava, 2. ucuz, 3. pahalı.
+/// 3. kervan ancak sezon erken + bol nakit durumunda alınır (caravan_target).
+pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 3] = [0, 3_000, 10_000];
 
 // =============================================================================
 // Piyasa

@@ -557,7 +557,9 @@ fn caravan_target(player: &Player, state: &GameState, owned_caravans: usize) -> 
         target -= 1;
     }
 
-    target.clamp(1, 4) as usize
+    // Maks = maliyet tablosunun uzunluğu (tablo doğal tavanı belirler).
+    let max = moneywar_domain::balance::CARAVAN_COSTS_TUCCAR_LIRA.len();
+    target.clamp(1, max as i32) as usize
 }
 
 fn affordable_qty(cash: Money, unit_price: Money, want: u32) -> u32 {
