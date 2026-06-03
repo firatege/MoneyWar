@@ -17,7 +17,7 @@ const DEFAULT_PRODUCT = "pamuk";
 const INTRO_SEEN_KEY = "mw_intro_seen";
 
 export default function App() {
-  const { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats } =
+  const { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews } =
     useGameSocket();
   const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
   const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
@@ -46,7 +46,7 @@ export default function App() {
     <div className="app">
       {showHelp && <HelpOverlay onClose={closeHelp} />}
       <SeasonHeader snapshot={snapshot} status={status} onHelp={() => setShowHelp(true)} />
-      <TickerTape snapshot={snapshot} prev={prev} />
+      <TickerTape news={stableNews} />
       <main className="app__grid">
         {/* Sol sütun: sıralama + akış */}
         <div className="app__col app__col--left">

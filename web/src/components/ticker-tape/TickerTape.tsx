@@ -1,10 +1,8 @@
-import type { Snapshot } from "../../types";
-import { buildNews, type NewsItem } from "../../lib/news";
+import type { NewsItem } from "../../hooks/useGameSocket";
 import "./ticker-tape.css";
 
 interface Props {
-  snapshot: Snapshot | null;
-  prev: Snapshot | null;
+  news: NewsItem[];
 }
 
 function Item({ item }: { item: NewsItem }) {
@@ -20,8 +18,7 @@ function Item({ item }: { item: NewsItem }) {
   );
 }
 
-export function TickerTape({ snapshot, prev }: Props) {
-  const news = buildNews(snapshot, prev);
+export function TickerTape({ news }: Props) {
   if (news.length === 0) {
     return <div className="ticker ticker--empty">haber akışı bekleniyor…</div>;
   }

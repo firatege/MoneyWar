@@ -9,9 +9,11 @@ import {
   mergeFeed,
 } from "../lib/derive";
 import type { BucketHistory, MarketPoint, PlayerHistory, PlayerTradeStats } from "../lib/derive";
+import { buildStableNews, TICKER_UPDATE_EVERY, type NewsItem } from "../lib/news";
 
 // Türetme tipleri lib/derive'da yaşar; geri-uyumluluk için yeniden dışa aktar.
 export type { BucketHistory, MarketPoint, PlayerHistory, PlayerTradeStats, PnlPoint } from "../lib/derive";
+export type { NewsItem } from "../lib/news";
 
 /** Reconnect backoff (ms): üstel, tavanlı. */
 const BACKOFF_MS = [500, 1000, 2000, 4000, 6000];
@@ -30,6 +32,8 @@ interface GameSocket {
   bucketHistory: BucketHistory;
   market: MarketPoint[];
   tradeStats: PlayerTradeStats;
+  /** Ticker haberleri — her TICKER_UPDATE_EVERY tick'te bir güncellenir (statik). */
+  stableNews: NewsItem[];
 }
 
 /**
@@ -44,7 +48,9 @@ export function useGameSocket(): GameSocket {
   const [bucketHistory, setBucketHistory] = useState<BucketHistory>({});
   const [market, setMarket] = useState<MarketPoint[]>([]);
   const [tradeStats, setTradeStats] = useState<PlayerTradeStats>({});
+  const [stableNews, setStableNews] = useState<NewsItem[]>([]);
   const [status, setStatus] = useState<ConnStatus>("connecting");
+  const lastNewsTickRef = useRef<number>(-1);
 
   const wsRef = useRef<WebSocket | null>(null);
   const attemptRef = useRef(0);
@@ -68,6 +74,7 @@ export function useGameSocket(): GameSocket {
       setMarket([]);
       setTradeStats({});
       lastFedTick.current = -1;
+      lastNewsTickRef.current = -1;
     }
 
     if (snap.tick === lastFedTick.current) return;
@@ -78,6 +85,12 @@ export function useGameSocket(): GameSocket {
     setBucketHistory((old) => appendBucketHistory(old, snap));
     setMarket((old) => appendMarket(old, computeMarketPoint(snap)));
     setTradeStats((old) => appendTradeStats(old, snap));
+
+    // Ticker: her TICKER_UPDATE_EVERY tick'te bir güncelle.
+    if (snap.tick - lastNewsTickRef.current >= TICKER_UPDATE_EVERY) {
+      lastNewsTickRef.current = snap.tick;
+      setStableNews(buildStableNews(snap));
+    }
   }, []);
 
   const connect = useCallback(() => {
@@ -117,5 +130,5 @@ export function useGameSocket(): GameSocket {
     };
   }, [connect]);
 
-  return { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats };
+  return { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews };
 }

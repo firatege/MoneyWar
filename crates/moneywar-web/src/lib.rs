@@ -12,8 +12,8 @@ pub mod world;
 
 use moneywar_npc::Difficulty;
 
-/// Sezon uzunluğu (tick). 150 tick × 5 sn ≈ 12.5 dk.
-pub const SEASON_TICKS: u32 = 150;
+/// Sezon uzunluğu (tick). 250 tick × 5 sn ≈ 20 dk.
+pub const SEASON_TICKS: u32 = 250;
 /// Tick aralığı (saniye).
 pub const TICK_SECONDS: u64 = 5;
 /// Varsayılan base seed ("MoneyWar" ASCII) — frontend ile aynı oyun dizisi.
