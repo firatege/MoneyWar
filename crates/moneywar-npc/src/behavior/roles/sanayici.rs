@@ -216,7 +216,34 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             }
         };
         let stock_floor = scale_pct(reference, stock_floor_pct);
-        let policy = CrossPolicy::Passive;
+        // Faz 4: Rakip bu bucket'ta aktifse cross — altına fiyatla ez.
+        // rivalry_score: kitaptaki rakip sell qty / kendi sell qty.
+        let rival_sell: u32 = state
+            .order_book
+            .get(&(city, product))
+            .map_or(0, |orders| {
+                orders
+                    .iter()
+                    .filter(|o| o.side == OrderSide::Sell && o.player != player.id)
+                    .map(|o| o.quantity)
+                    .sum()
+            });
+        let my_sell: u32 = state
+            .order_book
+            .get(&(city, product))
+            .map_or(0, |orders| {
+                orders
+                    .iter()
+                    .filter(|o| o.side == OrderSide::Sell && o.player == player.id)
+                    .map(|o| o.quantity)
+                    .sum()
+            });
+        // Rakip benden fazla satıyorsa → cross (altına gir, ezmeye çalış).
+        let policy = if rival_sell > my_sell.saturating_add(5) {
+            CrossPolicy::Cross
+        } else {
+            CrossPolicy::Passive
+        };
         let Some(unit_price) = marketable_ask(
             state,
             player.id,

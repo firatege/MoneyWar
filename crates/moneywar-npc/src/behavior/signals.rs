@@ -192,6 +192,34 @@ pub fn inject_brain_signals(
     inputs.insert("market_ownership", brain.ownership_of(city, product));
     inputs.insert("rival_threat", brain.rival_threat_for(city, product, player_id));
 
+    // ── Faz 4: bucket hâkimiyeti ─────────────────────────────────────────────
+    // Ben bu bucket'ta sell hacminin ne kadarını oluşturuyorum?
+    // >0.5 → hâkimim, <0.5 → rakip daha fazla, 0 → ben yoğum.
+    let dominance = {
+        let my_sell: u32 = state
+            .order_book
+            .get(&(city, product))
+            .map_or(0, |orders| {
+                orders
+                    .iter()
+                    .filter(|o| o.player == player_id && o.side == moneywar_domain::OrderSide::Sell)
+                    .map(|o| o.quantity)
+                    .sum()
+            });
+        let total_sell: u32 = state
+            .order_book
+            .get(&(city, product))
+            .map_or(0, |orders| {
+                orders
+                    .iter()
+                    .filter(|o| o.side == moneywar_domain::OrderSide::Sell)
+                    .map(|o| o.quantity)
+                    .sum()
+            });
+        if total_sell == 0 { 0.5 } else { (my_sell as f64 / total_sell as f64).clamp(0.0, 1.0) }
+    };
+    inputs.insert("bucket_dominance", dominance);
+
     // ── Faz 3: beklenti kenarı ────────────────────────────────────────────────
     // Anlık fiyat beklentinin altındaysa → "ucuz, al" (edge > 0.5).
     // Anlık fiyat beklentinin üstündeyse → "pahalı, sat" (edge < 0.5).

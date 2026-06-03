@@ -101,8 +101,10 @@ const fn ciftci_default() -> Weights {
         cash_surplus: -0.2, // nakit azsa sat
         pnl_trend: 0.2,     // kazanıyorsa fiyatı biraz koru
         rival_threat: -0.1,
-        // Faz 3: mahsul ucuzsa sat (ucuz gördüğünde agresif)
+        // Faz 3: mahsul ucuzsa sat
         expected_edge: 0.4,
+        // Faz 4: kendi mahsulüm gelen bucket'a öncelik ver (ikinci Çiftçi girerse)
+        bucket_dominance: 0.2,
         ..Weights::ZERO
     }
 }
@@ -131,6 +133,9 @@ const fn sanayici_default() -> Weights {
         rival_threat: 0.3,
         // Faz 3: anlık fiyat beklentinin altındaysa hammadde al / mamul üret
         expected_edge: 0.5,
+        // Faz 4: kendi bucket'ımı güçlendir, rakip girince çıktıyı artır.
+        // +0.6: hâkimsem oraya yığ; 0'sa rakip hâkim → kaç (negatif katkı).
+        bucket_dominance: 0.6,
         ..Weights::ZERO
     }
 }
@@ -154,8 +159,10 @@ const fn spekulator_default() -> Weights {
         cash_surplus: 0.3,     // nakit varsa pozisyon aç
         market_ownership: -0.2, // zaten sahip olduğum yer → çeşitlen
         rival_threat: -0.3,
-        // Faz 3: anlık ucuzsa pozisyon al (spekülatörün ana işi bu)
+        // Faz 3: anlık ucuzsa pozisyon al
         expected_edge: 0.7,
+        // Faz 4: hâkim olduğum bucket'tan çekil (çeşitlen), rakip dolu → başka yer
+        bucket_dominance: -0.3,
         ..Weights::ZERO
     }
 }
@@ -180,6 +187,8 @@ const fn tuccar_default() -> Weights {
         rival_threat: -0.4,
         // Faz 3: ucuz mal olan rotaya git
         expected_edge: 0.4,
+        // Faz 4: hâkimsem o rotayı koru, hâkim değilsem kaç (rakibin rutasından)
+        bucket_dominance: 0.4,
         ..Weights::ZERO
     }
 }
@@ -207,6 +216,7 @@ const fn esnaf_default() -> Weights {
         market_ownership: 0.3,
         rival_threat: -0.2,
         expected_edge: 0.3,
+        bucket_dominance: 0.2,
         ..Weights::ZERO
     }
 }
@@ -232,8 +242,10 @@ const fn alici_default() -> Weights {
         cash_surplus: 0.4,     // nakit varsa stok yap
         market_ownership: 0.4, // sürekli aldığım bucket'a sadık kal
         rival_threat: -0.1,
-        // Faz 3: ucuz mal gördüğünde al (alıcı zaten bunu yapmalı)
+        // Faz 3: ucuz mal gördüğünde al
         expected_edge: 0.5,
+        // Faz 4: güvenilir tedarikçi bucket'ı → oraya sadık kal
+        bucket_dominance: 0.3,
         ..Weights::ZERO
     }
 }
