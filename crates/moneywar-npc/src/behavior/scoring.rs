@@ -36,8 +36,10 @@ pub struct Weights {
     /// Beklenti kenarı: >0.5 → anlık ucuz (al fırsatı), <0.5 → pahalı (sat).
     pub expected_edge: f64,
     /// Bucket hâkimiyeti: >0.5 = ben hâkimim, <0.5 = rakip hâkim.
-    /// Pozitif → sahip olduğum yeri güçlendir. Negatif → rakipten kaç.
     pub bucket_dominance: f64,
+    /// Hedef uyumu: mevcut Goal'la ne kadar örtüşüyor (Faz 5).
+    /// Yüksek pozitif = bu bucket hedefe uygun → agresif. Düşük = ilgisiz.
+    pub goal_alignment: f64,
 }
 
 impl Weights {
@@ -58,6 +60,7 @@ impl Weights {
         rival_threat: 0.0,
         expected_edge: 0.0,
         bucket_dominance: 0.0,
+        goal_alignment: 0.0,
     };
 }
 
@@ -80,6 +83,7 @@ pub fn score_candidate(inputs: &Inputs, weights: &Weights) -> f64 {
         + g("rival_threat") * weights.rival_threat
         + g("expected_edge") * weights.expected_edge
         + g("bucket_dominance") * weights.bucket_dominance
+        + g("goal_alignment") * weights.goal_alignment
 }
 
 #[cfg(test)]

@@ -103,8 +103,9 @@ const fn ciftci_default() -> Weights {
         rival_threat: -0.1,
         // Faz 3: mahsul ucuzsa sat
         expected_edge: 0.4,
-        // Faz 4: kendi mahsulüm gelen bucket'a öncelik ver (ikinci Çiftçi girerse)
         bucket_dominance: 0.2,
+        // Faz 5: hedef bucket'a öncelik ver
+        goal_alignment: 0.4,
         ..Weights::ZERO
     }
 }
@@ -133,9 +134,9 @@ const fn sanayici_default() -> Weights {
         rival_threat: 0.3,
         // Faz 3: anlık fiyat beklentinin altındaysa hammadde al / mamul üret
         expected_edge: 0.5,
-        // Faz 4: kendi bucket'ımı güçlendir, rakip girince çıktıyı artır.
-        // +0.6: hâkimsem oraya yığ; 0'sa rakip hâkim → kaç (negatif katkı).
         bucket_dominance: 0.6,
+        // Faz 5: en önemli sinyal — sanayici hedef bucket'ta odaklanır
+        goal_alignment: 0.8,
         ..Weights::ZERO
     }
 }
@@ -161,8 +162,9 @@ const fn spekulator_default() -> Weights {
         rival_threat: -0.3,
         // Faz 3: anlık ucuzsa pozisyon al
         expected_edge: 0.7,
-        // Faz 4: hâkim olduğum bucket'tan çekil (çeşitlen), rakip dolu → başka yer
         bucket_dominance: -0.3,
+        // Faz 5: hedef uyumunu da çeşitlendir (Expand'de yeni yer ara)
+        goal_alignment: 0.5,
         ..Weights::ZERO
     }
 }
@@ -187,8 +189,9 @@ const fn tuccar_default() -> Weights {
         rival_threat: -0.4,
         // Faz 3: ucuz mal olan rotaya git
         expected_edge: 0.4,
-        // Faz 4: hâkimsem o rotayı koru, hâkim değilsem kaç (rakibin rutasından)
         bucket_dominance: 0.4,
+        // Faz 5: rotasını sahiplen (Corner/Consolidate'te yüksek)
+        goal_alignment: 0.6,
         ..Weights::ZERO
     }
 }
@@ -217,6 +220,7 @@ const fn esnaf_default() -> Weights {
         rival_threat: -0.2,
         expected_edge: 0.3,
         bucket_dominance: 0.2,
+        goal_alignment: 0.4,
         ..Weights::ZERO
     }
 }
@@ -244,8 +248,9 @@ const fn alici_default() -> Weights {
         rival_threat: -0.1,
         // Faz 3: ucuz mal gördüğünde al
         expected_edge: 0.5,
-        // Faz 4: güvenilir tedarikçi bucket'ı → oraya sadık kal
         bucket_dominance: 0.3,
+        // Faz 5: alıcı Corner/Consolidate'te sadık kaynaktan alır
+        goal_alignment: 0.5,
         ..Weights::ZERO
     }
 }

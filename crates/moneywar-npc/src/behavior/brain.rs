@@ -7,13 +7,17 @@
 //!   2. `inject_brain_signals` — sinyalleri inputs map'ine ekle
 //!   3. `decide_behavior` normal skor hesabını yapar, beyin sinyalleri dahil
 //!
-//! ## Faz 3 eklemeleri
+//! ## Faz 3 — Beklenti + sınırlı rasyonellik
 //!
-//! - **Fiyat beklentisi (EWMA):** brain geçmişten beklediği fiyatı öğrenir;
-//!   `expected_edge` sinyali anlık fiyatın beklentinin ne kadar altında/üstünde
-//!   olduğunu gösterir → öngörülü al/sat kararı.
-//! - **Skill noise:** kazanan ajan güveniyle keskin kararlar (az gürültü),
-//!   kaybeden panikleyip hata yapar (fazla gürültü) → doğal kartopu.
+//! - **Fiyat beklentisi (EWMA):** brain geçmişten beklediği fiyatı öğrenir.
+//! - **Skill noise:** kazanan keskin, kaybeden panikler.
+//!
+//! ## Faz 5 — Çok-tick strateji (Goal state machine)
+//!
+//! Brain'de kalıcı bir `Goal` yaşar: `Expand | Corner | PriceWar | Consolidate | Retreat`.
+//! Her tick `update_goal()` koşulları değerlendirir ve geçiş yapar.
+//! `goal_alignment` sinyali (0..1): bu (city,product) mevcut hedefle ne kadar uyumlu?
+//! Hedefe uygun bucket'larda aksiyonlar güçlendirilir, uyumsuzlarda zayıflar.
 //!
 //! # Determinizm
 //!
@@ -32,6 +36,33 @@ const PNL_WINDOW: usize = 8;
 const PNL_TREND_REF_CENTS: f64 = 100_000.0; // 1000₺ = 100_000 cent
 /// Cash surplus referans eşiği — bu naditin üstü "harcayacak para var".
 const CASH_SURPLUS_REF: f64 = 40_000.0; // 40K₺
+
+// Goal geçiş eşikleri
+/// Corner hedefi için gereken minimum sahiplik oranı.
+const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.25;
+/// PriceWar başlatmak için rakip tehdidin yeterince yüksek olması.
+const PRICE_WAR_THREAT_THRESHOLD: f64 = 0.3;
+/// Consolidate'ten Expand'e dönmek için gereken nakit fazlası.
+const EXPAND_CASH_THRESHOLD: f64 = 0.7;
+/// Retreat için kritik PnL eşiği.
+const RETREAT_PNL_THRESHOLD: f64 = 0.2;
+/// Retreat'ten çıkış için iyileşme eşiği.
+const RECOVER_PNL_THRESHOLD: f64 = 0.45;
+
+/// Ajan'ın bu an takip ettiği çok-tick strateji.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Goal {
+    /// Yeni pazar veya fabrika aç — büyüme modu.
+    Expand,
+    /// Belirli bir bucket'ı ele geçir — odak modu.
+    Corner { city: CityId, product: ProductKind },
+    /// Rakibi belirli bir bucket'ta ez — savaş modu.
+    PriceWar { city: CityId, product: ProductKind },
+    /// Mevcut pozisyonu güçlendir ve savun — istikrar modu.
+    Consolidate,
+    /// Zararı kes, sermayeyi koru — geri çekilme modu.
+    Retreat,
+}
 /// Fiyat beklentisi EWMA katsayısı (0=donmuş hafıza, 1=anlık).
 /// 0.2 → ~5 tick gecikmeli beklenti; ani şoklara aşırı tepki vermez.
 const BELIEF_ALPHA: f64 = 0.2;
@@ -55,6 +86,12 @@ pub struct AgentBrain {
     /// EWMA fiyat beklentisi (lira) — geçmişten öğrenilen "adil fiyat" tahmini.
     pub price_beliefs: BTreeMap<(CityId, ProductKind), f64>,
 
+    // ── Faz 5: çok-tick strateji ─────────────────────────────────────────────
+    /// Mevcut stratejik hedef.
+    pub goal: Goal,
+    /// Hedefe kaç tick'tir devam ediliyor (geçiş hızını kontrol eder).
+    goal_age: u32,
+
     // -- İç izleme (dışarıya kapalı) --
     prev_pnl_cents: i64,
     pnl_deltas: VecDeque<i64>,
@@ -68,6 +105,8 @@ impl Default for AgentBrain {
             market_ownership: BTreeMap::new(),
             rival_threat: BTreeMap::new(),
             price_beliefs: BTreeMap::new(),
+            goal: Goal::Expand,
+            goal_age: 0,
             prev_pnl_cents: 0,
             pnl_deltas: VecDeque::with_capacity(PNL_WINDOW + 1),
         }
@@ -83,6 +122,49 @@ impl AgentBrain {
         self.update_market_ownership(state, player_id);
         self.update_rival_threat(state, player_id);
         self.update_price_beliefs(state);
+        self.update_goal(player_id);
+    }
+
+    /// Bu (city, product) mevcut hedefle ne kadar uyumlu? [0..1].
+    /// 1.0 = hedefin tam merkezinde, 0.0 = hedefle ilgisiz.
+    #[must_use]
+    pub fn goal_alignment(&self, city: CityId, product: ProductKind) -> f64 {
+        match &self.goal {
+            Goal::Expand => {
+                // Expand: az sahip olduğum bucket'lar (yeni pazar açmak için).
+                let ownership = self.ownership_of(city, product);
+                if ownership < 0.1 { 0.8 } else { 0.3 }
+            }
+            Goal::Corner { city: tc, product: tp } => {
+                // Corner: sadece hedef bucket maksimum, diğerleri düşük.
+                if city == *tc && product == *tp { 1.0 } else { 0.1 }
+            }
+            Goal::PriceWar { city: tc, product: tp } => {
+                // PriceWar: hedef bucket'ta çok agresif.
+                if city == *tc && product == *tp { 1.0 } else { 0.2 }
+            }
+            Goal::Consolidate => {
+                // Consolidate: sahip olduklarımı koru.
+                let ownership = self.ownership_of(city, product);
+                (ownership * 1.5).clamp(0.0, 1.0)
+            }
+            Goal::Retreat => {
+                // Retreat: tüm genişleme bastırılır.
+                0.1
+            }
+        }
+    }
+
+    /// Mevcut hedefin kısa etiketi (log/debug için).
+    #[must_use]
+    pub fn goal_label(&self) -> &'static str {
+        match &self.goal {
+            Goal::Expand => "EXPAND",
+            Goal::Corner { .. } => "CORNER",
+            Goal::PriceWar { .. } => "PRICE_WAR",
+            Goal::Consolidate => "CONSOLIDATE",
+            Goal::Retreat => "RETREAT",
+        }
     }
 
     /// Bu (city, product) için beklenen fiyat (lira). Hiç görülmediyse 0.
@@ -175,6 +257,102 @@ impl AgentBrain {
                 }
             }
         }
+    }
+
+    /// Goal state machine geçişleri — deterministik.
+    fn update_goal(&mut self, _player_id: PlayerId) {
+        self.goal_age += 1;
+        // Minimum hedef süresi: gereksiz titreşimi önle.
+        const MIN_GOAL_TICKS: u32 = 5;
+        if self.goal_age < MIN_GOAL_TICKS {
+            return;
+        }
+
+        let new_goal = match &self.goal {
+            Goal::Retreat => {
+                // İyileşiyorsa çıkış: Consolidate.
+                if self.pnl_trend > RECOVER_PNL_THRESHOLD {
+                    Some(Goal::Consolidate)
+                } else {
+                    None
+                }
+            }
+            Goal::Expand => {
+                // Kritik durumda geri çekil.
+                if self.pnl_trend < RETREAT_PNL_THRESHOLD && self.cash_surplus < 0.1 {
+                    return self.transition(Goal::Retreat);
+                }
+                // Bir bucket'ta baskın pozisyon kazandıysam → Corner.
+                if let Some((city, product)) = self.strongest_owned_bucket() {
+                    if self.ownership_of(city, product) >= CORNER_OWNERSHIP_THRESHOLD {
+                        Some(Goal::Corner { city, product })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            Goal::Corner { city, product } => {
+                let (c, p) = (*city, *product);
+                if self.pnl_trend < RETREAT_PNL_THRESHOLD {
+                    return self.transition(Goal::Retreat);
+                }
+                // Rakip tehdidi yüksekse → PriceWar.
+                let threat = self.rival_threat_for(c, p, _player_id);
+                if threat > PRICE_WAR_THREAT_THRESHOLD {
+                    Some(Goal::PriceWar { city: c, product: p })
+                // Pekiştirildiyse (yüksek sahiplik) → Consolidate.
+                } else if self.ownership_of(c, p) > 0.6 {
+                    Some(Goal::Consolidate)
+                } else {
+                    None
+                }
+            }
+            Goal::PriceWar { city, product } => {
+                let (c, p) = (*city, *product);
+                // Kazanıyorsam → Consolidate.
+                if self.pnl_trend > 0.65 {
+                    Some(Goal::Consolidate)
+                // Kaybediyorsam → Retreat.
+                } else if self.pnl_trend < RETREAT_PNL_THRESHOLD {
+                    Some(Goal::Retreat)
+                // Rakip gitti → Corner'a dön.
+                } else if self.rival_threat_for(c, p, _player_id) < 0.1 {
+                    Some(Goal::Corner { city: c, product: p })
+                } else {
+                    None
+                }
+            }
+            Goal::Consolidate => {
+                if self.pnl_trend < RETREAT_PNL_THRESHOLD {
+                    return self.transition(Goal::Retreat);
+                }
+                // Bol nakit + iyiydim → Expand.
+                if self.cash_surplus > EXPAND_CASH_THRESHOLD && self.pnl_trend > 0.6 {
+                    Some(Goal::Expand)
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(next) = new_goal {
+            self.transition(next);
+        }
+    }
+
+    fn transition(&mut self, new_goal: Goal) {
+        self.goal = new_goal;
+        self.goal_age = 0;
+    }
+
+    /// En güçlü sahip olunan bucket (market_ownership en yüksek).
+    fn strongest_owned_bucket(&self) -> Option<(CityId, ProductKind)> {
+        self.market_ownership
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(k, _)| *k)
     }
 
     fn update_price_beliefs(&mut self, state: &GameState) {

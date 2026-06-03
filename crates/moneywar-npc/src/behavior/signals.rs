@@ -220,6 +220,9 @@ pub fn inject_brain_signals(
     };
     inputs.insert("bucket_dominance", dominance);
 
+    // ── Faz 5: hedef uyumu ───────────────────────────────────────────────────
+    inputs.insert("goal_alignment", brain.goal_alignment(city, product));
+
     // ── Faz 3: beklenti kenarı ────────────────────────────────────────────────
     // Anlık fiyat beklentinin altındaysa → "ucuz, al" (edge > 0.5).
     // Anlık fiyat beklentinin üstündeyse → "pahalı, sat" (edge < 0.5).
