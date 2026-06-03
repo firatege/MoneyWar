@@ -49,7 +49,8 @@ export function MarketOverview({ market, snapshot }: Props) {
           <div className="mo__block-label">
             İŞLEM HACMİ <span className="mo__block-note">tick başına eşleşen birim</span>
           </div>
-          <TrendChart points={volumePoints} baseline={0} emptyText="hacim birikiyor…" />
+          {/* baseline=-1: hacim her zaman baseline'ın üstünde → hep yeşil */}
+          <TrendChart points={volumePoints} baseline={-1} emptyText="hacim birikiyor…" />
         </div>
       </div>
     </div>

@@ -55,7 +55,14 @@ export function TrendChart({ points, baseline, emptyText = "veri bekleniyor…" 
       rightPriceScale: { borderColor: "rgba(55,57,66,0.5)" },
       timeScale: {
         borderColor: "rgba(55,57,66,0.5)",
+        // Tick numarasını göster — lightweight-charts tarih formatını bypass et.
         tickMarkFormatter: (t: UTCTimestamp) => `t${t}`,
+        timeVisible: false,
+        secondsVisible: false,
+      },
+      localization: {
+        // Tarih yerine tick etiketini kullan.
+        timeFormatter: (t: UTCTimestamp) => `tick ${t}`,
       },
       width: el.clientWidth,
       height: el.clientHeight,

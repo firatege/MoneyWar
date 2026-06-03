@@ -65,7 +65,7 @@
   padding: 0.45rem var(--pad-panel) 0.2rem;
 }
 .mo__block--index {
-  flex: 1.5;
+  flex: 1;
   border-bottom: 1px solid var(--line);
 }
 .mo__block--volume {

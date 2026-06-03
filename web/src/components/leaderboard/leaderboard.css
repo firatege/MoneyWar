@@ -93,6 +93,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0; /* flex/grid truncate fix */
 }
 
 .lb__pnl {
