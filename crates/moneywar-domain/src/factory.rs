@@ -210,9 +210,12 @@ mod tests {
         assert_eq!(Factory::build_cost(2), Money::from_lira(10_000).unwrap());
         assert_eq!(Factory::build_cost(3), Money::from_lira(18_000).unwrap());
         assert_eq!(Factory::build_cost(4), Money::from_lira(30_000).unwrap());
-        // 5+ hep son tablo değeri
-        assert_eq!(Factory::build_cost(5), Money::from_lira(30_000).unwrap());
-        assert_eq!(Factory::build_cost(10), Money::from_lira(30_000).unwrap());
+        // Faz 1: tablo 9 giriş (0–8), 5–8 yeni basamaklar
+        assert_eq!(Factory::build_cost(5), Money::from_lira(44_000).unwrap());
+        assert_eq!(Factory::build_cost(8), Money::from_lira(90_000).unwrap());
+        // 9+ hep son tablo değeri (90K)
+        assert_eq!(Factory::build_cost(9), Money::from_lira(90_000).unwrap());
+        assert_eq!(Factory::build_cost(20), Money::from_lira(90_000).unwrap());
     }
 
     #[test]

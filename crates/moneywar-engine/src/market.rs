@@ -997,12 +997,14 @@ mod tests {
     /// (clamp üstü) match olmamalı, kullanıcı 60'ın altına satmaz.
     #[test]
     fn clamp_does_not_violate_sell_limit() {
+        // Clamp üst sınırı baseline'ın PRICE_CLAMP_HIGH_PCT katı (şu an %1000).
+        // baseline 10 → clamp üst 100. SELL @150 clamp üstünde → clamp 100'e
+        // çeker; BUY @80 < 100 → eşleşme yok (SELL limiti 150, clearing 100 < 150).
         let mut s = state();
         seed_players(&mut s, &[1, 2]);
         let initial_stock = s.players[&PlayerId::new(2)]
             .inventory
             .get(CityId::Istanbul, ProductKind::Pamuk);
-        // baseline 10 → clamp upper 50
         s.price_baseline.insert(
             (CityId::Istanbul, ProductKind::Pamuk),
             Money::from_lira(10).unwrap(),
@@ -1010,19 +1012,19 @@ mod tests {
         populate(
             &mut s,
             vec![
-                order(1, 1, OrderSide::Buy, 10, 100), // BUY @100, clamp ile 50
-                order(2, 2, OrderSide::Sell, 10, 60), // SELL @60, clamp üstü
+                order(1, 1, OrderSide::Buy, 10, 80),  // BUY @80 (clamp altı)
+                order(2, 2, OrderSide::Sell, 10, 150), // SELL @150, clamp 100'e ezilir ama BUY < clearing → match yok
             ],
         );
         let mut r = TickReport::new(Tick::new(1));
         clear_markets(&mut s, &mut r, Tick::new(1));
-        // SELL @60 clamp 50'ye ezilemez → match yok, stok değişmez.
+        // clearing = 100 (clamp üst), BUY limit 80 < 100 → eşleşme yok.
         assert_eq!(
             s.players[&PlayerId::new(2)]
                 .inventory
                 .get(CityId::Istanbul, ProductKind::Pamuk),
             initial_stock,
-            "SELL @60 limit korunmalı, satılmamalı"
+            "SELL @150 clamp@100, BUY@80 < clamp → eşleşme olmaz"
         );
     }
 

@@ -58,11 +58,13 @@ pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 // =============================================================================
 
 /// Kurulum maliyet tablosu — `existing_count` index'i ile oku.
-/// İlk fabrika bedava, sonra artan maliyet.
-/// Sanayici `PnL` -28K — fab kuruluş 23K cash sink + ham maliyet > kâr.
-/// Tablo [8K,15K,25K,40K] → [4K,10K,18K,30K]: 3 fab kuruluş 14K (eski 23K),
-/// kalan 9K cash ham bütçesinde değerlendirilir, Sanayici kârlı işletme yapar.
-pub const FACTORY_BUILD_COSTS_LIRA: [i64; 5] = [0, 4_000, 10_000, 18_000, 30_000];
+/// İlk fabrika bedava, sonra artan maliyet. Faz 1: 5→9 giriş (TARGET=8).
+/// 4→8: Sanayici kârından finanse ederek büyüsün; 5–8 pahalı → monopol
+/// sıyrılmak için kâr üretmek gerekir (serbest para ile spam önlenir).
+pub const FACTORY_BUILD_COSTS_LIRA: [i64; 9] = [
+    0, 4_000, 10_000, 18_000, 30_000,   // 0–4: eski tablo (korundu)
+    44_000, 60_000, 78_000, 90_000,     // 5–8: yeni basamaklar
+];
 
 // =============================================================================
 // Kervan
@@ -121,12 +123,9 @@ pub const TRANSACTION_TAX_PCT: i64 = 2;
 pub const PRICE_CLAMP_LOW_PCT: i64 = 10;
 
 /// Clearing fiyat clamp üst sınırı — taban fiyatın yüzdesi.
-/// Fiyat tabanın %500'ünün üstüne çıkamaz. Talep patlamasında manyak tavanları
-/// engeller, geri kalan emirlerin gerçek piyasa fiyatına gitmesine izin verir.
-/// v0.5.1: %175 → %500. Walras baseline 23 olsa bile clearing 50-100 alanında
-/// rahat hareket eder. clamp_does_not_violate_sell_limit fix'i kullanıcı
-/// limit'lerini zaten koruyor; clamp sadece kötü-niyet için.
-pub const PRICE_CLAMP_HIGH_PCT: i64 = 500;
+/// Faz 1: %500 → %1000. Fiyat savaşı + monopol dinamiği için daha geniş bant;
+/// bir firma piyasayı köşeye sıkıştırırsa fiyat gerçek talebi yansıtsın.
+pub const PRICE_CLAMP_HIGH_PCT: i64 = 1000;
 
 // =============================================================================
 // Haber (4-tier abonelik, recurring tick fee)
@@ -304,7 +303,7 @@ mod tests {
 
     #[test]
     fn factory_cost_table_has_entries() {
-        assert_eq!(FACTORY_BUILD_COSTS_LIRA.len(), 5);
+        assert_eq!(FACTORY_BUILD_COSTS_LIRA.len(), 9); // Faz 1: 0–8 basamak
         assert_eq!(FACTORY_BUILD_COSTS_LIRA[0], 0); // starter bedava
         assert!(FACTORY_BUILD_COSTS_LIRA.windows(2).all(|w| w[0] <= w[1]));
     }

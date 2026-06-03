@@ -25,10 +25,12 @@ use moneywar_domain::{
 use crate::behavior::candidates::ActionCandidate;
 use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
 
-/// Yeni fabrika kurma eşiği. 5 şehir × 3 mamul = 15 slot, 3 Sanayici × 4 = 12
-/// = %80 kapsama. TARGET=5 denendi: 62K fab maliyeti 50K başlangıç nakit ile
-/// karşılanamıyor → Sanayici iflas. TARGET=4 ile maliyet 32K, sürdürülebilir.
-const TARGET_FACTORIES: usize = 4;
+/// Yeni fabrika kurma eşiği. Faz 1: 4→8 (monopolleşme + rekabet dinamiği).
+/// 5 şehir × 3 mamul = 15 slot, 3 Sanayici × 8 = 24 hedef > 15 slot →
+/// sanayiciler slotlar için rekabet eder; biri sıyrılırsa monopol oluşabilir.
+/// Maliyet kontrolü: build_cost tablosu 8 fab'a kadar genişletildi (max 90K),
+/// 50K başlangıç nakdi ilk 4-5 fabrikayı karşılar, sonrası kârdan finanse edilir.
+const TARGET_FACTORIES: usize = 8;
 
 /// Sanayici'nin bu tick için aday listesi.
 #[must_use]
