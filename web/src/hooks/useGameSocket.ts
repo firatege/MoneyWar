@@ -1,44 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConnStatus, FeedItem, Snapshot } from "../types";
+import {
+  appendBucketHistory,
+  appendHistory,
+  appendMarket,
+  computeMarketPoint,
+  mergeFeed,
+} from "../lib/derive";
+import type { BucketHistory, MarketPoint, PlayerHistory } from "../lib/derive";
 
-/** Feed tamponu üst sınırı (birikmiş olaylar). */
-const FEED_CAP = 60;
-/** Oyuncu başına PnL geçmişi üst sınırı (tick). */
-const HISTORY_CAP = 90;
-/** Bucket başına sparkline geçmişi üst sınırı (tick). */
-const BUCKET_HIST_CAP = 26;
-/** Genel piyasa serisi üst sınırı (tick). */
-const MARKET_CAP = 90;
+// Türetme tipleri lib/derive'da yaşar; geri-uyumluluk için yeniden dışa aktar.
+export type { BucketHistory, MarketPoint, PlayerHistory, PnlPoint } from "../lib/derive";
+
 /** Reconnect backoff (ms): üstel, tavanlı. */
 const BACKOFF_MS = [500, 1000, 2000, 4000, 6000];
 
 function wsUrl(): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.host}/ws`;
-}
-
-export interface PnlPoint {
-  tick: number;
-  pnl: number;
-}
-
-/** Oyuncu id → bu sezondaki PnL zaman serisi. */
-export type PlayerHistory = Record<number, PnlPoint[]>;
-
-/** Bucket (`city/product`) → kısa fiyat geçmişi (sparkline için). */
-export type BucketHistory = Record<string, number[]>;
-
-/** Tek tick için genel piyasa metrikleri. */
-export interface MarketPoint {
-  tick: number;
-  /** Endeks: tüm bucket'larda ort(last/baseline)×100. 100 = baz. */
-  index: number;
-  /** O tick eşleşen toplam birim (işlem hacmi). */
-  volume: number;
-  /** Ham madde endeksi (sadece ham bucket'lar). */
-  rawIndex: number;
-  /** Mamul endeksi (sadece mamul bucket'lar). */
-  finIndex: number;
 }
 
 interface GameSocket {
@@ -92,76 +71,10 @@ export function useGameSocket(): GameSocket {
     if (snap.tick === lastFedTick.current) return;
     lastFedTick.current = snap.tick;
 
-    // Feed
-    if (snap.recent_events.length > 0) {
-      setFeed((old) => {
-        const fresh: FeedItem[] = snap.recent_events.map((e, i) => ({
-          ...e,
-          key: `${snap.season}-${snap.tick}-${i}`,
-        }));
-        return [...fresh.reverse(), ...old].slice(0, FEED_CAP);
-      });
-    }
-
-    // Oyuncu PnL geçmişi
-    setHistory((old) => {
-      const next: PlayerHistory = { ...old };
-      for (const p of snap.leaderboard) {
-        const series = next[p.id] ?? [];
-        const last = series.at(-1);
-        if (!last || last.tick < snap.tick) {
-          next[p.id] = [...series, { tick: snap.tick, pnl: p.pnl_lira }].slice(
-            -HISTORY_CAP,
-          );
-        }
-      }
-      return next;
-    });
-
-    // Bucket başına fiyat geçmişi (sparkline)
-    setBucketHistory((old) => {
-      const next: BucketHistory = { ...old };
-      for (const c of snap.prices) {
-        if (c.last_lira == null) continue;
-        const key = `${c.city}/${c.product}`;
-        next[key] = [...(next[key] ?? []), c.last_lira].slice(-BUCKET_HIST_CAP);
-      }
-      return next;
-    });
-
-    // Genel piyasa endeksi + hacim
-    setMarket((old) => {
-      let sum = 0;
-      let n = 0;
-      let rawSum = 0;
-      let rawN = 0;
-      let finSum = 0;
-      let finN = 0;
-      for (const c of snap.prices) {
-        if (c.last_lira == null || c.baseline_lira <= 0) continue;
-        const ratio = (c.last_lira / c.baseline_lira) * 100;
-        sum += ratio;
-        n += 1;
-        if (c.is_raw) {
-          rawSum += ratio;
-          rawN += 1;
-        } else {
-          finSum += ratio;
-          finN += 1;
-        }
-      }
-      const volume = snap.recent_events
-        .filter((e) => e.kind === "match")
-        .reduce((s, e) => s + (e.qty ?? 0), 0);
-      const point: MarketPoint = {
-        tick: snap.tick,
-        index: n > 0 ? sum / n : 100,
-        volume,
-        rawIndex: rawN > 0 ? rawSum / rawN : 100,
-        finIndex: finN > 0 ? finSum / finN : 100,
-      };
-      return [...old, point].slice(-MARKET_CAP);
-    });
+    setFeed((old) => mergeFeed(old, snap));
+    setHistory((old) => appendHistory(old, snap));
+    setBucketHistory((old) => appendBucketHistory(old, snap));
+    setMarket((old) => appendMarket(old, computeMarketPoint(snap)));
   }, []);
 
   const connect = useCallback(() => {

@@ -6,7 +6,7 @@
 
 .lb__cols {
   display: grid;
-  grid-template-columns: 3.4rem 3rem 1fr 5.5rem 5rem 4rem;
+  grid-template-columns: 3.4rem 3rem 1fr 5rem 4rem;
   gap: 0.6rem;
   padding: 0.4rem var(--pad-panel);
   font-size: var(--text-xs);
@@ -29,7 +29,7 @@
   all: unset;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: 3.4rem 3rem 1fr 5.5rem 5rem 4rem;
+  grid-template-columns: 3.4rem 3rem 1fr 5rem 4rem;
   gap: 0.6rem;
   align-items: center;
   width: 100%;
@@ -93,11 +93,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.lb__cash {
-  text-align: right;
-  color: var(--text-faint);
 }
 
 .lb__pnl {

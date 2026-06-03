@@ -1,0 +1,128 @@
+// Snapshot akışından türetilen istemci-tarafı durumun saf (yan etkisiz)
+// hesaplamaları. useGameSocket bunları çağırır; testler de doğrudan bunları
+// hedefler — React'e ya da WS'e bağımlılık yok.
+
+import type { FeedItem, Snapshot } from "../types";
+
+/** Feed tamponu üst sınırı (birikmiş olaylar). */
+export const FEED_CAP = 60;
+/** Oyuncu başına PnL geçmişi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
+export const HISTORY_CAP = 150;
+/** Bucket başına sparkline geçmişi üst sınırı (tick). */
+export const BUCKET_HIST_CAP = 26;
+/** Genel piyasa serisi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
+export const MARKET_CAP = 150;
+
+export interface PnlPoint {
+  tick: number;
+  pnl: number;
+}
+
+/** Oyuncu id → bu sezondaki PnL zaman serisi. */
+export type PlayerHistory = Record<number, PnlPoint[]>;
+
+/** Bucket (`city/product`) → kısa fiyat geçmişi (sparkline için). */
+export type BucketHistory = Record<string, number[]>;
+
+/** Tek tick için genel piyasa metrikleri. */
+export interface MarketPoint {
+  tick: number;
+  /** Endeks: tüm bucket'larda ort(last/baseline)×100. 100 = baz. */
+  index: number;
+  /** O tick eşleşen toplam birim (işlem hacmi). */
+  volume: number;
+  /** Ham madde endeksi (sadece ham bucket'lar). */
+  rawIndex: number;
+  /** Mamul endeksi (sadece mamul bucket'lar). */
+  finIndex: number;
+}
+
+/**
+ * Yeni snapshot'ın olaylarını mevcut feed'in başına ekler (en yeni üstte),
+ * `FEED_CAP` ile kırpar. Olay yoksa feed'i olduğu gibi döndürür.
+ */
+export function mergeFeed(old: FeedItem[], snap: Snapshot): FeedItem[] {
+  if (snap.recent_events.length === 0) return old;
+  const fresh: FeedItem[] = snap.recent_events.map((e, i) => ({
+    ...e,
+    key: `${snap.season}-${snap.tick}-${i}`,
+  }));
+  return [...fresh.reverse(), ...old].slice(0, FEED_CAP);
+}
+
+/**
+ * Her oyuncunun PnL serisine bu tick'in noktasını ekler. Aynı tick yeniden
+ * gelirse (duplicate) seriyi büyütmez. `HISTORY_CAP` ile kırpar.
+ */
+export function appendHistory(old: PlayerHistory, snap: Snapshot): PlayerHistory {
+  const next: PlayerHistory = { ...old };
+  for (const p of snap.leaderboard) {
+    const series = next[p.id] ?? [];
+    const last = series.at(-1);
+    if (!last || last.tick < snap.tick) {
+      next[p.id] = [...series, { tick: snap.tick, pnl: p.pnl_lira }].slice(
+        -HISTORY_CAP,
+      );
+    }
+  }
+  return next;
+}
+
+/**
+ * Her bucket'ın (`city/product`) son fiyatını sparkline geçmişine ekler.
+ * `last_lira` boşsa o bucket atlanır. `BUCKET_HIST_CAP` ile kırpar.
+ */
+export function appendBucketHistory(
+  old: BucketHistory,
+  snap: Snapshot,
+): BucketHistory {
+  const next: BucketHistory = { ...old };
+  for (const c of snap.prices) {
+    if (c.last_lira == null) continue;
+    const key = `${c.city}/${c.product}`;
+    next[key] = [...(next[key] ?? []), c.last_lira].slice(-BUCKET_HIST_CAP);
+  }
+  return next;
+}
+
+/**
+ * Bu tick'in genel piyasa metriklerini hesaplar: tüm/ham/mamul fiyat
+ * endeksleri (last/baseline×100 ortalaması) ve eşleşen toplam hacim.
+ * Geçerli bucket yoksa endeksler 100 (baz) döner.
+ */
+export function computeMarketPoint(snap: Snapshot): MarketPoint {
+  let sum = 0;
+  let n = 0;
+  let rawSum = 0;
+  let rawN = 0;
+  let finSum = 0;
+  let finN = 0;
+  for (const c of snap.prices) {
+    if (c.last_lira == null || c.baseline_lira <= 0) continue;
+    const ratio = (c.last_lira / c.baseline_lira) * 100;
+    sum += ratio;
+    n += 1;
+    if (c.is_raw) {
+      rawSum += ratio;
+      rawN += 1;
+    } else {
+      finSum += ratio;
+      finN += 1;
+    }
+  }
+  const volume = snap.recent_events
+    .filter((e) => e.kind === "match")
+    .reduce((s, e) => s + (e.qty ?? 0), 0);
+  return {
+    tick: snap.tick,
+    index: n > 0 ? sum / n : 100,
+    volume,
+    rawIndex: rawN > 0 ? rawSum / rawN : 100,
+    finIndex: finN > 0 ? finSum / finN : 100,
+  };
+}
+
+/** Yeni piyasa noktasını seriye ekler, `MARKET_CAP` ile kırpar. */
+export function appendMarket(old: MarketPoint[], point: MarketPoint): MarketPoint[] {
+  return [...old, point].slice(-MARKET_CAP);
+}

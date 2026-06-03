@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PlayerDto, Snapshot } from "../../types";
-import { lira, signedCompact } from "../../lib/format";
+import { signedCompact } from "../../lib/format";
 import { roleCode, roleColor } from "../../lib/roles";
 import "./leaderboard.css";
 
@@ -39,7 +39,6 @@ export function Leaderboard({ snapshot, prev, selectedId, onSelect }: Props) {
         <span>#</span>
         <span>rol</span>
         <span>oyuncu</span>
-        <span className="lb__r">nakit</span>
         <span className="lb__r">PnL</span>
         <span />
       </div>
@@ -116,7 +115,6 @@ function LeaderRow({
         {roleCode(player.npc_kind)}
       </span>
       <span className="lb__name">{player.name}</span>
-      <span className="lb__cash num">{lira(player.cash_lira)}</span>
       <span className={`lb__pnl lb__pnl--${sign} num`}>{signedCompact(player.pnl_lira)}</span>
       <span className="lb__bar">
         <span className={`lb__bar-fill lb__bar-fill--${sign}`} style={{ width: `${barW}%` }} />
