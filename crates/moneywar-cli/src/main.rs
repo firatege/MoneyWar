@@ -8794,6 +8794,9 @@ fn describe_command_short(cmd: &Command) -> String {
             format!("kontrat geri çek #{}", contract_id.value())
         }
         Command::CreditNpcCash { amount, .. } => format!("npc nakit +{amount}"),
+        Command::DemolishFactory { factory_id, .. } => {
+            format!("fab kapat #{}", factory_id.value())
+        }
     }
 }
 
@@ -8840,6 +8843,9 @@ fn describe_command(cmd: &Command) -> String {
             format!("kontrat iptal: {contract_id}")
         }
         Command::CreditNpcCash { amount, .. } => format!("npc nakit enjeksiyon: {amount}"),
+        Command::DemolishFactory { factory_id, .. } => {
+            format!("fab kapat: {factory_id}")
+        }
     }
 }
 

@@ -265,6 +265,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
+    // 4) Fabrika kapatma — zarar ediyor + fabrika uzun süre atıl kalıyorsa çık.
+    //    Brain'deki pnl_trend bu kararın sinyalini verir ama enumerate
+    //    domain bilgisine eriştiği için doğrudan is_atil + cash kontrolü yapar.
+    out.extend(enumerate_demolish(state, player));
+
     // v8.23: Açık Tüccar kontratlarını tara, fab ihtiyacına uyanı kabul et.
     // Cap: Sanayici aynı anda max 1 aktif buyer kontratı.
     out.extend(enumerate_contract_accepts(state, player, &needed_raws));
@@ -626,6 +631,45 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
 }
 
 /// Tax-aware satın alma qty.
+/// Kapatılabilecek fabrikaları listele.
+///
+/// Kapatma koşulları (her ikisi de gerekli):
+/// 1. Fabrika uzun süredir atıl (IDLE_FACTORY_THRESHOLD × 2 = 20 tick) — ham
+///    madde yetersizliği veya mamul çok ucuz, sürdürülemez üretim.
+/// 2. Nakit kritik (<8K) VEYA PnL son birkaç tickte negatif yönelimli.
+///    (PnL sinyal brain'den gelir ama burada cash vekil olarak kullanılır.)
+///
+/// Tick başına en fazla 1 fabrika kapatılır (fazla çığ etkisi önlenir).
+fn enumerate_demolish(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    const IDLE_CLOSE_TICKS: u32 = moneywar_domain::balance::IDLE_FACTORY_THRESHOLD * 2;
+    const CASH_CRITICAL_LIRA: i64 = 8_000;
+
+    let cash_lira = player.cash.as_cents() / 100;
+    let cash_critical = cash_lira < CASH_CRITICAL_LIRA;
+
+    // Atıl fabrikaları sırala: en uzun atıl → en önce kapat.
+    let mut candidates: Vec<moneywar_domain::FactoryId> = state
+        .factories
+        .values()
+        .filter(|f| f.owner == player.id)
+        .filter(|f| {
+            let idle = f.is_atil(state.current_tick, IDLE_CLOSE_TICKS);
+            idle && cash_critical
+        })
+        .map(|f| f.id)
+        .collect();
+
+    // Deterministik sıra (FactoryId azalan — en eski fab önce).
+    candidates.sort_unstable();
+
+    // Tick başına en fazla 1 kapatma önerisi.
+    candidates
+        .into_iter()
+        .take(1)
+        .map(|factory_id| ActionCandidate::DemolishFactory { factory_id })
+        .collect()
+}
+
 fn affordable_qty(cash: Money, unit_price: Money, want: u32) -> u32 {
     let unit_with_tax = unit_price
         .as_cents()

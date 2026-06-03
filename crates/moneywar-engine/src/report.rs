@@ -181,6 +181,29 @@ impl LogEntry {
         }
     }
 
+    /// Fabrika kapatıldı.
+    #[must_use]
+    pub fn factory_demolished(
+        tick: Tick,
+        owner: PlayerId,
+        factory_id: FactoryId,
+        city: CityId,
+        product: ProductKind,
+        refund: Money,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(owner),
+            event: LogEvent::FactoryDemolished {
+                factory_id,
+                owner,
+                city,
+                product,
+                refund,
+            },
+        }
+    }
+
     /// Fabrika yeni bir batch başlattı (ham madde tüketildi).
     #[must_use]
     pub fn production_started(
@@ -760,6 +783,15 @@ pub enum LogEvent {
         city: CityId,
         product: ProductKind,
         cost: Money,
+    },
+
+    /// Fabrika kapatıldı; kısmi nakit geri ödemesi yapıldı.
+    FactoryDemolished {
+        factory_id: FactoryId,
+        owner: PlayerId,
+        city: CityId,
+        product: ProductKind,
+        refund: Money,
     },
 
     /// Fabrika bu tick yeni batch başlattı (ham madde consume + timer start).

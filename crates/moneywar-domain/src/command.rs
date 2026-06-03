@@ -76,6 +76,14 @@ pub enum Command {
     /// Kredi geri öde (Faz 5.5).
     RepayLoan { player: PlayerId, loan_id: LoanId },
 
+    /// Fabrika kapat — geri ödeme nakit olarak alınır.
+    /// Sadece Sanayici, sadece kendi fabrikası. Üretim bekleyen fabrika da
+    /// kapatılabilir (yarım batch fire olur).
+    DemolishFactory {
+        owner: PlayerId,
+        factory_id: crate::FactoryId,
+    },
+
     /// NPC'nin kendi nakdine periyodik enjeksiyon. Talep döngüsü
     /// için `AliciNpc` gibi pure-buyer NPC'ler kullanır. Motor sadece
     /// `is_npc=true` oyuncular için kabul eder; insan oyuncudan gelirse
@@ -93,7 +101,9 @@ impl Command {
             | Self::CancelContractProposal { requester, .. } => *requester,
             Self::ProposeContract(p) => p.seller,
             Self::AcceptContract { acceptor, .. } => *acceptor,
-            Self::BuildFactory { owner, .. } | Self::BuyCaravan { owner, .. } => *owner,
+            Self::BuildFactory { owner, .. }
+            | Self::BuyCaravan { owner, .. }
+            | Self::DemolishFactory { owner, .. } => *owner,
             Self::DispatchCaravan { .. } => {
                 // Dispatch'in sahibi caravan'ın sahibi — motor validate eder.
                 // Burada placeholder: komut engine'e gidince caravan lookup yapılır.

@@ -40,7 +40,11 @@ use crate::{
     },
     market::clear_markets,
     news::process_subscribe_news as subscribe_news_impl,
-    production::{advance_production, process_build_factory as build_factory_impl},
+    production::{
+        advance_production,
+        process_build_factory as build_factory_impl,
+        process_demolish_factory as demolish_factory_impl,
+    },
     report::{LogEntry, TickReport},
     rng::rng_for,
     transport::{
@@ -180,6 +184,9 @@ fn dispatch(
             repay_loan_impl(state, report, tick, *player, *loan_id)
         }
         Command::CreditNpcCash { player, amount } => credit_npc_cash_impl(state, *player, *amount),
+        Command::DemolishFactory { owner, factory_id } => {
+            demolish_factory_impl(state, report, tick, *owner, *factory_id)
+        }
     }
 }
 

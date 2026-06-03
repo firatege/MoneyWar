@@ -14,8 +14,8 @@
 //! üründür zaten, ama semantik olarak net).
 
 use moneywar_domain::{
-    CityId, DomainError, Factory, FactoryBatch, FactoryId, GameState, PlayerId, ProductKind, Role,
-    Tick,
+    CityId, DomainError, Factory, FactoryBatch, FactoryId, GameState, Money, PlayerId,
+    ProductKind, Role, Tick,
 };
 
 use crate::{
@@ -74,6 +74,69 @@ pub(crate) fn process_build_factory(
 
     report.push(LogEntry::factory_built(
         tick, owner, factory_id, city, product, cost,
+    ));
+    Ok(())
+}
+
+/// Geri ödeme yüzdesi: kaçıncı fabrika kapatılıyor.
+/// İlk fabrikalar daha pahalı kuruldu ama daha az geri alınır (hızlı kapatma caydırıcı).
+const DEMOLISH_REFUND_PCT: i64 = 50;
+
+/// `DemolishFactory` komutunu uygula. Sanayici kendi fabrikasını kapatır,
+/// kuruş maliyetinin %50'sini nakit olarak geri alır.
+pub(crate) fn process_demolish_factory(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    owner: PlayerId,
+    factory_id: FactoryId,
+) -> Result<(), EngineError> {
+    // Owner var mı ve Sanayici mi?
+    let player = state.players.get(&owner).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!("player {owner} not found")))
+    })?;
+    if !matches!(player.role, Role::Sanayici) {
+        return Err(EngineError::Domain(DomainError::Validation(
+            "DemolishFactory requires Sanayici role".into(),
+        )));
+    }
+
+    // Fabrika bu kişiye ait mi?
+    let factory = state
+        .factories
+        .get(&factory_id)
+        .ok_or_else(|| {
+            EngineError::Domain(DomainError::Validation(format!(
+                "factory {factory_id} not found"
+            )))
+        })?;
+    if factory.owner != owner {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} is not owned by {owner}"
+        ))));
+    }
+    let city = factory.city;
+    let product = factory.product;
+
+    // Geri ödeme: owner'ın kaçıncı fabrikası olduğunu sayıp o sayıya göre
+    // build_cost'un %50'sini iade et.
+    let owned_before = u32::try_from(
+        state.factories.values().filter(|f| f.owner == owner).count(),
+    )
+    .unwrap_or(1)
+    .saturating_sub(1); // bu fabrika hariç diğerleri
+    let build_cost = Factory::build_cost(owned_before);
+    let refund = Money::from_cents(build_cost.as_cents() * DEMOLISH_REFUND_PCT / 100);
+
+    // Fabrikayı sil.
+    state.factories.remove(&factory_id);
+
+    // Nakit iade.
+    let player_mut = state.players.get_mut(&owner).expect("validated above");
+    player_mut.credit(refund)?;
+
+    report.push(LogEntry::factory_demolished(
+        tick, owner, factory_id, city, product, refund,
     ));
     Ok(())
 }

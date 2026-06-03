@@ -470,6 +470,15 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
                 city.display_name(),
             ),
         ),
+        LogEvent::FactoryDemolished { city, product, owner, .. } => (
+            "factory_demolished",
+            format!(
+                "{} fabrika kapattı · {} / {}",
+                name_of(state, *owner),
+                product.display_name(),
+                city.display_name(),
+            ),
+        ),
         LogEvent::EconomyHarvest { .. } => ("harvest", "Hasat — pazara ham arz".to_string()),
         LogEvent::LoanTaken { borrower, principal, .. } => (
             "loan",
