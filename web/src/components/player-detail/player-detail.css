@@ -3,6 +3,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow-y: auto;  /* içerik taşarsa kayar */
   background: var(--bg);
 }
 .pd__empty {
@@ -93,8 +94,8 @@
 }
 
 .pd__chart-wrap {
-  flex: 1;
-  min-height: 0;
+  height: 120px;   /* sabit — flex:1 çöküyor */
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   padding: 0.5rem var(--pad-panel) 0;
@@ -139,20 +140,20 @@
 .loss-dim { color: var(--loss-dim); }
 
 .pd__assets {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--line-soft);
+  /* flex kolon — her pd__asset-col tam genişlikte alt alta */
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid var(--line);
   flex-shrink: 0;
-  max-height: 32%;
-  overflow: hidden;
+  overflow-y: auto;
+  max-height: 45vh;
 }
 .pd__asset-col {
   background: var(--bg);
-  padding: 0.6rem var(--pad-panel);
-  overflow-y: auto;
+  padding: 0.5rem var(--pad-panel);
+  border-bottom: 1px solid var(--line-soft);
 }
+.pd__asset-col:last-child { border-bottom: none; }
 .pd__asset-title {
   font-size: var(--text-xs);
   letter-spacing: 0.14em;
