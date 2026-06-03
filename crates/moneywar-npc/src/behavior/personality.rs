@@ -106,6 +106,7 @@ const fn ciftci_default() -> Weights {
         bucket_dominance: 0.2,
         // Faz 5: hedef bucket'a öncelik ver
         goal_alignment: 0.4,
+        partner_trust: 0.3,
         ..Weights::ZERO
     }
 }
@@ -137,6 +138,7 @@ const fn sanayici_default() -> Weights {
         bucket_dominance: 0.6,
         // Faz 5: en önemli sinyal — sanayici hedef bucket'ta odaklanır
         goal_alignment: 0.8,
+        partner_trust: 0.4,
         ..Weights::ZERO
     }
 }
@@ -165,6 +167,7 @@ const fn spekulator_default() -> Weights {
         bucket_dominance: -0.3,
         // Faz 5: hedef uyumunu da çeşitlendir (Expand'de yeni yer ara)
         goal_alignment: 0.5,
+        partner_trust: 0.1,
         ..Weights::ZERO
     }
 }
@@ -192,6 +195,7 @@ const fn tuccar_default() -> Weights {
         bucket_dominance: 0.4,
         // Faz 5: rotasını sahiplen (Corner/Consolidate'te yüksek)
         goal_alignment: 0.6,
+        partner_trust: 0.6,
         ..Weights::ZERO
     }
 }
@@ -221,6 +225,7 @@ const fn esnaf_default() -> Weights {
         expected_edge: 0.3,
         bucket_dominance: 0.2,
         goal_alignment: 0.4,
+        partner_trust: 0.4,
         ..Weights::ZERO
     }
 }
@@ -251,6 +256,7 @@ const fn alici_default() -> Weights {
         bucket_dominance: 0.3,
         // Faz 5: alıcı Corner/Consolidate'te sadık kaynaktan alır
         goal_alignment: 0.5,
+        partner_trust: 0.7,
         ..Weights::ZERO
     }
 }

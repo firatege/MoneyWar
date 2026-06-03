@@ -602,6 +602,9 @@ fn settle_segment(
             .expect("inventory overflow on add");
     }
 
+    // İlişki güven birikimi — her başarılı eşleşme iki taraf arasındaki bağı güçlendirir.
+    state.record_trade(fill.buyer, fill.seller, qty);
+
     report.push(LogEntry::order_matched(
         tick,
         city,

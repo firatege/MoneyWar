@@ -40,6 +40,8 @@ pub struct Weights {
     /// Hedef uyumu: mevcut Goal'la ne kadar örtüşüyor (Faz 5).
     /// Yüksek pozitif = bu bucket hedefe uygun → agresif. Düşük = ilgisiz.
     pub goal_alignment: f64,
+    /// Ortak güveni: bu bucket'ta tanıdık/güvenilir biri var mı?
+    pub partner_trust: f64,
 }
 
 impl Weights {
@@ -61,6 +63,7 @@ impl Weights {
         expected_edge: 0.0,
         bucket_dominance: 0.0,
         goal_alignment: 0.0,
+        partner_trust: 0.0,
     };
 }
 
@@ -84,6 +87,7 @@ pub fn score_candidate(inputs: &Inputs, weights: &Weights) -> f64 {
         + g("expected_edge") * weights.expected_edge
         + g("bucket_dominance") * weights.bucket_dominance
         + g("goal_alignment") * weights.goal_alignment
+        + g("partner_trust") * weights.partner_trust
 }
 
 #[cfg(test)]

@@ -125,6 +125,12 @@ pub struct GameState {
     /// Deterministik ID üretimi için sayaçlar. Engine yeni entity kurduğunda bunları artırır.
     pub counters: IdCounters,
 
+    /// Firmalar arası güven/ilişki kaydı — her başarılı eşleşmede artar.
+    /// Anahtar: (küçük id, büyük id) — simetrik ilişki tek girişte.
+    /// NPC'ler güvendikleri tarafa daha iyi fiyat verir / daha agresif işlem yapar.
+    #[serde(default)]
+    pub relationships: BTreeMap<(PlayerId, PlayerId), RelationScore>,
+
     /// v8.20: Patience erosion sayacı — `(player, city, product)` için art arda
     /// match olmadan geçen tick sayısı. Match olduğunda 0'lanır, her clearing'de
     /// match yoksa +1. NPC pricing helper'ları bunu okuyup uyumsuzluk varsa
@@ -154,6 +160,27 @@ pub struct GameState {
     /// (CLI/sim seed) ve sezon boyu sabit kalır.
     #[serde(default)]
     pub price_baseline_initial: BTreeMap<(CityId, ProductKind), Money>,
+}
+
+/// İki aktör arasındaki güven/ilişki puanı.
+/// Her başarılı işlem `trade_count` ve `total_units` artırır.
+/// `trust_score()` [0,1] normalize değer döner — NPC sinyal olarak kullanır.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RelationScore {
+    /// Toplam başarılı işlem sayısı.
+    pub trade_count: u32,
+    /// Toplam işlem hacmi (birim).
+    pub total_units: u64,
+}
+
+impl RelationScore {
+    /// Normalize güven skoru [0,1]. 50 işlemden sonra doyuma ulaşır.
+    #[must_use]
+    pub fn trust_score(self) -> f64 {
+        // log-benzeri doyum: 10 işlem → ~0.5, 50 işlem → ~0.9
+        let x = self.trade_count as f64;
+        (x / (x + 10.0)).clamp(0.0, 1.0)
+    }
 }
 
 /// Patience erosion'in üst sınırı — bu eşikten sonra %15 sabit yumuşama.
@@ -197,11 +224,57 @@ impl GameState {
             city_secondary: BTreeMap::new(),
             city_demand: BTreeMap::new(),
             counters: IdCounters::default(),
+            relationships: BTreeMap::new(),
             no_match_streak: BTreeMap::new(),
             bucket_no_fill_streak: BTreeMap::new(),
 
             market_softener_pct: 0,
             price_baseline_initial: BTreeMap::new(),
+        }
+    }
+
+    /// İki oyuncu arasındaki başarılı işlemi kaydet.
+    pub fn record_trade(&mut self, a: PlayerId, b: PlayerId, units: u32) {
+        let key = if a <= b { (a, b) } else { (b, a) };
+        let rel = self.relationships.entry(key).or_default();
+        rel.trade_count += 1;
+        rel.total_units += u64::from(units);
+    }
+
+    /// İki oyuncu arasındaki güven skoru [0,1]. Hiç işlem yoksa 0.
+    #[must_use]
+    pub fn trust_between(&self, a: PlayerId, b: PlayerId) -> f64 {
+        let key = if a <= b { (a, b) } else { (b, a) };
+        self.relationships
+            .get(&key)
+            .map_or(0.0, |r| r.trust_score())
+    }
+
+    /// Bu bucket'ta belirli bir oyuncunun (karşı taraf) güven ortalaması.
+    /// Benim ID'm `me`, bucket (city, product) içindeki aktif emirlerin sahipleriyle
+    /// ortalama güven. Yüksekse "bu yerde güvendiğim biri var".
+    #[must_use]
+    pub fn avg_trust_in_bucket(
+        &self,
+        me: PlayerId,
+        city: crate::CityId,
+        product: crate::ProductKind,
+    ) -> f64 {
+        let others: Vec<f64> = self
+            .order_book
+            .get(&(city, product))
+            .map(|orders| {
+                orders
+                    .iter()
+                    .filter(|o| o.player != me)
+                    .map(|o| self.trust_between(me, o.player))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if others.is_empty() {
+            0.0
+        } else {
+            others.iter().sum::<f64>() / others.len() as f64
         }
     }
 

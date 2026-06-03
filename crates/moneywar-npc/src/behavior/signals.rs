@@ -192,6 +192,12 @@ pub fn inject_brain_signals(
     inputs.insert("market_ownership", brain.ownership_of(city, product));
     inputs.insert("rival_threat", brain.rival_threat_for(city, product, player_id));
 
+    // ── İlişki güveni ────────────────────────────────────────────────────────
+    // Bu bucket'ta daha önce işlem yaptığım biri var mı?
+    // Yüksekse → güvenilir ortak tanıyorum → daha agresif işlem yap.
+    let trust = state.avg_trust_in_bucket(player_id, city, product);
+    inputs.insert("partner_trust", trust.clamp(0.0, 1.0));
+
     // ── Faz 4: bucket hâkimiyeti ─────────────────────────────────────────────
     // Ben bu bucket'ta sell hacminin ne kadarını oluşturuyorum?
     // >0.5 → hâkimim, <0.5 → rakip daha fazla, 0 → ben yoğum.
