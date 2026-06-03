@@ -683,7 +683,10 @@ fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
         }
         let stock = player.inventory.get(*city, *raw);
         // Stok eşiği: BATCH_SIZE'ın yarısından az → sıkıntı var
-        let threshold = Factory::BATCH_SIZE / 2;
+        // Eşiği yükselt: 2 batch'lik stok yoksa tarla kur.
+        // Eski: BATCH_SIZE/2 = 32 → çok geç kuruyordu.
+        // Yeni: BATCH_SIZE*2 = 130 → proaktif tedarik zinciri.
+        let threshold = Factory::BATCH_SIZE * 2;
         if stock < threshold {
             match best {
                 None => best = Some((*city, *raw, stock)),

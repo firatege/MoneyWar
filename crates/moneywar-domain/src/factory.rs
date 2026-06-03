@@ -242,16 +242,14 @@ mod tests {
     fn build_cost_follows_design_schedule() {
         // balance::FACTORY_BUILD_COSTS_LIRA ile senkron — değiştiğinde test güncelle.
         assert_eq!(Factory::build_cost(0), Money::ZERO);
-        assert_eq!(Factory::build_cost(1), Money::from_lira(4_000).unwrap());
-        assert_eq!(Factory::build_cost(2), Money::from_lira(10_000).unwrap());
-        assert_eq!(Factory::build_cost(3), Money::from_lira(18_000).unwrap());
-        assert_eq!(Factory::build_cost(4), Money::from_lira(30_000).unwrap());
-        // Faz 1: tablo 9 giriş (0–8), 5–8 yeni basamaklar
-        assert_eq!(Factory::build_cost(5), Money::from_lira(44_000).unwrap());
-        assert_eq!(Factory::build_cost(8), Money::from_lira(90_000).unwrap());
-        // 9+ hep son tablo değeri (90K)
-        assert_eq!(Factory::build_cost(9), Money::from_lira(90_000).unwrap());
-        assert_eq!(Factory::build_cost(20), Money::from_lira(90_000).unwrap());
+        assert_eq!(Factory::build_cost(1), Money::from_lira(2_000).unwrap());
+        assert_eq!(Factory::build_cost(2), Money::from_lira(6_000).unwrap());
+        assert_eq!(Factory::build_cost(3), Money::from_lira(12_000).unwrap());
+        assert_eq!(Factory::build_cost(4), Money::from_lira(20_000).unwrap());
+        assert_eq!(Factory::build_cost(5), Money::from_lira(32_000).unwrap());
+        assert_eq!(Factory::build_cost(8), Money::from_lira(78_000).unwrap());
+        assert_eq!(Factory::build_cost(9), Money::from_lira(78_000).unwrap());
+        assert_eq!(Factory::build_cost(20), Money::from_lira(78_000).unwrap());
     }
 
     #[test]

@@ -62,8 +62,8 @@ pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 /// 4→8: Sanayici kârından finanse ederek büyüsün; 5–8 pahalı → monopol
 /// sıyrılmak için kâr üretmek gerekir (serbest para ile spam önlenir).
 pub const FACTORY_BUILD_COSTS_LIRA: [i64; 9] = [
-    0, 4_000, 10_000, 18_000, 30_000,   // 0–4: eski tablo (korundu)
-    44_000, 60_000, 78_000, 90_000,     // 5–8: yeni basamaklar
+    0, 2_000, 6_000, 12_000, 20_000,   // 0–4: %~40 ucuzlatıldı (erken yatırım)
+    32_000, 46_000, 62_000, 78_000,    // 5–8: daha erişilebilir büyüme
 ];
 
 // =============================================================================

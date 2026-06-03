@@ -168,7 +168,7 @@ impl GameBalance {
             // v0.4.1: 10 → 100. User uzun TTL emir verebilsin.
             max_order_ttl: 100,
             cancel_penalty_pct: 2,
-            relist_cooldown_ticks: 2,
+            relist_cooldown_ticks: 3,
             npcs: NpcComposition::default_const(),
         }
     }
@@ -536,7 +536,7 @@ mod tests {
             default_order_ttl: 3,
             max_order_ttl: 10,
             cancel_penalty_pct: 2,
-            relist_cooldown_ticks: 2,
+            relist_cooldown_ticks: 3,
             // Toplam 41 > MAX_NPC=40 → reject.
             npcs: NpcComposition {
                 sanayici: 10,

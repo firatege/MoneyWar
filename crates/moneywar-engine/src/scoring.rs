@@ -304,8 +304,8 @@ mod tests {
     fn factory_value_uses_three_quarters_of_build_cost_and_skips_idle() {
         let mut s = state();
         let pid = add_player(&mut s, 1, Role::Sanayici, 0);
-        // v8.24: 3 fabrika: cost table 0 / 4k / 10k = 14k toplam.
-        // Skor katkı %75 → 10.5k.
+        // Yeni tablo: 3 fabrika 0 / 2k / 6k = 8k toplam.
+        // Skor katkı %75 → 6k.
         for i in 1..=3u64 {
             let fid = moneywar_domain::FactoryId::new(i);
             let mut f = Factory::new(fid, pid, CityId::Istanbul, ProductKind::Kumas).unwrap();
@@ -314,7 +314,7 @@ mod tests {
         }
         s.current_tick = Tick::new(10);
         let sc = score_player(&s, pid);
-        assert_eq!(sc.factory_value, Money::from_lira(10_500).unwrap());
+        assert_eq!(sc.factory_value, Money::from_lira(6_000).unwrap());
     }
 
     #[test]
