@@ -30,7 +30,7 @@ use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
 /// sanayiciler slotlar için rekabet eder; biri sıyrılırsa monopol oluşabilir.
 /// Maliyet kontrolü: build_cost tablosu 8 fab'a kadar genişletildi (max 90K),
 /// 50K başlangıç nakdi ilk 4-5 fabrikayı karşılar, sonrası kârdan finanse edilir.
-const TARGET_FACTORIES: usize = 8;
+const TARGET_FACTORIES: usize = usize::MAX; // sınırsız — kaç kurarsa kursun
 
 /// Sanayici'nin bu tick için aday listesi.
 #[must_use]
@@ -837,31 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn target_factories_reached_no_build() {
-        let mut s = fresh();
-        // TARGET_FACTORIES = 8, yüksek başlangıç nakdiyle tavan sanayici.
-        let p = sanayici(500_000);
-        // 5 şehir × 3 mamul = 15 slot ama TARGET=8; tam 8 fab kuruyoruz.
-        let combos = [(CityId::Istanbul, ProductKind::Kumas),
-                      (CityId::Istanbul, ProductKind::Un),
-                      (CityId::Istanbul, ProductKind::Zeytinyagi),
-                      (CityId::Ankara, ProductKind::Kumas),
-                      (CityId::Ankara, ProductKind::Un),
-                      (CityId::Ankara, ProductKind::Zeytinyagi),
-                      (CityId::Izmir, ProductKind::Kumas),
-                      (CityId::Izmir, ProductKind::Un)];
-        for (i, (city, product)) in combos.iter().enumerate() {
-            let fid = FactoryId::new(i as u64 + 1);
-            let f = Factory::new(fid, p.id, *city, *product).unwrap();
-            s.factories.insert(fid, f);
-        }
-        s.players.insert(p.id, p.clone());
-        let cands = enumerate(&s, &p);
-        let has_build = cands
-            .iter()
-            .any(|c| matches!(c, ActionCandidate::BuildFactory { .. }));
-        assert!(!has_build, "TARGET_FACTORIES sayıda fab varsa Build durur");
-    }
+    // TARGET_FACTORIES sınırsız olduğu için bu test kaldırıldı.
 
     #[test]
     fn no_factory_falls_back_to_specialty_raw() {

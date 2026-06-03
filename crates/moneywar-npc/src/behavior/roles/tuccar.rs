@@ -70,8 +70,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     // Temel: 2. Nakit fazlası yüksekse +1 (bol para → filoya yatır).
     // Sezon ilerlediyse +1 (erken genişle, geç dar kal).
     // Aktif dispatch oranı yüksekse +1 (tüm kervanlar doluysa daha fazla lazım).
-    let target = caravan_target(player, state, owned_caravans);
-    let caravan_cap_reached = owned_caravans >= target;
+    let caravan_cap_reached = false; // sınırsız — nakit ve arbitraj varsa al
     if any_arbitrage && !caravan_cap_reached && next_cost <= cash_reserve_threshold {
         let starting_city = CityId::ALL[owned_caravans % CityId::ALL.len()];
         out.push(ActionCandidate::BuyCaravan { starting_city });
