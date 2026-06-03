@@ -142,17 +142,23 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
 
         for entry in &driver.last_report.entries {
             match &entry.event {
-                LogEvent::OrderMatched {
-                    city,
-                    product,
-                    buyer,
-                    seller,
-                    quantity,
-                    ..
-                } => {
+                LogEvent::OrderMatched { city, product, buyer, seller, quantity, .. } => {
                     matched_fills += 1;
                     matched_qty += u64::from(*quantity);
-                    acc.record_match(*city, *product, *buyer, *seller, *quantity);
+                    let buyer_kind = driver.state.players.get(buyer).and_then(|p| p.npc_kind);
+                    acc.record_match(*city, *product, *buyer, buyer_kind, *seller, *quantity);
+                }
+                LogEvent::ProductionCompleted { factory_id, city, product, units } => {
+                    if let Some(owner) = driver.state.factories.get(factory_id).map(|f| f.owner) {
+                        acc.record_production(*city, *product, owner, *units);
+                    }
+                }
+                LogEvent::CaravanDispatched { from, to, cargo_total, .. } => {
+                    if let Some(owner) = entry.actor {
+                        let owner_kind = driver.state.players.get(&owner).and_then(|p| p.npc_kind);
+                        acc.record_caravan(*from, *to, owner, owner_kind,
+                            u32::try_from(*cargo_total).unwrap_or(u32::MAX));
+                    }
                 }
                 LogEvent::OrderExpired { .. } => expired += 1,
                 LogEvent::CommandRejected { .. } => rejected += 1,
@@ -222,11 +228,59 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
 
     println!("{:-<82}", "");
 
-    // Yoğunlaşma / rekabet metrikleri (Faz 0).
+    // ── SANAYİCİ metrikleri ──────────────────────────────────────────────────
+    println!("\n  SANAYİCİ");
     println!(
-        "\n{:>5}  {:>9}  {:>8}  {:>9}  {:>6}   {}",
-        "oyun", "arz HHI", "top %", "fab HHI", "Gini", "rol PnL (lider→)"
+        "{:>5}  {:>9}  {:>9}  {:>9}  {:>9}   {}",
+        "oyun", "fab HHI", "ürt HHI", "ham HHI", "ürt birim", "fabrika dağılımı"
     );
+    println!("{:-<82}", "");
+    for o in outcomes {
+        let m = &o.metrics;
+        let fab_dist = m
+            .factory_counts
+            .iter()
+            .take(3)
+            .map(|(n, c)| format!("{n}:{c}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let tag = if o.is_frontend { "★" } else { " " };
+        println!(
+            "{tag}{:>4}  {:>9.0}  {:>9.0}  {:>9.0}  {:>9}   {fab_dist}",
+            o.label + 1,
+            m.factory_hhi,
+            m.production_hhi,
+            m.raw_supply_hhi,
+            m.total_produced,
+        );
+    }
+
+    // ── TÜCCAR metrikleri ────────────────────────────────────────────────────
+    println!("\n  TÜCCAR");
+    println!(
+        "{:>5}  {:>9}  {:>9}  {:>9}   {}",
+        "oyun", "kervan HHI", "rota HHI", "taşınan", "en aktif rota"
+    );
+    println!("{:-<82}", "");
+    for o in outcomes {
+        let m = &o.metrics;
+        let top_route = m.top_route.map_or_else(
+            || "—".to_string(),
+            |((from, to), vol)| format!("{} → {} ({})", from.display_name(), to.display_name(), vol),
+        );
+        let tag = if o.is_frontend { "★" } else { " " };
+        println!(
+            "{tag}{:>4}  {:>10.0}  {:>9.0}  {:>9}   {top_route}",
+            o.label + 1,
+            m.caravan_hhi,
+            m.route_dominance_hhi,
+            m.total_caravan_vol,
+        );
+    }
+
+    // ── ORTAK ────────────────────────────────────────────────────────────────
+    println!("\n  ORTAK");
+    println!("{:>5}  {:>6}   {}", "oyun", "Gini", "rol PnL");
     println!("{:-<82}", "");
     for o in outcomes {
         let m = &o.metrics;
@@ -238,29 +292,17 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
             .collect::<Vec<_>>()
             .join(" · ");
         let tag = if o.is_frontend { "★" } else { " " };
-        println!(
-            "{tag}{:>4}  {:>9.0}  {:>7.1}%  {:>9.0}  {:>6.3}   {roles}",
-            o.label + 1,
-            m.supply_hhi,
-            m.top_firm_share,
-            m.factory_hhi,
-            m.wealth_gini,
-        );
+        println!("{tag}{:>4}  {:>6.3}   {roles}", o.label + 1, m.wealth_gini);
     }
     println!("{:-<82}", "");
 
     let total_matched: u64 = outcomes.iter().map(|o| o.matched_qty).sum();
     let ticks = outcomes.first().map_or(0, |o| o.ticks);
     println!(
-        "{} oyun · {} tick/oyun · toplam {} birim eşleşti · {:.2} sn",
-        outcomes.len(),
-        ticks,
-        total_matched,
-        elapsed_s,
+        "\n{} oyun · {} tick/oyun · toplam {} birim eşleşti · {:.2} sn",
+        outcomes.len(), ticks, total_matched, elapsed_s,
     );
-    println!(
-        "HHI: 0–10000 (>2500 yoğun, →10000 monopol) · Gini: 0 eşit → 1 tek elde · ★ = frontend oyunu"
-    );
+    println!("HHI: 0–10000 (>2500 yoğun → 10000 monopol) · Gini: 0 eşit → 1 tek elde · ★ = frontend");
     if let Some(dir) = outcomes.first().and_then(|o| o.log_path.parent()) {
         println!("loglar: {}/game_NN.log", dir.display());
     }

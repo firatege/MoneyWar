@@ -1,19 +1,25 @@
-//! Yoğunlaşma / rekabet metrikleri — emergent monopol ölçümü (Faz 0).
+//! Rol-ayrık yoğunlaşma / rekabet metrikleri — emergent monopol ölçümü (Faz 0+).
 //!
-//! Sim koşumu sırasında eşleşmeler biriktirilir, sonunda `finalize` ile
-//! bucket bazlı arz yoğunlaşması (HHI), en büyük firma payı, fabrika sahipliği
-//! yoğunlaşması, servet eşitsizliği (Gini) ve rol bazlı PnL hesaplanır.
+//! Sanayici ve Tüccar farklı eksenlerden ölçülür:
+//! - Sanayici → üretim hakimiyeti: fab sahipliği HHI, üretim bucket HHI,
+//!   ham madde alım yoğunlaşması, toplam üretilen birim.
+//! - Tüccar → lojistik hakimiyeti: kervan dispatch HHI, şehir-çifti akış
+//!   HHI, taşınan toplam birim.
+//! Ortak metrikler: servet Gini, rol PnL tablosu.
 //!
 //! Saf yardımcılar (`hhi`, `gini`) ayrı tutulur ki test edilebilsin.
 
 use std::collections::BTreeMap;
 
-use moneywar_domain::{CityId, GameState, PlayerId, ProductKind};
+use moneywar_domain::{CityId, GameState, NpcKind, PlayerId, ProductKind};
 use moneywar_engine::leaderboard;
 
+// =============================================================================
+// Saf matematik yardımcıları
+// =============================================================================
+
 /// Pay dağılımından Herfindahl–Hirschman Endeksi (0..10000).
-/// `shares` mutlak değerler (toplama normalize edilir). Tek aktör → 10000
-/// (tam monopol), eşit dağılım → ~10000/n.
+/// Tek aktör → 10000 (tam monopol), n eşit aktör → 10000/n.
 #[must_use]
 pub fn hhi(shares: &[u64]) -> f64 {
     let total: u64 = shares.iter().sum();
@@ -31,8 +37,7 @@ pub fn hhi(shares: &[u64]) -> f64 {
         * 10_000.0
 }
 
-/// Gini katsayısı (0=tam eşit, 1=tam eşitsiz). Negatif değerler en küçük
-/// değer 0 olacak şekilde kaydırılır (servet skoru negatif olabilir).
+/// Gini katsayısı (0=tam eşit, 1=tek elde). Negatif değerler kaydırılır.
 #[must_use]
 pub fn gini(values: &[f64]) -> f64 {
     if values.len() < 2 {
@@ -47,84 +52,173 @@ pub fn gini(values: &[f64]) -> f64 {
     if sum <= 0.0 {
         return 0.0;
     }
-    // Sıralı formül: G = (2·Σ i·x_i)/(n·Σx) − (n+1)/n,  i 1-tabanlı.
     let weighted: f64 = xs.iter().enumerate().map(|(i, x)| (i as f64 + 1.0) * x).sum();
     ((2.0 * weighted) / (n * sum) - (n + 1.0) / n).clamp(0.0, 1.0)
 }
 
-/// Koşum boyunca eşleşme hacmini biriktirir.
+// =============================================================================
+// Biriktirici (sim loop'unda her olay kaydedilir)
+// =============================================================================
+
+/// Koşum boyunca rol-ayrık metrikleri biriktirir.
 #[derive(Debug, Default)]
 pub struct MetricsAccumulator {
-    /// Bucket → satıcı(PlayerId.value) → eşleşen birim (arz tarafı hakimiyeti).
-    sell_by_bucket: BTreeMap<(CityId, ProductKind), BTreeMap<u64, u64>>,
-    /// Oyuncu → toplam eşleşen hacim (her iki taraf).
-    vol_by_player: BTreeMap<u64, u64>,
+    // --- Sanayici ekseni ---
+    /// Üretim: bucket → sanayici(id) → üretilen birim.
+    production_by_bucket: BTreeMap<(CityId, ProductKind), BTreeMap<u64, u64>>,
+    /// Ham madde alımı: sanayici(id) → satın alınan birim (tedarik yoğunlaşması).
+    raw_buy_by_sanayici: BTreeMap<u64, u64>,
+
+    // --- Tüccar ekseni ---
+    /// Kervan taşıması: tüccar(id) → taşınan toplam birim.
+    caravan_vol_by_tuccar: BTreeMap<u64, u64>,
+    /// Şehir-çifti akış: (from, to) → tüccar(id) → taşınan birim.
+    flow_by_route: BTreeMap<(CityId, CityId), BTreeMap<u64, u64>>,
+
+    // --- Ortak ---
+    /// Toplam eşleşme hacmi (tüm roller, iki taraf).
     total_vol: u64,
+    /// Toplam kervan taşıma birimi.
+    total_caravan_vol: u64,
 }
 
 impl MetricsAccumulator {
-    /// Bir OrderMatched olayını kaydet.
+    /// OrderMatched olayı. `seller_kind` rolü sanayici ham alım tespiti için.
     pub fn record_match(
         &mut self,
-        city: CityId,
+        _city: CityId,
         product: ProductKind,
         buyer: PlayerId,
-        seller: PlayerId,
+        buyer_kind: Option<NpcKind>,
+        _seller: PlayerId,
         qty: u32,
     ) {
         let q = u64::from(qty);
-        *self
-            .sell_by_bucket
-            .entry((city, product))
-            .or_default()
-            .entry(seller.value())
-            .or_default() += q;
-        *self.vol_by_player.entry(seller.value()).or_default() += q;
-        *self.vol_by_player.entry(buyer.value()).or_default() += q;
         self.total_vol += q;
+
+        // Sanayici ham madde alıyorsa → tedarik yoğunlaşması.
+        if buyer_kind == Some(NpcKind::Sanayici) && product.is_raw() {
+            *self.raw_buy_by_sanayici.entry(buyer.value()).or_default() += q;
+        }
     }
 
-    /// Koşum sonu metrikleri — final state ile birlikte.
+    /// ProductionCompleted olayı — Sanayici üretim hakimiyeti.
+    pub fn record_production(
+        &mut self,
+        city: CityId,
+        product: ProductKind,
+        owner: PlayerId,
+        units: u32,
+    ) {
+        *self
+            .production_by_bucket
+            .entry((city, product))
+            .or_default()
+            .entry(owner.value())
+            .or_default() += u64::from(units);
+    }
+
+    /// CaravanArrived olayı — Tüccar lojistik hakimiyeti.
+    pub fn record_caravan(
+        &mut self,
+        from: CityId,
+        to: CityId,
+        owner: PlayerId,
+        owner_kind: Option<NpcKind>,
+        cargo_units: u32,
+    ) {
+        if owner_kind != Some(NpcKind::Tuccar) {
+            return; // Sadece Tüccar kervan metrikleri burada
+        }
+        let q = u64::from(cargo_units);
+        self.total_caravan_vol += q;
+        *self.caravan_vol_by_tuccar.entry(owner.value()).or_default() += q;
+        *self
+            .flow_by_route
+            .entry((from, to))
+            .or_default()
+            .entry(owner.value())
+            .or_default() += q;
+    }
+
+    /// Koşum sonu rol-ayrık metrikler.
     #[must_use]
     pub fn finalize(&self, state: &GameState) -> Metrics {
-        // Arz HHI: hacimli her bucket için satıcı yoğunlaşması, ortalama.
-        let bucket_hhis: Vec<f64> = self
-            .sell_by_bucket
-            .values()
-            .filter(|sellers| !sellers.is_empty())
-            .map(|sellers| {
-                let shares: Vec<u64> = sellers.values().copied().collect();
-                hhi(&shares)
-            })
-            .collect();
-        let supply_hhi = if bucket_hhis.is_empty() {
-            0.0
-        } else {
-            bucket_hhis.iter().sum::<f64>() / bucket_hhis.len() as f64
-        };
+        // ── Sanayici metrikleri ──────────────────────────────────────────────
 
-        // En büyük firma toplam hacim payı (%).
-        let top_firm_share = if self.total_vol == 0 {
-            0.0
-        } else {
-            let max = self.vol_by_player.values().copied().max().unwrap_or(0);
-            // vol_by_player her eşleşmeyi iki kez sayar (alıcı+satıcı) → toplam 2×total_vol.
-            max as f64 / (2.0 * self.total_vol as f64) * 100.0
-        };
-
-        // Fabrika sahipliği yoğunlaşması.
+        // Fabrika sahipliği HHI.
         let mut fac_by_owner: BTreeMap<u64, u64> = BTreeMap::new();
         for f in state.factories.values() {
-            *fac_by_owner.entry(f.owner.value()).or_default() += 1;
+            if state.players.get(&f.owner).and_then(|p| p.npc_kind)
+                == Some(NpcKind::Sanayici)
+            {
+                *fac_by_owner.entry(f.owner.value()).or_default() += 1;
+            }
         }
         let factory_hhi = hhi(&fac_by_owner.values().copied().collect::<Vec<_>>());
+        let factory_counts: Vec<(String, u64)> = {
+            let mut v: Vec<_> = fac_by_owner
+                .iter()
+                .map(|(id, cnt)| {
+                    let name = state
+                        .players
+                        .get(&PlayerId::new(*id))
+                        .map_or_else(|| format!("#{id}"), |p| p.name.clone());
+                    (name, *cnt)
+                })
+                .collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v
+        };
 
-        // Servet Gini (leaderboard net değer skoru üzerinden).
+        // Üretim HHI: bucket başına sanayici yoğunlaşması ortalaması.
+        let prod_hhis: Vec<f64> = self
+            .production_by_bucket
+            .values()
+            .filter(|m| !m.is_empty())
+            .map(|m| hhi(&m.values().copied().collect::<Vec<_>>()))
+            .collect();
+        let production_hhi = avg(&prod_hhis);
+
+        // Toplam üretilen birim.
+        let total_produced: u64 = self
+            .production_by_bucket
+            .values()
+            .flat_map(|m| m.values())
+            .sum();
+
+        // Ham madde alım HHI (tedarik zinciri hakimiyeti).
+        let raw_supply_hhi = hhi(&self.raw_buy_by_sanayici.values().copied().collect::<Vec<_>>());
+
+        // ── Tüccar metrikleri ────────────────────────────────────────────────
+
+        // Kervan dispatch HHI (kim ne kadar taşıdı).
+        let caravan_hhi =
+            hhi(&self.caravan_vol_by_tuccar.values().copied().collect::<Vec<_>>());
+
+        // Şehir-çifti (rota) HHI: hangi rota en yoğun ve kim domine ediyor.
+        let route_hhis: Vec<f64> = self
+            .flow_by_route
+            .values()
+            .filter(|m| !m.is_empty())
+            .map(|m| hhi(&m.values().copied().collect::<Vec<_>>()))
+            .collect();
+        let route_dominance_hhi = avg(&route_hhis);
+
+        // En aktif rota (taşınan birim).
+        let top_route: Option<((CityId, CityId), u64)> = self
+            .flow_by_route
+            .iter()
+            .map(|(route, owners)| (*route, owners.values().sum::<u64>()))
+            .max_by_key(|(_, vol)| *vol);
+
+        // ── Ortak ───────────────────────────────────────────────────────────
+
         let scores = leaderboard(state);
         let wealth: Vec<f64> = scores.iter().map(|s| s.total.as_cents() as f64).collect();
         let wealth_gini = gini(&wealth);
 
-        // Rol bazlı toplam PnL (lira).
+        // Rol bazlı toplam PnL.
         let mut role_pnl: BTreeMap<String, f64> = BTreeMap::new();
         for s in &scores {
             if let Some(p) = state.players.get(&s.player_id) {
@@ -138,29 +232,71 @@ impl MetricsAccumulator {
         role_pnl.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Metrics {
-            supply_hhi,
-            top_firm_share,
+            // Sanayici
             factory_hhi,
+            factory_counts,
+            production_hhi,
+            total_produced,
+            raw_supply_hhi,
+            // Tüccar
+            caravan_hhi,
+            route_dominance_hhi,
+            top_route,
+            total_caravan_vol: self.total_caravan_vol,
+            // Ortak
             wealth_gini,
             role_pnl,
         }
     }
 }
 
-/// Koşum sonu yoğunlaşma metrikleri.
+fn avg(v: &[f64]) -> f64 {
+    if v.is_empty() {
+        0.0
+    } else {
+        v.iter().sum::<f64>() / v.len() as f64
+    }
+}
+
+// =============================================================================
+// Sonuç
+// =============================================================================
+
+/// Koşum sonu rol-ayrık yoğunlaşma metrikleri.
 #[derive(Debug)]
 pub struct Metrics {
-    /// Bucket bazlı arz HHI ortalaması (0..10000). >2500 yoğun, →10000 monopol.
-    pub supply_hhi: f64,
-    /// En büyük firmanın toplam hacim payı (%).
-    pub top_firm_share: f64,
-    /// Fabrika sahipliği HHI (0..10000).
+    // ── Sanayici ──────────────────────────────────────────────────────────────
+    /// Fabrika sahipliği HHI (sadece Sanayiciler). 3333 = 3 eşit Sanayici.
     pub factory_hhi: f64,
-    /// Servet Gini (0=eşit, 1=tek elde toplanmış).
+    /// Sanayici başına fabrika sayısı (isim, adet), azalan.
+    pub factory_counts: Vec<(String, u64)>,
+    /// Üretim bucket HHI ortalaması — üretim ne kadar tek elde.
+    pub production_hhi: f64,
+    /// Sezon boyunca toplam üretilen birim.
+    pub total_produced: u64,
+    /// Ham madde alım HHI — tedarik zincirini kim kontrol ediyor.
+    pub raw_supply_hhi: f64,
+
+    // ── Tüccar ────────────────────────────────────────────────────────────────
+    /// Kervan taşıma HHI — lojistiği kim domine ediyor.
+    pub caravan_hhi: f64,
+    /// Şehir-çifti rota HHI ortalaması — rotalar ne kadar tekelleşmiş.
+    pub route_dominance_hhi: f64,
+    /// En aktif rota ve birimi.
+    pub top_route: Option<((CityId, CityId), u64)>,
+    /// Toplam kervan taşıma birimi.
+    pub total_caravan_vol: u64,
+
+    // ── Ortak ─────────────────────────────────────────────────────────────────
+    /// Servet Gini (tüm roller, 0=eşit, 1=tek elde).
     pub wealth_gini: f64,
     /// Rol → toplam PnL (lira), azalan.
     pub role_pnl: Vec<(String, f64)>,
 }
+
+// =============================================================================
+// Testler
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -173,7 +309,6 @@ mod tests {
 
     #[test]
     fn hhi_equal_split_is_inverse_n() {
-        // 4 eşit aktör → her biri 0.25, HHI = 4 × 0.0625 × 10000 = 2500.
         assert!((hhi(&[25, 25, 25, 25]) - 2_500.0).abs() < 1e-9);
     }
 
@@ -190,14 +325,12 @@ mod tests {
 
     #[test]
     fn gini_extreme_inequality_near_one() {
-        // Tek kişide tüm servet → Gini ≈ (n-1)/n.
         let g = gini(&[0.0, 0.0, 0.0, 100.0]);
         assert!(g > 0.7, "aşırı eşitsizlik yüksek Gini vermeli, got {g}");
     }
 
     #[test]
     fn gini_handles_negatives_via_shift() {
-        // Negatif değerler kaydırılır; panik/NaN olmamalı.
         let g = gini(&[-50.0, 0.0, 50.0, 100.0]);
         assert!((0.0..=1.0).contains(&g));
     }
