@@ -1,387 +1,334 @@
-//! `cargo run -p moneywar-sim -- [args]` CLI.
+//! Headless MoneyWar sim — frontend'de gözüken oyunun **birebir aynısını** koşar.
 //!
-//! Args:
-//!   --seed <N>          Default: 42
-//!   --ticks <N>         Default: 90
-//!   --difficulty <X>    easy|medium|hard  Default: hard
-//!   --scenario <NAME>   passive | `active_sanayici` | `active_tuccar`
-//!   --report-out <P>    Markdown rapor dosyaya yaz (yoksa stdout)
-//!   --multi-seed        10 seed paralel: 1,7,42,100,256,512,1024,2048,4096,8192
-//!   --serial            Multi-seed'i sıralı koştur (debug için)
-//!   --per-seed-dir <D>  Multi-seed: her seed için ayrı markdown (D/seed_<N>.md)
+//! Canlı sunucuyla (moneywar-web) aynı `SimDriver`, aynı dünya kurulumu
+//! (`new_season`) ve aynı tick-by-tick log formatını (`format_tick_block`)
+//! kullanır; tek fark actix/WS yok, motor tam hızda döner. Her oyun için
+//! tam log dosyası + stdout'a kısa özet üretir.
 //!
-//! Hızlı baseline:
-//!   cargo run -p moneywar-sim -- --multi-seed --report-out artifacts/baseline.md
+//! Kullanım:
+//!   cargo run -p moneywar-sim                 # 1 oyun, 150 tick (frontend sezonu)
+//!   cargo run -p moneywar-sim -- --parallel   # 5 oyunu aynı anda koş
+//!   cargo run -p moneywar-sim -- --games 3    # 3 oyun, sıralı
+//!   cargo run -p moneywar-sim -- --games 8 --parallel --ticks 300 --out /tmp/mw
 //!
-//! Paralel 10 oyun + per-seed dosyalar:
-//!   cargo run -p moneywar-sim -- --multi-seed \
-//!       --report-out artifacts/aggregate.md \
-//!       --per-seed-dir artifacts/per-seed
+//! Argümanlar:
+//!   --games <N>     Kaç oyun simüle edilsin. Default 1 (--parallel verilince 5).
+//!   --parallel      Oyunları paralel (thread) koştur. Default sıralı.
+//!   --ticks <N>     Oyun başına tick. Default 150 (moneywar-web SEASON_TICKS).
+//!   --seed <N>      Base seed. Default frontend ile aynı; oyun #1 birebir o oyundur.
+//!   --out <DIR>     Log çıktı dizini. Default "artifacts/sim".
 
-use std::env;
-use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Instant;
 
-use moneywar_npc::Difficulty;
-use moneywar_sim::{
-    GameThresholds, PerRunMetrics, QualityScore, Scenario, SimResult, SimRunner, Stats,
-    default_contracts, logbuilder, render_markdown, render_threshold_report,
-};
+use moneywar_domain::Money;
+use moneywar_engine::{LogEvent, leaderboard};
+use moneywar_sim::metrics::{Metrics, MetricsAccumulator};
+use moneywar_web::driver::SimDriver;
+use moneywar_web::{DEFAULT_SEED, DIFFICULTY, SEASON_TICKS, TICK_SECONDS, debuglog::format_tick_block};
+
+/// Tek oyunun simülasyon sonucu — özet tablosu için.
+struct Outcome {
+    label: usize,
+    seed: u64,
+    ticks: u32,
+    is_frontend: bool,
+    matched_qty: u64,
+    matched_fills: u64,
+    expired: u64,
+    rejected: u64,
+    top: Vec<(String, f64)>,
+    metrics: Metrics,
+    log_path: PathBuf,
+}
+
+/// CLI ayarları.
+struct Config {
+    games: usize,
+    parallel: bool,
+    ticks: u32,
+    base_seed: u64,
+    out_dir: PathBuf,
+}
+
+fn money_to_lira(m: Money) -> f64 {
+    m.as_cents() as f64 / 100.0
+}
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mut seed: u64 = 42;
-    let mut ticks: u32 = 90;
-    let mut diff = Difficulty::Hard;
-    let mut scenario: &'static Scenario = &Scenario::ACTIVE_SANAYICI;
-    let mut report_out: Option<String> = None;
-    let mut multi_seed = false;
-    let mut serial = false;
-    let mut per_seed_dir: Option<String> = None;
-    let mut threshold_report_out: Option<String> = None;
-    let mut log_dir: Option<String> = None;
-    let mut debug_log: Option<String> = None;
+    let cfg = parse_args();
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--seed" => {
-                seed = args[i + 1].parse().expect("--seed: u64");
-                i += 2;
-            }
-            "--ticks" => {
-                ticks = args[i + 1].parse().expect("--ticks: u32");
-                i += 2;
-            }
-            "--difficulty" => {
-                diff = match args[i + 1].as_str() {
-                    "easy" => Difficulty::Easy,
-                    "hard" => Difficulty::Hard,
-                    "medium" => Difficulty::Medium,
-                    "synthetic" => Difficulty::Synthetic,
-                    other => panic!("bilinmeyen difficulty: {other}"),
-                };
-                i += 2;
-            }
-            "--scenario" => {
-                scenario = match args[i + 1].as_str() {
-                    "passive" => &Scenario::PASSIVE,
-                    "active_sanayici" => &Scenario::ACTIVE_SANAYICI,
-                    "active_tuccar" => &Scenario::ACTIVE_TUCCAR,
-                    other => panic!("bilinmeyen scenario: {other}"),
-                };
-                i += 2;
-            }
-            "--report-out" => {
-                report_out = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--multi-seed" => {
-                multi_seed = true;
-                i += 1;
-            }
-            "--serial" => {
-                serial = true;
-                i += 1;
-            }
-            "--per-seed-dir" => {
-                per_seed_dir = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--threshold-out" => {
-                threshold_report_out = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--log-dir" => {
-                log_dir = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--debug-log" => {
-                debug_log = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "-h" | "--help" => {
-                print_help();
-                return;
-            }
-            other => {
-                eprintln!("bilinmeyen arg: {other}");
-                print_help();
-                std::process::exit(1);
-            }
-        }
+    if let Err(e) = std::fs::create_dir_all(&cfg.out_dir) {
+        eprintln!("çıktı dizini oluşturulamadı ({}): {e}", cfg.out_dir.display());
+        std::process::exit(1);
     }
 
-    let seeds: Vec<u64> = if multi_seed {
-        // v0.6.0: 10 → 20 seed. Daha sağlam regression doğrulama, paralel
-        // koşumda 2× yavaşlama kabul. İlk 10 seed orijinal set, ek 10
-        // farklı asal-tabanlı seed (varyans çeşitlilik).
-        vec![
-            1, 7, 42, 100, 256, 512, 1024, 2048, 4096, 8192,
-            3, 11, 19, 31, 67, 127, 251, 509, 1021, 2039,
-        ]
-    } else {
-        vec![seed]
-    };
+    println!(
+        "MoneyWar sim — {} oyun × {} tick · {} · seed taban={:#x} · çıktı={}",
+        cfg.games,
+        cfg.ticks,
+        if cfg.parallel { "paralel" } else { "sıralı" },
+        cfg.base_seed,
+        cfg.out_dir.display(),
+    );
 
     let started = Instant::now();
-    let results: Vec<SimResult> = if multi_seed && !serial {
-        run_parallel(&seeds, scenario, ticks, diff)
+    let outcomes = if cfg.parallel {
+        run_parallel(&cfg)
     } else {
-        seeds
-            .iter()
-            .map(|s| {
-                let mut runner = SimRunner::new(*s, scenario)
-                    .with_ticks(ticks)
-                    .with_difficulty(diff);
-                if let Some(path) = &debug_log {
-                    runner = runner.with_debug_log(std::path::PathBuf::from(path));
-                }
-                runner.run()
-            })
-            .collect()
+        run_sequential(&cfg)
     };
-    let elapsed_ms = started.elapsed().as_millis();
-    eprintln!(
-        "🏁 {} run × {} tick → {} ms ({})",
-        results.len(),
-        ticks,
-        elapsed_ms,
-        if multi_seed && !serial {
-            "parallel"
-        } else {
-            "serial"
-        }
-    );
+    let elapsed = started.elapsed();
 
-    let all_metrics: Vec<PerRunMetrics> = results.iter().map(PerRunMetrics::from_result).collect();
-
-    // Per-seed dosyaları yaz (multi-seed'de istenirse).
-    if multi_seed {
-        if let Some(dir) = &per_seed_dir {
-            let dir_path = Path::new(dir);
-            let _ = fs::create_dir_all(dir_path);
-            for r in &results {
-                let path = dir_path.join(format!("seed_{}.md", r.seed));
-                fs::write(&path, render_markdown(r)).expect("write per-seed");
-            }
-            eprintln!("Per-seed raporları: {dir}/seed_*.md");
-        }
-    }
-
-    // Birleşik rapor (stdout veya report-out).
-    let mut combined = String::new();
-    if multi_seed && !all_metrics.is_empty() {
-        let stats = Stats::collect(diff, &all_metrics);
-        let quality = QualityScore::from_stats(&stats);
-        combined.push_str(&render_aggregate_report(&stats, &quality, &all_metrics));
-        combined.push_str(&render_per_seed_summary(&results, &all_metrics));
-    } else {
-        for r in &results {
-            combined.push_str(&render_markdown(r));
-            combined.push_str("\n---\n\n");
-        }
-    }
-
-    if let Some(path) = report_out {
-        if let Some(parent) = Path::new(&path).parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        fs::write(&path, &combined).expect("write report");
-        eprintln!("Rapor yazıldı: {path}");
-    } else {
-        print!("{combined}");
-    }
-
-    // Threshold raporu (rol kontrat + oyun kapısı denetimi).
-    if multi_seed {
-        if let Some(path) = threshold_report_out {
-            let stats = Stats::collect(diff, &all_metrics);
-            let contracts = default_contracts();
-            let thresholds = GameThresholds::hard_default();
-            let md = render_threshold_report(&contracts, &thresholds, &results, &stats);
-            if let Some(parent) = Path::new(&path).parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            fs::write(&path, &md).expect("write threshold report");
-            eprintln!("Threshold raporu: {path}");
-        }
-    }
-
-    // Tek-flag log builder: timestamped klasör + tüm raporlar/data.
-    if let Some(root) = log_dir {
-        let root_path = Path::new(&root);
-        let _ = fs::create_dir_all(root_path);
-        let run_dir = logbuilder::create_run_dir(root_path);
-        let cmdline = args.join(" ");
-        logbuilder::write_full_log(
-            &run_dir,
-            &cmdline,
-            &seeds,
-            ticks,
-            diff,
-            scenario.name,
-            &results,
-            &all_metrics,
-            elapsed_ms,
-        );
-        eprintln!("📁 Log klasörü: {}", run_dir.display());
-        eprintln!("   ├── manifest.json");
-        eprintln!("   ├── aggregate.md");
-        eprintln!("   ├── thresholds.md");
-        eprintln!("   ├── tuning_issues.md");
-        eprintln!("   └── per_seed/seed_<N>.{{md, _actions.jsonl, _clearings.csv}}");
-    }
+    print_summary(&outcomes, elapsed.as_secs_f64());
 }
 
-/// 10 seed'i paralel iş parçacıklarında koştur. Her thread bir `SimRunner` çalıştırır.
-fn run_parallel(
-    seeds: &[u64],
-    scenario: &'static Scenario,
-    ticks: u32,
-    diff: Difficulty,
-) -> Vec<SimResult> {
-    let handles: Vec<_> = seeds
-        .iter()
-        .map(|&s| {
-            thread::spawn(move || {
-                SimRunner::new(s, scenario)
-                    .with_ticks(ticks)
-                    .with_difficulty(diff)
-                    .run()
-            })
+/// Oyun `i` (0-tabanlı) için base seed. i=0 + varsayılan taban → frontend oyunu.
+fn seed_for(base: u64, i: usize) -> u64 {
+    base.wrapping_add(i as u64)
+}
+
+fn run_sequential(cfg: &Config) -> Vec<Outcome> {
+    (0..cfg.games)
+        .map(|i| run_game(i, seed_for(cfg.base_seed, i), cfg))
+        .collect()
+}
+
+fn run_parallel(cfg: &Config) -> Vec<Outcome> {
+    let handles: Vec<_> = (0..cfg.games)
+        .map(|i| {
+            let seed = seed_for(cfg.base_seed, i);
+            let ticks = cfg.ticks;
+            let out_dir = cfg.out_dir.clone();
+            let is_frontend = i == 0 && cfg.base_seed == DEFAULT_SEED;
+            thread::spawn(move || run_game_inner(i, seed, ticks, &out_dir, is_frontend))
         })
         .collect();
-    let mut out: Vec<SimResult> = handles
+
+    let mut outcomes: Vec<Outcome> = handles
         .into_iter()
-        .map(|h| h.join().expect("thread"))
+        .filter_map(|h| h.join().ok())
         .collect();
-    // Seed sırasına göre sırala (deterministik output).
-    out.sort_by_key(|r| r.seed);
-    out
+    outcomes.sort_by_key(|o| o.label);
+    outcomes
 }
 
-/// Multi-seed agregat raporunu Markdown olarak üret.
-fn render_aggregate_report(
-    stats: &Stats,
-    quality: &QualityScore,
-    runs: &[PerRunMetrics],
-) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-
-    let _ = writeln!(
-        out,
-        "# 📊 Agregat İstatistik — {} run × {:?}",
-        stats.n_runs, stats.difficulty
-    );
-    let _ = writeln!(out);
-    let _ = writeln!(out, "## Kalite Kapısı");
-    let _ = writeln!(
-        out,
-        "**Skor: {}/{}** — {:?}",
-        quality.passed, quality.total, stats.difficulty
-    );
-    let _ = writeln!(out);
-    let _ = writeln!(out, "| Madde | Geçti | Değer |");
-    let _ = writeln!(out, "|---|---|---|");
-    for (item, ok, value) in &quality.details {
-        let icon = if *ok { "✅" } else { "❌" };
-        let _ = writeln!(out, "| {item} | {icon} | {value} |");
-    }
-    let _ = writeln!(out);
-
-    let _ = writeln!(
-        out,
-        "## Genel Metrik İstatistikleri (mean ± std, [min, max])"
-    );
-    let _ = writeln!(out, "| Metrik | Mean | Std | Min | Max | Median |");
-    let _ = writeln!(out, "|---|---|---|---|---|---|");
-    for (name, s) in [
-        ("Toplam clearing", &stats.matches),
-        ("Match qty", &stats.matched_qty),
-        ("Match verim %", &stats.match_efficiency_pct),
-        ("Bankrupt NPC", &stats.bankrupt_npcs),
-        ("Stale yaş max", &stats.stale_orders_max),
-        ("İnsan PnL ₺", &stats.human_pnl),
-    ] {
-        let _ = writeln!(
-            out,
-            "| {name} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} |",
-            s.mean, s.std_dev, s.min, s.max, s.median
-        );
-    }
-    let _ = writeln!(out);
-
-    let _ = writeln!(out, "## Rol Başına PnL Dağılımı");
-    let _ = writeln!(out, "| Rol | Mean | Std | Min | Max | Median |");
-    let _ = writeln!(out, "|---|---|---|---|---|---|");
-    for (role, s) in &stats.pnl_by_role {
-        let _ = writeln!(
-            out,
-            "| {role} | {:.0}₺ | {:.0}₺ | {:.0}₺ | {:.0}₺ | {:.0}₺ |",
-            s.mean, s.std_dev, s.min, s.max, s.median
-        );
-    }
-    let _ = writeln!(out);
-
-    let _ = writeln!(out, "## Per-Seed Özet");
-    let _ = writeln!(
-        out,
-        "| Seed | Match | Verim % | Bankrupt | Stale | İnsan PnL |"
-    );
-    let _ = writeln!(out, "|---|---|---|---|---|---|");
-    for r in runs {
-        let total = r.submitted_buy + r.submitted_sell;
-        let eff = if total == 0 {
-            0.0
-        } else {
-            (r.matched_qty as f64) * 100.0 / total as f64
-        };
-        let _ = writeln!(
-            out,
-            "| {} | {} | {:.2} | {} | {} | {} |",
-            r.seed, r.total_matches, eff, r.bankrupt_npcs, r.stale_orders_max_age, r.human_pnl_lira
-        );
-    }
-    let _ = writeln!(out);
-
-    out
+fn run_game(i: usize, seed: u64, cfg: &Config) -> Outcome {
+    let is_frontend = i == 0 && cfg.base_seed == DEFAULT_SEED;
+    run_game_inner(i, seed, cfg.ticks, &cfg.out_dir, is_frontend)
 }
 
-/// Tüm run'ların full Markdown raporunu agregate'in altına ekler — tek dosyada
-/// hem ortalama hem detay görmek isteyenler için.
-fn render_per_seed_summary(results: &[SimResult], _metrics: &[PerRunMetrics]) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-    let _ = writeln!(out, "---");
-    let _ = writeln!(out, "# 🔎 Per-Seed Detay Raporları");
-    let _ = writeln!(out);
-    for r in results {
-        let _ = writeln!(out, "## Seed {}", r.seed);
-        out.push_str(&render_markdown(r));
-        let _ = writeln!(out, "\n---\n");
+/// Bir oyunu baştan sona koşar: her tick `SimDriver::step` + log bloğu +
+/// istatistik biriktir, sonra log dosyasını yazar ve özet döner.
+fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: bool) -> Outcome {
+    let mut driver = SimDriver::new(
+        seed,
+        ticks,
+        u32::try_from(TICK_SECONDS).unwrap_or(5),
+        DIFFICULTY,
+    );
+
+    let mut log = String::new();
+    let mut matched_qty: u64 = 0;
+    let mut matched_fills: u64 = 0;
+    let mut expired: u64 = 0;
+    let mut rejected: u64 = 0;
+    let mut acc = MetricsAccumulator::default();
+
+    for _ in 0..ticks {
+        driver.step();
+        log.push_str(&format_tick_block(&driver.state, &driver.last_report, driver.season));
+
+        for entry in &driver.last_report.entries {
+            match &entry.event {
+                LogEvent::OrderMatched {
+                    city,
+                    product,
+                    buyer,
+                    seller,
+                    quantity,
+                    ..
+                } => {
+                    matched_fills += 1;
+                    matched_qty += u64::from(*quantity);
+                    acc.record_match(*city, *product, *buyer, *seller, *quantity);
+                }
+                LogEvent::OrderExpired { .. } => expired += 1,
+                LogEvent::CommandRejected { .. } => rejected += 1,
+                _ => {}
+            }
+        }
     }
-    out
+    let metrics = acc.finalize(&driver.state);
+
+    let log_path = out_dir.join(format!("game_{:02}.log", i + 1));
+    if let Err(e) = std::fs::write(&log_path, &log) {
+        eprintln!("log yazılamadı ({}): {e}", log_path.display());
+    }
+
+    let top: Vec<(String, f64)> = leaderboard(&driver.state)
+        .into_iter()
+        .take(3)
+        .map(|score| {
+            let name = driver
+                .state
+                .players
+                .get(&score.player_id)
+                .map_or_else(|| format!("#{}", score.player_id.value()), |p| p.name.clone());
+            (name, money_to_lira(score.total))
+        })
+        .collect();
+
+    Outcome {
+        label: i,
+        seed,
+        ticks,
+        is_frontend,
+        matched_qty,
+        matched_fills,
+        expired,
+        rejected,
+        top,
+        metrics,
+        log_path,
+    }
+}
+
+fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
+    println!("\n{:=<82}", "");
+    println!(
+        "{:>5}  {:>18}  {:>8}  {:>6}  {:>8}  {:>8}  {}",
+        "oyun", "seed", "eşleşen", "fill", "expired", "reddet", "lider (PnL₺)"
+    );
+    println!("{:-<82}", "");
+
+    for o in outcomes {
+        let leader = o
+            .top
+            .first()
+            .map_or_else(|| "—".to_string(), |(name, pnl)| format!("{name} ({pnl:+.0})"));
+        let tag = if o.is_frontend { "★" } else { " " };
+        println!(
+            "{tag}{:>4}  {:>18}  {:>8}  {:>6}  {:>8}  {:>8}  {leader}",
+            o.label + 1,
+            format!("{:#x}", o.seed),
+            o.matched_qty,
+            o.matched_fills,
+            o.expired,
+            o.rejected,
+        );
+    }
+
+    println!("{:-<82}", "");
+
+    // Yoğunlaşma / rekabet metrikleri (Faz 0).
+    println!(
+        "\n{:>5}  {:>9}  {:>8}  {:>9}  {:>6}   {}",
+        "oyun", "arz HHI", "top %", "fab HHI", "Gini", "rol PnL (lider→)"
+    );
+    println!("{:-<82}", "");
+    for o in outcomes {
+        let m = &o.metrics;
+        let roles = m
+            .role_pnl
+            .iter()
+            .take(3)
+            .map(|(r, pnl)| format!("{r} {pnl:+.0}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let tag = if o.is_frontend { "★" } else { " " };
+        println!(
+            "{tag}{:>4}  {:>9.0}  {:>7.1}%  {:>9.0}  {:>6.3}   {roles}",
+            o.label + 1,
+            m.supply_hhi,
+            m.top_firm_share,
+            m.factory_hhi,
+            m.wealth_gini,
+        );
+    }
+    println!("{:-<82}", "");
+
+    let total_matched: u64 = outcomes.iter().map(|o| o.matched_qty).sum();
+    let ticks = outcomes.first().map_or(0, |o| o.ticks);
+    println!(
+        "{} oyun · {} tick/oyun · toplam {} birim eşleşti · {:.2} sn",
+        outcomes.len(),
+        ticks,
+        total_matched,
+        elapsed_s,
+    );
+    println!(
+        "HHI: 0–10000 (>2500 yoğun, →10000 monopol) · Gini: 0 eşit → 1 tek elde · ★ = frontend oyunu"
+    );
+    if let Some(dir) = outcomes.first().and_then(|o| o.log_path.parent()) {
+        println!("loglar: {}/game_NN.log", dir.display());
+    }
+}
+
+/// Argümanları çok basit elle parse et (clap bağımlılığı yok).
+fn parse_args() -> Config {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut games: Option<usize> = None;
+    let mut parallel = false;
+    let mut ticks: u32 = SEASON_TICKS;
+    let mut base_seed: u64 = DEFAULT_SEED;
+    let mut out_dir = PathBuf::from("artifacts/sim");
+
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--parallel" | "-p" => parallel = true,
+            "--games" | "-g" => {
+                games = it.next().and_then(|v| v.parse().ok());
+            }
+            "--ticks" | "-t" => {
+                if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                    ticks = v;
+                }
+            }
+            "--seed" | "-s" => {
+                if let Some(v) = it.next().and_then(|v| parse_seed(v)) {
+                    base_seed = v;
+                }
+            }
+            "--out" | "-o" => {
+                if let Some(v) = it.next() {
+                    out_dir = PathBuf::from(v);
+                }
+            }
+            "--help" | "-h" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => {
+                eprintln!("bilinmeyen argüman: {other} (--help)");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    // --parallel verilip --games verilmediyse mantıklı varsayılan: 5 oyun.
+    let games = games.unwrap_or(if parallel { 5 } else { 1 }).max(1);
+
+    Config { games, parallel, ticks, base_seed, out_dir }
+}
+
+/// Seed'i ondalık ya da `0x`-önekli hex olarak parse et.
+fn parse_seed(s: &str) -> Option<u64> {
+    s.strip_prefix("0x")
+        .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
 }
 
 fn print_help() {
     println!(
-        "moneywar-sim — headless deterministic simulation\n\n\
-         USAGE:\n  cargo run -p moneywar-sim -- [OPTIONS]\n\n\
-         OPTIONS:\n\
-           --seed <N>          Default: 42\n\
-           --ticks <N>         Default: 90\n\
-           --difficulty <X>    easy|medium|hard  Default: hard\n\
-           --scenario <NAME>   passive | active_sanayici | active_tuccar\n\
-           --report-out <P>    Birleşik markdown rapor dosya yolu\n\
-           --multi-seed        10 seed paralel koştur (1,7,42,100,256,512,1024,2048,4096,8192)\n\
-           --serial            Multi-seed'i sıralı koştur (debug için)\n\
-           --per-seed-dir <D>  Her seed için ayrı dosya: D/seed_<N>.md\n\
-           --threshold-out <P> Rol kontrat + oyun kapısı denetim raporu\n\
-           --log-dir <D>       Tek flag: D/run_<timestamp>/ altında manifest+aggregate+\n\
-                                thresholds+tuning_issues+per_seed/(md+jsonl+csv)\n"
+        "MoneyWar headless sim — frontend ile aynı oyunu koşar\n\n\
+         cargo run -p moneywar-sim -- [SEÇENEKLER]\n\n\
+         --games <N>    Kaç oyun (default 1; --parallel ile 5)\n\
+         --parallel,-p  Oyunları aynı anda koş\n\
+         --ticks <N>    Oyun başına tick (default {SEASON_TICKS})\n\
+         --seed <N>     Base seed (ondalık veya 0xHEX)\n\
+         --out <DIR>    Log dizini (default artifacts/sim)\n\
+         --help,-h      Bu yardım"
     );
 }

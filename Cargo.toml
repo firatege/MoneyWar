@@ -67,6 +67,7 @@ moneywar-domain = { path = "crates/moneywar-domain" }
 moneywar-engine = { path = "crates/moneywar-engine" }
 moneywar-npc = { path = "crates/moneywar-npc" }
 moneywar-net = { path = "crates/moneywar-net" }
+moneywar-web = { path = "crates/moneywar-web" }
 
 [profile.dev]
 opt-level = 0
