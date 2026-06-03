@@ -94,9 +94,9 @@ impl PersonalityTraits {
 
 // Goal geçiş eşikleri
 /// Corner hedefi için gereken minimum sahiplik oranı.
-const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.25;
+const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.15;
 /// PriceWar başlatmak için rakip tehdidin yeterince yüksek olması.
-const PRICE_WAR_THREAT_THRESHOLD: f64 = 0.3;
+const PRICE_WAR_THREAT_THRESHOLD: f64 = 0.15;
 /// Consolidate'ten Expand'e dönmek için gereken nakit fazlası.
 const EXPAND_CASH_THRESHOLD: f64 = 0.7;
 /// Retreat için kritik PnL eşiği.
