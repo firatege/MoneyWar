@@ -313,6 +313,75 @@ pub fn parse_product(slug: &str) -> Option<ProductKind> {
     ProductKind::ALL.into_iter().find(|p| product_slug(*p) == slug)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lira_converts_cents_to_lira() {
+        assert_eq!(lira(Money::from_cents(12_345)), 123.45);
+        assert_eq!(lira(Money::ZERO), 0.0);
+        assert_eq!(lira(Money::from_cents(-500)), -5.0);
+    }
+
+    #[test]
+    fn every_city_slug_round_trips_through_parse() {
+        for city in CityId::ALL {
+            let slug = city_slug(city);
+            assert_eq!(
+                parse_city(slug),
+                Some(city),
+                "city slug '{slug}' parse'a geri dönmedi",
+            );
+        }
+    }
+
+    #[test]
+    fn every_product_slug_round_trips_through_parse() {
+        for product in ProductKind::ALL {
+            let slug = product_slug(product);
+            assert_eq!(
+                parse_product(slug),
+                Some(product),
+                "product slug '{slug}' parse'a geri dönmedi",
+            );
+        }
+    }
+
+    #[test]
+    fn all_slugs_are_unique() {
+        let city_slugs: Vec<&str> = CityId::ALL.into_iter().map(city_slug).collect();
+        let mut deduped = city_slugs.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        assert_eq!(city_slugs.len(), deduped.len(), "çakışan şehir slug'ı var");
+
+        let product_slugs: Vec<&str> = ProductKind::ALL.into_iter().map(product_slug).collect();
+        let mut p_deduped = product_slugs.clone();
+        p_deduped.sort_unstable();
+        p_deduped.dedup();
+        assert_eq!(product_slugs.len(), p_deduped.len(), "çakışan ürün slug'ı var");
+    }
+
+    #[test]
+    fn parse_rejects_unknown_slugs() {
+        assert_eq!(parse_city("atlantis"), None);
+        assert_eq!(parse_city(""), None);
+        assert_eq!(parse_product("altin"), None);
+        assert_eq!(parse_product("ISTANBUL"), None); // büyük/küçük harfe duyarlı
+    }
+
+    #[test]
+    fn feed_worthy_filters_noise_events() {
+        // Gürültü olayı (FactoryIdle) feed'e girmemeli.
+        assert!(!is_feed_worthy(&LogEvent::FactoryIdle {
+            factory_id: moneywar_domain::FactoryId::new(1),
+            city: CityId::Istanbul,
+            reason: "shortage".to_string(),
+        }));
+    }
+}
+
 fn name_of(state: &GameState, id: PlayerId) -> String {
     state
         .players

@@ -5,31 +5,48 @@
 //! `WS /ws` ile canlı snapshot alır, `GET /api/snapshot` ile anlık durumu,
 //! `GET /api/series` ile fiyat zaman serisini çeker.
 
-mod debuglog;
-mod driver;
-mod dto;
-mod world;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use actix_files::Files;
+use actix_web::middleware::DefaultHeaders;
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, Responder, web};
 use futures_util::StreamExt;
-use moneywar_npc::Difficulty;
 use serde::Deserialize;
 use tokio::sync::{RwLock, broadcast};
 
-use debuglog::{LogSink, format_tick_block};
-use driver::SimDriver;
+use moneywar_web::debuglog::{LogSink, format_tick_block};
+use moneywar_web::driver::SimDriver;
+use moneywar_web::{DEFAULT_SEED, DIFFICULTY, SEASON_TICKS, TICK_SECONDS, dto};
 
-/// Sezon uzunluğu (tick). Plan: 90 tick ≈ 3 dk.
-const SEASON_TICKS: u32 = 90;
-/// Tick aralığı (saniye). 5 sn/tick — sezon ≈ 7.5 dk.
-const TICK_SECONDS: u64 = 5;
 /// WS broadcast kanal kapasitesi — yavaş izleyici taşarsa eski mesaj düşer.
 const BROADCAST_CAPACITY: usize = 64;
+
+/// Content-Security-Policy. Frontend kendi script/CSS'ini aynı origin'den
+/// servis eder; stiller React inline `style` attribute'ları + Google Fonts
+/// kullandığı için `style-src` `unsafe-inline` ister. WS aynı origin → `self`.
+const CSP: &str = "default-src 'self'; \
+script-src 'self'; \
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+font-src 'self' https://fonts.gstatic.com; \
+img-src 'self' data:; \
+connect-src 'self'; \
+frame-ancestors 'none'; \
+base-uri 'self'; \
+object-src 'none'";
+
+/// Tüm yanıtlara eklenen statik güvenlik header'ları. HSTS yalnızca HTTPS
+/// üzerinde anlam taşır; düz HTTP'de tarayıcılar yok sayar (prod gateway TLS).
+fn security_headers() -> DefaultHeaders {
+    DefaultHeaders::new()
+        .add(("Content-Security-Policy", CSP))
+        .add(("X-Content-Type-Options", "nosniff"))
+        .add(("X-Frame-Options", "DENY"))
+        .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+        .add(("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
+        .add(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
+}
 
 /// Paylaşılan uygulama durumu.
 struct AppState {
@@ -53,7 +70,7 @@ async fn main() -> std::io::Result<()> {
     let base_seed = std::env::var("MONEYWAR_SEED")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0x4D6F_6E65_7957_6172);
+        .unwrap_or(DEFAULT_SEED);
 
     let port: u16 = std::env::var("PORT")
         .ok()
@@ -64,7 +81,7 @@ async fn main() -> std::io::Result<()> {
         base_seed,
         SEASON_TICKS,
         u32::try_from(TICK_SECONDS).unwrap_or(2),
-        Difficulty::Hard,
+        DIFFICULTY,
     )));
     let (tx, _rx) = broadcast::channel::<Arc<str>>(BROADCAST_CAPACITY);
 
@@ -98,6 +115,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         let mut app = App::new()
+            .wrap(security_headers())
             .app_data(app_state.clone())
             .route("/api/snapshot", web::get().to(get_snapshot))
             .route("/api/series", web::get().to(get_series))
