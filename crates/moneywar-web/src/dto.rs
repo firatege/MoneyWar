@@ -6,7 +6,7 @@
 //! (`f64`, cents/100) olarak gönderilir.
 
 use moneywar_domain::{
-    CityId, GameState, Money, OrderSide, PlayerId, ProductKind,
+    CityId, GameState, Money, NpcKind, OrderSide, PlayerId, ProductKind,
 };
 use moneywar_engine::{LogEntry, LogEvent, TickReport, leaderboard};
 use serde::Serialize;
@@ -399,27 +399,43 @@ fn actor_name(state: &GameState, entry: &LogEntry) -> String {
         .map_or_else(|| "sistem".to_string(), |id| name_of(state, id))
 }
 
+fn is_anonymous_buyer(state: &GameState, id: PlayerId) -> bool {
+    // Alıcı/Spekülatör/Banka → anonim (sadece satıcı gösterilir).
+    // p.has_npc_kind metodu PartialEq ile karşılaştırır.
+    state.players.get(&id).map_or(true, |p| {
+        p.has_npc_kind(NpcKind::Alici)
+            || p.has_npc_kind(NpcKind::Spekulator)
+            || p.has_npc_kind(NpcKind::Banka)
+    })
+}
+
 fn side_label(side: OrderSide) -> &'static str {
     if side.is_buy() { "AL" } else { "SAT" }
 }
+
 
 /// `LogEntry` → okunabilir feed satırı. Yüksek-sinyalli olaylar özel
 /// formatlanır, kalanlar `Debug` etiket + jenerik özet alır.
 fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
     let tick = entry.tick.value();
     let (kind, summary) = match &entry.event {
-        LogEvent::OrderMatched { city, product, buyer, seller, quantity, price, .. } => (
-            "match",
-            format!(
-                "{} → {} · {}× {} @ {}₺ ({})",
-                name_of(state, *buyer),
-                name_of(state, *seller),
-                quantity,
-                product.display_name(),
-                lira(*price),
-                city.display_name(),
-            ),
-        ),
+        LogEvent::OrderMatched { city, product, buyer, seller, quantity, price, .. } => {
+            let anon = is_anonymous_buyer(state, *buyer);
+            let s = if anon {
+                format!(
+                    "{} · {}× {} @ {}₺ ({})",
+                    name_of(state, *seller), quantity,
+                    product.display_name(), lira(*price), city.display_name(),
+                )
+            } else {
+                format!(
+                    "{} → {} · {}× {} @ {}₺ ({})",
+                    name_of(state, *buyer), name_of(state, *seller), quantity,
+                    product.display_name(), lira(*price), city.display_name(),
+                )
+            };
+            ("match", s)
+        }
         LogEvent::FactoryBuilt { owner, city, product, .. } => (
             "factory_built",
             format!(

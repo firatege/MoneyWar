@@ -120,72 +120,75 @@ fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
     }
 }
 
-/// NPC firma isim havuzu — sıralamada "Tüccar-102" yerine gerçek tüccar/firma
-/// ismi görünsün. ID'ye göre deterministik atanır (id - 100 = havuz indeksi).
-/// 35 NPC için 48 isim → çakışmasız.
-const NPC_NAMES: &[&str] = &[
-    "Demir Ticaret",
-    "Kaya Holding",
-    "Yıldız A.Ş.",
-    "Aslan Lojistik",
-    "Çelik Group",
-    "Deniz Ticaret",
-    "Ova Tarım",
-    "Bereket Gıda",
-    "Anadolu Pazarı",
-    "Ege Tüccar",
-    "Marmara A.Ş.",
-    "Toros Holding",
-    "Fırat Ticaret",
-    "Dicle Group",
-    "Selçuk Han",
-    "Akın Ticaret",
-    "Boran Holding",
-    "Çınar A.Ş.",
-    "Doğan Group",
-    "Şahin Ticaret",
-    "Korkmaz Holding",
-    "Aydın A.Ş.",
-    "Güneş Ticaret",
-    "Bulut Group",
-    "Kartal Han",
-    "Ülker Pazarı",
-    "Özkan Ticaret",
-    "Tunç Holding",
-    "Mavi Liman",
-    "Altın Çarşı",
-    "Sedef Ticaret",
-    "Pamukçu A.Ş.",
-    "Değirmenci Group",
-    "Zeytinoğlu Holding",
-    "Balcı Ticaret",
-    "Tahılcı Han",
+/// Tüccar → lojistik şirket isimleri (ID 100–103).
+const TUCCAR_NAMES: &[&str] = &[
+    "Demir Lojistik",
+    "Kaya Taşımacılık",
+    "Aslan Kargo",
+    "Boğaz Nakliyat",
     "Kervan Lojistik",
-    "Liman Ticaret",
-    "Çarşı Group",
-    "Has Tüccar",
-    "Köprü Holding",
-    "Meydan Ticaret",
-    "Saray Pazarı",
-    "Kale Group",
-    "Nehir Ticaret",
-    "Dağ Holding",
-    "Sahil A.Ş.",
-    "Bedesten Ticaret",
+    "Liman Taşıma",
+    "Mavi Kargo",
+    "Nehir Nakliyat",
 ];
 
-/// ID'ye göre firma ismi; havuz biterse `{prefix}-{id}` fallback'i.
-fn npc_name(id: u64, prefix: &str) -> String {
-    let idx = id.saturating_sub(100) as usize;
-    NPC_NAMES
-        .get(idx)
-        .map_or_else(|| format!("{prefix}-{id}"), |name| (*name).to_string())
+/// Sanayici → sanayi grubu isimleri (ID 104–106).
+const SANAYICI_NAMES: &[&str] = &[
+    "Çelik Grubu",
+    "Deniz Sanayi",
+    "Ova Holding",
+    "Toros Grubu",
+    "Fırat Sanayi",
+    "Dicle Holding",
+    "Anadolu Grubu",
+    "Marmara Sanayi",
+];
+
+/// Çiftçi → tarım işletmesi isimleri (ID 120–128).
+const CIFTCI_NAMES: &[&str] = &[
+    "Bereket Tarım",
+    "Ova Çiftliği",
+    "Güneş Tarım",
+    "Dağ Çiftliği",
+    "Verimli Tarla",
+    "Anadolu Çiftliği",
+    "Yeşil Tarım",
+    "Toprak Tarım",
+    "Hasad Çiftliği",
+    "Toprakseven",
+    "Bağ & Bahçe",
+    "Köy Tarım",
+];
+
+/// Rol'e göre firma ismi. Alıcı, Spekülatör, Banka isimsiz (role kodu görünür).
+fn npc_name(id: u64, prefix: &str, kind: NpcKind) -> String {
+    match kind {
+        NpcKind::Tuccar => {
+            let idx = id.saturating_sub(100) as usize;
+            TUCCAR_NAMES.get(idx)
+                .map_or_else(|| format!("Lojistik-{id}"), |n| (*n).to_string())
+        }
+        NpcKind::Sanayici => {
+            // Sanayici ID'leri Tüccar'dan sonra başlar (comp.tuccar sonra sanayici)
+            let idx = id.saturating_sub(100 + 4) as usize; // 4 = default tuccar sayısı
+            SANAYICI_NAMES.get(idx)
+                .map_or_else(|| format!("Sanayi-{id}"), |n| (*n).to_string())
+        }
+        NpcKind::Ciftci => {
+            // Çiftçi ID'leri: tuccar(4)+sanayici(3)+spekulator(3)+alici(10) = 20 sonra
+            let idx = id.saturating_sub(100 + 20) as usize;
+            CIFTCI_NAMES.get(idx)
+                .map_or_else(|| format!("Çiftlik-{id}"), |n| (*n).to_string())
+        }
+        // Alıcı, Spekülatör, Banka → prefix fallback (event'lerde rol etiketi gösterilir)
+        _ => format!("{prefix}-{id}"),
+    }
 }
 
 fn make_npc(id: u64, prefix: &str, role: Role, cash_lira: i64, kind: NpcKind) -> Player {
     Player::new(
         PlayerId::new(id),
-        npc_name(id, prefix),
+        npc_name(id, prefix, kind),
         role,
         Money::from_lira(cash_lira).unwrap_or(Money::ZERO),
         true,
