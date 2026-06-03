@@ -9,7 +9,7 @@
 .app__grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 22rem 1fr 17rem;
+  grid-template-columns: 25rem 1fr 17rem;
   gap: 1px;
   background: var(--line);
   min-height: 0;

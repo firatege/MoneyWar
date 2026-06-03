@@ -27,7 +27,6 @@ export function Leaderboard({ snapshot, prev, selectedId, onSelect }: Props) {
   const prevRank = new Map<number, number>();
   filterRanked(prev).forEach((p, i) => prevRank.set(p.id, i));
 
-  const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.pnl_lira)));
 
   return (
     <section className="lb panel">
@@ -40,7 +39,6 @@ export function Leaderboard({ snapshot, prev, selectedId, onSelect }: Props) {
         <span>rol</span>
         <span>oyuncu</span>
         <span className="lb__r">PnL</span>
-        <span />
       </div>
       <div className="lb__body">
         {rows.map((p, i) => {
@@ -53,7 +51,6 @@ export function Leaderboard({ snapshot, prev, selectedId, onSelect }: Props) {
               rankDelta={rankDelta}
               player={p}
               prevPnl={prev?.leaderboard.find((x) => x.id === p.id)?.pnl_lira}
-              maxAbs={maxAbs}
               selected={selectedId === p.id}
               onSelect={() => onSelect(p.id)}
             />
@@ -70,7 +67,6 @@ function LeaderRow({
   rankDelta,
   player,
   prevPnl,
-  maxAbs,
   selected,
   onSelect,
 }: {
@@ -78,7 +74,6 @@ function LeaderRow({
   rankDelta: number;
   player: PlayerDto;
   prevPnl: number | undefined;
-  maxAbs: number;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -97,7 +92,6 @@ function LeaderRow({
 
   const color = roleColor(player.npc_kind);
   const sign = player.pnl_lira > 0 ? "pos" : player.pnl_lira < 0 ? "neg" : "zero";
-  const barW = (Math.abs(player.pnl_lira) / maxAbs) * 100;
 
   return (
     <button
@@ -116,9 +110,6 @@ function LeaderRow({
       </span>
       <span className="lb__name">{player.name}</span>
       <span className={`lb__pnl lb__pnl--${sign} num`}>{signedCompact(player.pnl_lira)}</span>
-      <span className="lb__bar">
-        <span className={`lb__bar-fill lb__bar-fill--${sign}`} style={{ width: `${barW}%` }} />
-      </span>
     </button>
   );
 }
