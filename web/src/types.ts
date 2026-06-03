@@ -50,6 +50,8 @@ export interface EventDto {
   product: string | null;
   qty: number | null;
   price_lira: number | null;
+  buyer_id: number | null;
+  seller_id: number | null;
 }
 
 export interface Snapshot {

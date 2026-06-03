@@ -17,7 +17,7 @@ const DEFAULT_PRODUCT = "pamuk";
 const INTRO_SEEN_KEY = "mw_intro_seen";
 
 export default function App() {
-  const { snapshot, prev, feed, status, history, bucketHistory, market } =
+  const { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats } =
     useGameSocket();
   const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
   const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
@@ -72,6 +72,7 @@ export default function App() {
               playerId={selectedPlayer}
               snapshot={snapshot}
               history={history[selectedPlayer] ?? []}
+              tradeStats={tradeStats}
               onClose={() => setSelectedPlayer(null)}
             />
           ) : (

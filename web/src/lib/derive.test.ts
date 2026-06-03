@@ -42,6 +42,8 @@ function event(over: Partial<EventDto> = {}): EventDto {
     product: null,
     qty: null,
     price_lira: null,
+    buyer_id: null,
+    seller_id: null,
     ...over,
   };
 }

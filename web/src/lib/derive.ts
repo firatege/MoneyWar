@@ -126,3 +126,58 @@ export function computeMarketPoint(snap: Snapshot): MarketPoint {
 export function appendMarket(old: MarketPoint[], point: MarketPoint): MarketPoint[] {
   return [...old, point].slice(-MARKET_CAP);
 }
+
+// ─── Kişi bazlı işlem istatistiği ──────────────────────────────────────────
+
+/** Ürün bazlı alım/satım özeti. */
+export interface ProductStat {
+  product: string;
+  buy_qty: number;
+  sell_qty: number;
+}
+
+/** Oyuncu id → ürün bazlı kümülatif işlem istatistiği (sezon). */
+export type PlayerTradeStats = Record<number, Record<string, { buy: number; sell: number }>>;
+
+/**
+ * Bu tick'teki match olaylarından kişi bazlı ürün istatistiğini günceller.
+ * Sezon sıfırlandığında `{}` geçilir.
+ */
+export function appendTradeStats(
+  old: PlayerTradeStats,
+  snap: { recent_events: import("../types").EventDto[]; tick: number },
+): PlayerTradeStats {
+  const events = snap.recent_events.filter((e) => e.kind === "match");
+  if (events.length === 0) return old;
+
+  const next: PlayerTradeStats = { ...old };
+
+  for (const e of events) {
+    if (!e.product) continue;
+    const product = e.product;
+    const qty = e.qty ?? 0;
+
+    if (e.buyer_id != null) {
+      if (!next[e.buyer_id]) next[e.buyer_id] = {};
+      const b = next[e.buyer_id][product] ?? { buy: 0, sell: 0 };
+      next[e.buyer_id] = { ...next[e.buyer_id], [product]: { ...b, buy: b.buy + qty } };
+    }
+    if (e.seller_id != null) {
+      if (!next[e.seller_id]) next[e.seller_id] = {};
+      const s = next[e.seller_id][product] ?? { buy: 0, sell: 0 };
+      next[e.seller_id] = { ...next[e.seller_id], [product]: { ...s, sell: s.sell + qty } };
+    }
+  }
+
+  return next;
+}
+
+/** Oyuncunun en çok işlem yaptığı ürünleri (azalan toplam hacme göre) döner. */
+export function topProducts(stats: PlayerTradeStats, playerId: number): ProductStat[] {
+  const byProduct = stats[playerId];
+  if (!byProduct) return [];
+  return Object.entries(byProduct)
+    .map(([product, { buy, sell }]) => ({ product, buy_qty: buy, sell_qty: sell }))
+    .sort((a, b) => (b.buy_qty + b.sell_qty) - (a.buy_qty + a.sell_qty))
+    .slice(0, 5);
+}

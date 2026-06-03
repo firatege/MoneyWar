@@ -1,14 +1,16 @@
 import type { PlayerDto, Snapshot } from "../../types";
-import type { PnlPoint } from "../../hooks/useGameSocket";
-import { lira, signedCompact } from "../../lib/format";
+import type { PnlPoint, PlayerTradeStats } from "../../hooks/useGameSocket";
+import { lira, signedCompact, compact } from "../../lib/format";
 import { roleColor } from "../../lib/roles";
 import { TrendChart } from "../trend-chart/TrendChart";
+import { topProducts } from "../../lib/derive";
 import "./player-detail.css";
 
 interface Props {
   playerId: number;
   snapshot: Snapshot | null;
   history: PnlPoint[];
+  tradeStats: PlayerTradeStats;
   onClose: () => void;
 }
 
@@ -28,7 +30,7 @@ const PRODUCT_LABEL: Record<string, string> = {
   zeytinyagi: "Zeytinyağı",
 };
 
-export function PlayerDetail({ playerId, snapshot, history, onClose }: Props) {
+export function PlayerDetail({ playerId, snapshot, history, tradeStats, onClose }: Props) {
   const player: PlayerDto | undefined = snapshot?.leaderboard.find(
     (p) => p.id === playerId,
   );
@@ -36,6 +38,7 @@ export function PlayerDetail({ playerId, snapshot, history, onClose }: Props) {
     (snapshot?.leaderboard.findIndex((p) => p.id === playerId) ?? -1) + 1;
   const factories = (snapshot?.factories ?? []).filter((f) => f.owner === playerId);
   const caravans = (snapshot?.caravans ?? []).filter((c) => c.owner === playerId);
+  const products = topProducts(tradeStats, playerId);
 
   if (!player) {
     return (
@@ -79,6 +82,26 @@ export function PlayerDetail({ playerId, snapshot, history, onClose }: Props) {
         <div className="pd__chart-label">PnL SEYRİ (sezon)</div>
         <TrendChart points={trendPoints} baseline={0} emptyText="PnL geçmişi birikiyor…" />
       </div>
+
+      {products.length > 0 && (
+        <div className="pd__trades">
+          <div className="pd__asset-title">SEZON İŞLEMLERİ</div>
+          <div className="pd__trade-cols">
+            <span className="pd__trade-h">ürün</span>
+            <span className="pd__trade-h pd__r">aldı</span>
+            <span className="pd__trade-h pd__r">sattı</span>
+            <span className="pd__trade-h pd__r">toplam</span>
+          </div>
+          {products.map((p) => (
+            <div key={p.product} className="pd__trade-row">
+              <span>{PRODUCT_LABEL[p.product] ?? p.product}</span>
+              <span className="pd__r gain-dim">{p.buy_qty > 0 ? compact(p.buy_qty) : "—"}</span>
+              <span className="pd__r loss-dim">{p.sell_qty > 0 ? compact(p.sell_qty) : "—"}</span>
+              <span className="pd__r num">{compact(p.buy_qty + p.sell_qty)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="pd__assets">
         <div className="pd__asset-col">

@@ -106,6 +106,38 @@
   margin-bottom: 0.3rem;
 }
 
+/* ── Sezon işlem istatistiği ─────────────────────────────────────────────── */
+.pd__trades {
+  border-top: 1px solid var(--line-soft);
+  padding: 0.6rem var(--pad-panel);
+  flex-shrink: 0;
+}
+.pd__trade-cols,
+.pd__trade-row {
+  display: grid;
+  grid-template-columns: 1fr 3.5rem 3.5rem 4rem;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: var(--text-sm);
+}
+.pd__trade-cols {
+  margin-bottom: 0.3rem;
+}
+.pd__trade-h {
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  color: var(--text-ghost);
+}
+.pd__trade-row {
+  padding: 0.18rem 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text-dim);
+}
+.pd__trade-row:last-child { border-bottom: none; }
+.pd__r { text-align: right; }
+.gain-dim { color: var(--gain-dim); }
+.loss-dim { color: var(--loss-dim); }
+
 .pd__assets {
   display: grid;
   grid-template-columns: 1fr 1fr;

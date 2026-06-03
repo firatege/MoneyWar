@@ -222,8 +222,9 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if to_target <= cheap_price.as_cents() {
                 continue;
             }
-            // Min kâr taban: maliyet × 1.10 (tax + minimum kâr).
-            let cost_floor = cheap_price.as_cents().saturating_mul(110) / 100;
+            // Min kâr taban: maliyet × 1.03 (sadece işlem vergisi karşılığı).
+            // Eski 1.10 ile Tüccar çok geniş spread bırakıyordu → eşleşme zordu.
+            let cost_floor = cheap_price.as_cents().saturating_mul(103) / 100;
             // BID hizasında match için sell = best_bid (eşit). Kâr taban
             // garantisi: ne olursa olsun cost_floor altına inme.
             let sell_base = Money::from_cents(to_target.max(cost_floor));

@@ -4,13 +4,14 @@ import {
   appendBucketHistory,
   appendHistory,
   appendMarket,
+  appendTradeStats,
   computeMarketPoint,
   mergeFeed,
 } from "../lib/derive";
-import type { BucketHistory, MarketPoint, PlayerHistory } from "../lib/derive";
+import type { BucketHistory, MarketPoint, PlayerHistory, PlayerTradeStats } from "../lib/derive";
 
 // Türetme tipleri lib/derive'da yaşar; geri-uyumluluk için yeniden dışa aktar.
-export type { BucketHistory, MarketPoint, PlayerHistory, PnlPoint } from "../lib/derive";
+export type { BucketHistory, MarketPoint, PlayerHistory, PlayerTradeStats, PnlPoint } from "../lib/derive";
 
 /** Reconnect backoff (ms): üstel, tavanlı. */
 const BACKOFF_MS = [500, 1000, 2000, 4000, 6000];
@@ -28,12 +29,12 @@ interface GameSocket {
   history: PlayerHistory;
   bucketHistory: BucketHistory;
   market: MarketPoint[];
+  tradeStats: PlayerTradeStats;
 }
 
 /**
- * WS /ws bağlantısını yönetir: canlı snapshot, önceki snapshot (flash + sıra
- * değişimi için), tick'ler arası birikmiş olay feed'i ve oyuncu başına PnL
- * geçmişi (sezon değişince sıfırlanır). Kopmada üstel backoff ile yeniden bağlanır.
+ * WS /ws bağlantısını yönetir. Sezon değişince tüm geçmiş sıfırlanır.
+ * Kopmada üstel backoff ile yeniden bağlanır.
  */
 export function useGameSocket(): GameSocket {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -42,6 +43,7 @@ export function useGameSocket(): GameSocket {
   const [history, setHistory] = useState<PlayerHistory>({});
   const [bucketHistory, setBucketHistory] = useState<BucketHistory>({});
   const [market, setMarket] = useState<MarketPoint[]>([]);
+  const [tradeStats, setTradeStats] = useState<PlayerTradeStats>({});
   const [status, setStatus] = useState<ConnStatus>("connecting");
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -58,13 +60,13 @@ export function useGameSocket(): GameSocket {
 
     const seasonChanged = snap.season !== lastSeason.current;
 
-    // Sezon değişince feed + geçmiş sıfırla.
     if (seasonChanged) {
       lastSeason.current = snap.season;
       setFeed([]);
       setHistory({});
       setBucketHistory({});
       setMarket([]);
+      setTradeStats({});
       lastFedTick.current = -1;
     }
 
@@ -75,6 +77,7 @@ export function useGameSocket(): GameSocket {
     setHistory((old) => appendHistory(old, snap));
     setBucketHistory((old) => appendBucketHistory(old, snap));
     setMarket((old) => appendMarket(old, computeMarketPoint(snap)));
+    setTradeStats((old) => appendTradeStats(old, snap));
   }, []);
 
   const connect = useCallback(() => {
@@ -114,5 +117,5 @@ export function useGameSocket(): GameSocket {
     };
   }, [connect]);
 
-  return { snapshot, prev, feed, status, history, bucketHistory, market };
+  return { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats };
 }

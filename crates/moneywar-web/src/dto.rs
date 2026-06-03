@@ -87,6 +87,9 @@ pub struct EventDto {
     /// Eşleşme miktarı + fiyatı (match olayları için) — bucket işlem listesi.
     pub qty: Option<u32>,
     pub price_lira: Option<f64>,
+    /// Alıcı/satıcı kimliği (match olayları için) — kişi bazlı istatistik.
+    pub buyer_id: Option<u64>,
+    pub seller_id: Option<u64>,
 }
 
 /// Grafik için (şehir, ürün) fiyat zaman serisi.
@@ -475,7 +478,7 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
         LogEvent::EventScheduled { .. } => ("news", "Piyasa olayı planlandı".to_string()),
         other => ("other", format!("{other:?}")),
     };
-    let (city, product, qty, price_lira) = event_bucket(&entry.event);
+    let (city, product, qty, price_lira, buyer_id, seller_id) = event_bucket(&entry.event);
     EventDto {
         tick,
         kind: kind.to_string(),
@@ -484,32 +487,35 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
         product,
         qty,
         price_lira,
+        buyer_id,
+        seller_id,
     }
 }
 
-/// Olaya bağlı bucket bilgisi (frontend bucket-özel filtreleme + işlem listesi).
+/// Olaya bağlı bucket + taraf bilgisi.
 fn event_bucket(
     event: &LogEvent,
-) -> (Option<String>, Option<String>, Option<u32>, Option<f64>) {
+) -> (Option<String>, Option<String>, Option<u32>, Option<f64>, Option<u64>, Option<u64>) {
     match event {
-        LogEvent::OrderMatched { city, product, quantity, price, .. } => (
+        LogEvent::OrderMatched { city, product, quantity, price, buyer, seller, .. } => (
             Some(city_slug(*city).to_string()),
             Some(product_slug(*product).to_string()),
             Some(*quantity),
             Some(lira(*price)),
+            Some(buyer.value()),
+            Some(seller.value()),
         ),
         LogEvent::ProductionCompleted { city, product, units, .. } => (
             Some(city_slug(*city).to_string()),
             Some(product_slug(*product).to_string()),
             Some(*units),
-            None,
+            None, None, None,
         ),
         LogEvent::OrderExpired { city, product, .. } => (
             Some(city_slug(*city).to_string()),
             Some(product_slug(*product).to_string()),
-            None,
-            None,
+            None, None, None, None,
         ),
-        _ => (None, None, None, None),
+        _ => (None, None, None, None, None, None),
     }
 }
