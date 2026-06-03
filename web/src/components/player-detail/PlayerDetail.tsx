@@ -1,4 +1,4 @@
-import type { PlayerDto, Snapshot } from "../../types";
+import type { PlayerDto, Snapshot, RelationDto } from "../../types";
 import type { PnlPoint, PlayerTradeStats } from "../../hooks/useGameSocket";
 import { lira, signedCompact, compact } from "../../lib/format";
 import { roleColor } from "../../lib/roles";
@@ -38,7 +38,15 @@ export function PlayerDetail({ playerId, snapshot, history, tradeStats, onClose 
     (snapshot?.leaderboard.findIndex((p) => p.id === playerId) ?? -1) + 1;
   const factories = (snapshot?.factories ?? []).filter((f) => f.owner === playerId);
   const caravans = (snapshot?.caravans ?? []).filter((c) => c.owner === playerId);
+  const privateFarms = (snapshot?.private_farms ?? []).filter((f) => f.owner === playerId);
   const products = topProducts(tradeStats, playerId);
+  // Güven ilişkileri
+  const myRels: RelationDto[] = (snapshot?.relations ?? [])
+    .filter(r => r.player_a === playerId || r.player_b === playerId)
+    .sort((a, b) => b.trust_score - a.trust_score)
+    .slice(0, 5);
+  const isTuccar = player?.npc_kind === "Tüccar";
+  const isSanayici = player?.npc_kind === "Sanayici";
 
   if (!player) {
     return (
@@ -69,13 +77,13 @@ export function PlayerDetail({ playerId, snapshot, history, tradeStats, onClose 
 
       <div className="pd__stats">
         <Stat label="NAKİT" value={`${lira(player.cash_lira)} ₺`} />
-        <Stat
-          label="PnL"
-          value={`${signedCompact(player.pnl_lira)} ₺`}
-          tone={sign}
-        />
-        <Stat label="FABRİKA" value={`${factories.length}`} />
-        <Stat label="KERVAN" value={`${caravans.length}`} />
+        <Stat label="PnL" value={`${signedCompact(player.pnl_lira)} ₺`} tone={sign} />
+        {isSanayici && <Stat label="FABRİKA" value={`${factories.length}`} />}
+        {isSanayici && privateFarms.length > 0 && <Stat label="TARLA" value={`${privateFarms.length}`} />}
+        {isTuccar && <Stat label="KERVAN" value={`${caravans.length}`} />}
+        {myRels.length > 0 && (
+          <Stat label="GÜVEN" value={`%${Math.round(myRels[0].trust_score * 100)}`} />
+        )}
       </div>
 
       <div className="pd__chart-wrap">
@@ -104,34 +112,64 @@ export function PlayerDetail({ playerId, snapshot, history, tradeStats, onClose 
       )}
 
       <div className="pd__assets">
-        <div className="pd__asset-col">
-          <div className="pd__asset-title">FABRİKALAR</div>
-          {factories.length === 0 && <div className="pd__asset-empty">yok</div>}
-          {factories.map((f) => (
-            <div key={f.id} className={`pd__asset ${f.idle ? "pd__asset--idle" : ""}`}>
-              <span>
-                {PRODUCT_LABEL[f.product] ?? f.product} · {CITY_LABEL[f.city] ?? f.city}
-              </span>
-              <span className="pd__asset-meta num">
-                {f.idle ? "ATIL" : `${f.pending_units} bk`}
-              </span>
-            </div>
-          ))}
-        </div>
-        <div className="pd__asset-col">
-          <div className="pd__asset-title">KERVANLAR</div>
-          {caravans.length === 0 && <div className="pd__asset-empty">yok</div>}
-          {caravans.map((c) => (
-            <div key={c.id} className="pd__asset">
-              <span>#{c.id}</span>
-              <span className="pd__asset-meta num">
-                {c.idle
-                  ? `demirli · ${CITY_LABEL[c.current_city ?? ""] ?? "—"}`
-                  : `yolda · ${c.cargo_units} bk`}
-              </span>
-            </div>
-          ))}
-        </div>
+        {/* Sanayici: fabrikalar + özel tarlalar */}
+        {isSanayici && (
+          <div className="pd__asset-col">
+            <div className="pd__asset-title">FABRİKALAR</div>
+            {factories.length === 0 && <div className="pd__asset-empty">yok</div>}
+            {factories.map((f) => (
+              <div key={f.id} className={`pd__asset ${f.idle ? "pd__asset--idle" : ""}`}>
+                <span>{PRODUCT_LABEL[f.product] ?? f.product} · {CITY_LABEL[f.city] ?? f.city}</span>
+                <span className="pd__asset-meta num">{f.idle ? "ATIL" : `${f.pending_units}bk`}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {isSanayici && privateFarms.length > 0 && (
+          <div className="pd__asset-col">
+            <div className="pd__asset-title">ÖZEL TARLALAR</div>
+            {privateFarms.map((f) => (
+              <div key={f.id} className="pd__asset">
+                <span>🌾 {PRODUCT_LABEL[f.product] ?? f.product}</span>
+                <span className="pd__asset-meta">{CITY_LABEL[f.city] ?? f.city}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Tüccar: kervanlar */}
+        {isTuccar && (
+          <div className="pd__asset-col">
+            <div className="pd__asset-title">KERVANLAR</div>
+            {caravans.length === 0 && <div className="pd__asset-empty">yok</div>}
+            {caravans.map((c) => (
+              <div key={c.id} className="pd__asset">
+                <span>#{c.id}</span>
+                <span className="pd__asset-meta num">
+                  {c.idle ? `demirli · ${CITY_LABEL[c.current_city ?? ""] ?? "—"}` : `yolda · ${c.cargo_units}bk`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Güven ilişkileri */}
+        {myRels.length > 0 && (
+          <div className="pd__asset-col">
+            <div className="pd__asset-title">EN GÜÇLÜ BAĞLAR</div>
+            {myRels.map(r => {
+              const otherId = r.player_a === playerId ? r.player_b : r.player_a;
+              const other = snapshot?.leaderboard.find(p => p.id === otherId);
+              const pct = Math.round(r.trust_score * 100);
+              return (
+                <div key={`${r.player_a}-${r.player_b}`} className="pd__asset">
+                  <span>{other?.name ?? `#${otherId}`}</span>
+                  <span className="pd__asset-meta num" style={{ color: pct > 50 ? "var(--gain-dim)" : "var(--text-faint)" }}>
+                    %{pct}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -15,7 +15,7 @@ use moneywar_npc::Difficulty;
 /// Sezon uzunluğu (tick). 250 tick × 5 sn ≈ 20 dk.
 pub const SEASON_TICKS: u32 = 250;
 /// Tick aralığı (saniye).
-pub const TICK_SECONDS: u64 = 5;
+pub const TICK_SECONDS: u64 = 3;
 /// Varsayılan base seed ("MoneyWar" ASCII) — frontend ile aynı oyun dizisi.
 pub const DEFAULT_SEED: u64 = 0x4D6F_6E65_7957_6172;
 /// Canlı oyunun zorluğu.
