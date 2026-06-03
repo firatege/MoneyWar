@@ -79,7 +79,11 @@ pub fn decide_behavior(
     }
 
     // Skor hesapla — her aday için kendi `(city, product)` bağlamından sinyaller.
-    let weights = personality::for_kind_personality(player.npc_kind, player.personality);
+    // Faz 6: rol+kişilik ağırlıkları → brain traits ile dinamik modülasyon.
+    let base_weights = personality::for_kind_personality(player.npc_kind, player.personality);
+    let weights = brain
+        .map(|b| b.traits.modulate(base_weights))
+        .unwrap_or(base_weights);
     let mut scored: Vec<(ActionCandidate, f64)> = candidates
         .into_iter()
         .map(|cand| {

@@ -37,6 +37,61 @@ const PNL_TREND_REF_CENTS: f64 = 100_000.0; // 1000₺ = 100_000 cent
 /// Cash surplus referans eşiği — bu naditin üstü "harcayacak para var".
 const CASH_SURPLUS_REF: f64 = 40_000.0; // 40K₺
 
+// Trait drift hızı — her tick max bu kadar kayar (çok hızlı salınmayı önler).
+const TRAIT_DRIFT_RATE: f64 = 0.02;
+
+/// Sürekli kişilik trait vektörü — tüm değerler [0,1].
+/// Statik Personality enum'un yerine geçmez; onu başlangıç noktası olarak
+/// kullanır ve sonra deneyimle kayar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PersonalityTraits {
+    /// Risk iştahı: 0=aşırı temkinli, 1=tam spekülatif.
+    pub risk: f64,
+    /// Agresiflik: 0=pasif bekle, 1=rakibe agresif saldır.
+    pub aggression: f64,
+    /// Sabır: 0=hemen sat/al (panik), 1=fiyat olgunlaşana kadar bekle.
+    pub patience: f64,
+    /// Kâr açgözlülüğü: 0=makul kâra razı, 1=maksimum marj ısrar.
+    pub greed: f64,
+}
+
+impl Default for PersonalityTraits {
+    fn default() -> Self {
+        // Başlangıç: orta seviye her şey.
+        Self { risk: 0.5, aggression: 0.5, patience: 0.5, greed: 0.5 }
+    }
+}
+
+impl PersonalityTraits {
+    /// Trait'lerin mevcut `Weights`'i nasıl modüle ettiği:
+    /// - risk: arbitrage + expected_edge ölçeklenir
+    /// - aggression: rival_threat yanıtı + bucket_dominance
+    /// - patience: urgency karşıtı (yüksek sabır → urgency ağırlığı düşer)
+    /// - greed: price_rel_avg amplify (pahalıya sat, ucuza al ısrarı)
+    pub fn modulate(&self, mut w: super::scoring::Weights) -> super::scoring::Weights {
+        // Risk: yüksekse spekülatif sinyallere daha duyarlı
+        let risk_scale = 0.5 + self.risk;        // 0.5..1.5
+        w.arbitrage *= risk_scale;
+        w.expected_edge *= risk_scale;
+
+        // Aggression: rakip ve hâkimiyet sinyallerine tepki
+        let agg_scale = 0.5 + self.aggression;   // 0.5..1.5
+        w.rival_threat *= agg_scale;
+        w.bucket_dominance *= agg_scale;
+        w.competition *= agg_scale;              // negatif ağırlıksa daha güçlü kaç
+
+        // Patience: düşük sabır → urgency güçlenir (hemen işlem yap)
+        let impatience = 1.0 - self.patience;    // 0..1
+        w.urgency *= 0.5 + impatience;           // 0.5..1.5
+
+        // Greed: yüksek açgözlülük → fiyat rel avg'ye daha duyarlı
+        let greed_scale = 0.5 + self.greed;
+        w.price_rel_avg *= greed_scale;
+
+        w
+    }
+}
+
 // Goal geçiş eşikleri
 /// Corner hedefi için gereken minimum sahiplik oranı.
 const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.25;
@@ -92,6 +147,10 @@ pub struct AgentBrain {
     /// Hedefe kaç tick'tir devam ediliyor (geçiş hızını kontrol eder).
     goal_age: u32,
 
+    // ── Faz 6: dinamik kişilik ────────────────────────────────────────────────
+    /// Deneyimle kayan sürekli trait vektörü.
+    pub traits: PersonalityTraits,
+
     // -- İç izleme (dışarıya kapalı) --
     prev_pnl_cents: i64,
     pnl_deltas: VecDeque<i64>,
@@ -107,6 +166,7 @@ impl Default for AgentBrain {
             price_beliefs: BTreeMap::new(),
             goal: Goal::Expand,
             goal_age: 0,
+            traits: PersonalityTraits::default(),
             prev_pnl_cents: 0,
             pnl_deltas: VecDeque::with_capacity(PNL_WINDOW + 1),
         }
@@ -123,6 +183,7 @@ impl AgentBrain {
         self.update_rival_threat(state, player_id);
         self.update_price_beliefs(state);
         self.update_goal(player_id);
+        self.update_traits();
     }
 
     /// Bu (city, product) mevcut hedefle ne kadar uyumlu? [0..1].
@@ -256,6 +317,32 @@ impl AgentBrain {
                     self.market_ownership.insert((*city, *product), share);
                 }
             }
+        }
+    }
+
+    /// Trait'leri pnl_trend'e göre kaydır.
+    fn update_traits(&mut self) {
+        let t = &mut self.traits;
+        let trend = self.pnl_trend; // 0=kaybediyor, 0.5=sabit, 1=kazanıyor
+
+        if trend > 0.6 {
+            // Kazanıyor: özgüvenle büyü
+            drift(&mut t.risk,       0.7, TRAIT_DRIFT_RATE);
+            drift(&mut t.aggression, 0.65, TRAIT_DRIFT_RATE);
+            drift(&mut t.patience,   0.7, TRAIT_DRIFT_RATE);
+            drift(&mut t.greed,      0.7, TRAIT_DRIFT_RATE);
+        } else if trend < 0.35 {
+            // Kaybediyor: panik + çaresiz saldırganlık
+            drift(&mut t.risk,       0.3, TRAIT_DRIFT_RATE);  // korkak
+            drift(&mut t.aggression, 0.75, TRAIT_DRIFT_RATE); // çaresiz saldırı
+            drift(&mut t.patience,   0.25, TRAIT_DRIFT_RATE); // panik sat
+            drift(&mut t.greed,      0.3, TRAIT_DRIFT_RATE);  // daha ucuza satar
+        } else {
+            // Nötr: yavaşça ortaya dön
+            drift(&mut t.risk,       0.5, TRAIT_DRIFT_RATE * 0.3);
+            drift(&mut t.aggression, 0.5, TRAIT_DRIFT_RATE * 0.3);
+            drift(&mut t.patience,   0.5, TRAIT_DRIFT_RATE * 0.3);
+            drift(&mut t.greed,      0.5, TRAIT_DRIFT_RATE * 0.3);
         }
     }
 
@@ -419,6 +506,12 @@ impl BrainPool {
 // `1 / (1 + e^{-x})` — sonuç (0,1), x=0 → 0.5.
 fn sigmoid(x: f64) -> f64 {
     1.0 / (1.0 + (-x.clamp(-10.0, 10.0)).exp())
+}
+
+/// Değeri hedefe doğru `rate` kadar kaydır (lerp adımı).
+fn drift(value: &mut f64, target: f64, rate: f64) {
+    *value += (target - *value) * rate;
+    *value = value.clamp(0.0, 1.0);
 }
 
 #[cfg(test)]
