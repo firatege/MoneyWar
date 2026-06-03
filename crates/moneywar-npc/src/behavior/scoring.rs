@@ -33,6 +33,9 @@ pub struct Weights {
     pub market_ownership: f64,
     /// Rakip tehdidi: pozitif → rakip varsa agresifleş, negatif → çekil.
     pub rival_threat: f64,
+    /// Beklenti kenarı: >0.5 → anlık ucuz (al fırsatı), <0.5 → pahalı (sat).
+    /// Pozitif ağırlık = ucuz görünce agresif al/üret, negatif = pahalıyken sat.
+    pub expected_edge: f64,
 }
 
 impl Weights {
@@ -51,6 +54,7 @@ impl Weights {
         cash_surplus: 0.0,
         market_ownership: 0.0,
         rival_threat: 0.0,
+        expected_edge: 0.0,
     };
 }
 
@@ -71,6 +75,7 @@ pub fn score_candidate(inputs: &Inputs, weights: &Weights) -> f64 {
         + g("cash_surplus") * weights.cash_surplus
         + g("market_ownership") * weights.market_ownership
         + g("rival_threat") * weights.rival_threat
+        + g("expected_edge") * weights.expected_edge
 }
 
 #[cfg(test)]

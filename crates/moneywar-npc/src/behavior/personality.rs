@@ -100,7 +100,9 @@ const fn ciftci_default() -> Weights {
         market_ownership: 0.3,
         cash_surplus: -0.2, // nakit azsa sat
         pnl_trend: 0.2,     // kazanıyorsa fiyatı biraz koru
-        rival_threat: -0.1, // rakip fazlaysa biraz çekil (fiyat savaşı değer etmez)
+        rival_threat: -0.1,
+        // Faz 3: mahsul ucuzsa sat (ucuz gördüğünde agresif)
+        expected_edge: 0.4,
         ..Weights::ZERO
     }
 }
@@ -126,7 +128,9 @@ const fn sanayici_default() -> Weights {
         pnl_trend: 0.5,       // PnL artıyorsa cesurca yatırım yap
         cash_surplus: 0.5,    // bol nakit = fabrika/ham madde zamanı
         market_ownership: 0.4, // sahip olduğum bucket'a odaklan
-        rival_threat: 0.3,    // rakip girince üretimi artır (flood)
+        rival_threat: 0.3,
+        // Faz 3: anlık fiyat beklentinin altındaysa hammadde al / mamul üret
+        expected_edge: 0.5,
         ..Weights::ZERO
     }
 }
@@ -149,7 +153,9 @@ const fn spekulator_default() -> Weights {
         pnl_trend: 0.4,        // kazanıyorsa aynı stratejiyi sürdür
         cash_surplus: 0.3,     // nakit varsa pozisyon aç
         market_ownership: -0.2, // zaten sahip olduğum yer → çeşitlen
-        rival_threat: -0.3,    // rakip kalabalıksa başka pazara geç
+        rival_threat: -0.3,
+        // Faz 3: anlık ucuzsa pozisyon al (spekülatörün ana işi bu)
+        expected_edge: 0.7,
         ..Weights::ZERO
     }
 }
@@ -171,7 +177,9 @@ const fn tuccar_default() -> Weights {
         pnl_trend: 0.3,        // kazanıyorsa mevcut rotayı sürdür
         cash_surplus: 0.3,     // nakit varsa daha fazla dispatch
         market_ownership: 0.5, // "benim" rota → oraya öncelik ver
-        rival_threat: -0.4,    // rakip kalabalıksa başka rotaya geç (verimli)
+        rival_threat: -0.4,
+        // Faz 3: ucuz mal olan rotaya git
+        expected_edge: 0.4,
         ..Weights::ZERO
     }
 }
@@ -198,6 +206,7 @@ const fn esnaf_default() -> Weights {
         cash_surplus: 0.2,
         market_ownership: 0.3,
         rival_threat: -0.2,
+        expected_edge: 0.3,
         ..Weights::ZERO
     }
 }
@@ -222,7 +231,9 @@ const fn alici_default() -> Weights {
         pnl_trend: 0.3,        // kazanıyorsa daha fazla al
         cash_surplus: 0.4,     // nakit varsa stok yap
         market_ownership: 0.4, // sürekli aldığım bucket'a sadık kal
-        rival_threat: -0.1,    // rakip kalabalıksa alternatife bak
+        rival_threat: -0.1,
+        // Faz 3: ucuz mal gördüğünde al (alıcı zaten bunu yapmalı)
+        expected_edge: 0.5,
         ..Weights::ZERO
     }
 }

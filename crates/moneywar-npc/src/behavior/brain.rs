@@ -1,11 +1,19 @@
-//! Ajan hafıza katmanı (Faz 2) — tick'ler arası yaşayan `AgentBrain`.
+//! Ajan hafıza katmanı (Faz 2 + 3) — tick'ler arası yaşayan `AgentBrain`.
 //!
 //! Her NPC'nin bir `AgentBrain`'i vardır; `BrainPool` tüm beyinleri tutar.
 //! Motor (`advance_tick`) saf ekonomik mekanik olarak kalır; beyin AI'nın
 //! derdidir. Her tick:
 //!   1. `brain.observe(state, pid)` — gözlem güncelle (deterministik)
-//!   2. `brain.signals()` — 4 yeni sinyal üret → `compute_inputs`'a eklenir
+//!   2. `inject_brain_signals` — sinyalleri inputs map'ine ekle
 //!   3. `decide_behavior` normal skor hesabını yapar, beyin sinyalleri dahil
+//!
+//! ## Faz 3 eklemeleri
+//!
+//! - **Fiyat beklentisi (EWMA):** brain geçmişten beklediği fiyatı öğrenir;
+//!   `expected_edge` sinyali anlık fiyatın beklentinin ne kadar altında/üstünde
+//!   olduğunu gösterir → öngörülü al/sat kararı.
+//! - **Skill noise:** kazanan ajan güveniyle keskin kararlar (az gürültü),
+//!   kaybeden panikleyip hata yapar (fazla gürültü) → doğal kartopu.
 //!
 //! # Determinizm
 //!
@@ -24,10 +32,16 @@ const PNL_WINDOW: usize = 8;
 const PNL_TREND_REF_CENTS: f64 = 100_000.0; // 1000₺ = 100_000 cent
 /// Cash surplus referans eşiği — bu naditin üstü "harcayacak para var".
 const CASH_SURPLUS_REF: f64 = 40_000.0; // 40K₺
+/// Fiyat beklentisi EWMA katsayısı (0=donmuş hafıza, 1=anlık).
+/// 0.2 → ~5 tick gecikmeli beklenti; ani şoklara aşırı tepki vermez.
+const BELIEF_ALPHA: f64 = 0.2;
+/// Kaybeden ajanın kazanan üstündeki ek gürültüsü (noise scale).
+const LOSER_NOISE_PENALTY: f64 = 0.15;
 
 /// Bir NPC'nin tick'ler arası hatırladığı durum.
 #[derive(Debug, Clone)]
 pub struct AgentBrain {
+    // ── Faz 2 sinyalleri ─────────────────────────────────────────────────────
     /// PnL trendi: 0.0 = hızla düşüyor, 0.5 = sabit, 1.0 = hızla yükseliyor.
     pub pnl_trend: f64,
     /// Nakit fazlası: 0.0 = kasada para yok, 1.0 = bol para.
@@ -37,6 +51,10 @@ pub struct AgentBrain {
     /// Kendi bucket'larıma rakip baskısı: PlayerId → ağırlıklı tehdit skoru.
     pub rival_threat: BTreeMap<PlayerId, f64>,
 
+    // ── Faz 3: fiyat beklentisi ───────────────────────────────────────────────
+    /// EWMA fiyat beklentisi (lira) — geçmişten öğrenilen "adil fiyat" tahmini.
+    pub price_beliefs: BTreeMap<(CityId, ProductKind), f64>,
+
     // -- İç izleme (dışarıya kapalı) --
     prev_pnl_cents: i64,
     pnl_deltas: VecDeque<i64>,
@@ -45,10 +63,11 @@ pub struct AgentBrain {
 impl Default for AgentBrain {
     fn default() -> Self {
         Self {
-            pnl_trend: 0.5,    // başlangıçta nötr
+            pnl_trend: 0.5,
             cash_surplus: 0.5,
             market_ownership: BTreeMap::new(),
             rival_threat: BTreeMap::new(),
+            price_beliefs: BTreeMap::new(),
             prev_pnl_cents: 0,
             pnl_deltas: VecDeque::with_capacity(PNL_WINDOW + 1),
         }
@@ -63,6 +82,24 @@ impl AgentBrain {
         self.update_cash_surplus(state, player_id);
         self.update_market_ownership(state, player_id);
         self.update_rival_threat(state, player_id);
+        self.update_price_beliefs(state);
+    }
+
+    /// Bu (city, product) için beklenen fiyat (lira). Hiç görülmediyse 0.
+    #[must_use]
+    pub fn expected_price(&self, city: CityId, product: ProductKind) -> Option<f64> {
+        self.price_beliefs.get(&(city, product)).copied()
+    }
+
+    /// Sınırlı rasyonellik gürültüsü — kazanan az hata yapar, kaybeden panikler.
+    /// `base_noise` difficulty'den gelen taban gürültü.
+    #[must_use]
+    pub fn skill_noise(&self, base_noise: f64) -> f64 {
+        // pnl_trend 0.5 = nötr, 1.0 = kazanıyor, 0.0 = kaybediyor.
+        // Kaybeden (trend < 0.5): taban gürültüye ceza eklenir.
+        // Kazanan (trend > 0.5): gürültü azaltılır (min base_noise * 0.5).
+        let adj = (0.5 - self.pnl_trend) * LOSER_NOISE_PENALTY * 2.0;
+        (base_noise + adj).clamp(base_noise * 0.5, base_noise + LOSER_NOISE_PENALTY)
     }
 
     /// Bu (city, product) için market_ownership sinyali (0..1).
@@ -135,6 +172,22 @@ impl AgentBrain {
                 let share = my_sell as f64 / total_sell as f64;
                 if share > 0.0 {
                     self.market_ownership.insert((*city, *product), share);
+                }
+            }
+        }
+    }
+
+    fn update_price_beliefs(&mut self, state: &GameState) {
+        for city in CityId::ALL {
+            for product in ProductKind::ALL {
+                let current = state
+                    .price_history
+                    .get(&(city, product))
+                    .and_then(|h| h.last().map(|(_, p)| p.as_cents() as f64 / 100.0));
+                if let Some(cur) = current {
+                    let belief = self.price_beliefs.entry((city, product)).or_insert(cur);
+                    // EWMA: yeni beklenti = α × anlık + (1-α) × eski beklenti
+                    *belief = BELIEF_ALPHA * cur + (1.0 - BELIEF_ALPHA) * *belief;
                 }
             }
         }
@@ -260,5 +313,42 @@ mod tests {
         assert!((sigmoid(0.0) - 0.5).abs() < 1e-9);
         assert!(sigmoid(10.0) > 0.99);
         assert!(sigmoid(-10.0) < 0.01);
+    }
+
+    #[test]
+    fn price_belief_converges_toward_current_price() {
+        let (mut s, pid) = make_state_with_npc(10_000);
+        // Fiyat geçmişine birkaç nokta ekle.
+        let price = moneywar_domain::Money::from_lira(100).unwrap();
+        s.price_history
+            .entry((CityId::Istanbul, ProductKind::Pamuk))
+            .or_default()
+            .push((moneywar_domain::Tick::new(1), price));
+
+        let mut brain = AgentBrain::default();
+        // İlk observe → beklenti anlık fiyattan başlar.
+        brain.observe(&s, pid);
+        let b1 = brain.expected_price(CityId::Istanbul, ProductKind::Pamuk).unwrap();
+        assert!((b1 - 100.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn skill_noise_winner_lower_than_loser() {
+        let base = 0.10;
+        let mut winner = AgentBrain::default();
+        winner.pnl_trend = 0.9; // kazanıyor
+        let mut loser = AgentBrain::default();
+        loser.pnl_trend = 0.1; // kaybediyor
+
+        assert!(winner.skill_noise(base) < loser.skill_noise(base));
+    }
+
+    #[test]
+    fn skill_noise_neutral_equals_base() {
+        let base = 0.10;
+        let neutral = AgentBrain::default(); // pnl_trend = 0.5
+        let noise = neutral.skill_noise(base);
+        // Nötr → base ± küçük tolerans (0.5 - 0.5 = 0, adj = 0)
+        assert!((noise - base).abs() < 0.01);
     }
 }

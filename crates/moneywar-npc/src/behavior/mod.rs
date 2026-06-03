@@ -90,7 +90,7 @@ pub fn decide_behavior(
             let base_score = if let Some((city, product)) = cand.context() {
                 let mut inputs = signals::compute_inputs(state, pid, city, product);
                 if let Some(b) = brain {
-                    signals::inject_brain_signals(&mut inputs, b, city, product, pid);
+                    signals::inject_brain_signals(&mut inputs, b, city, product, pid, state);
                 }
                 scoring::score_candidate(&inputs, &weights)
             } else {
@@ -103,8 +103,12 @@ pub fn decide_behavior(
                     _ => 0.0,
                 }
             };
-            let noise = if difficulty.noise > 0.0 {
-                (rng.random::<f64>() - 0.5) * 2.0 * difficulty.noise
+            // Faz 3: skill noise — kazanan keskin, kaybeden panikler.
+            let effective_noise = brain
+                .map(|b| b.skill_noise(difficulty.noise))
+                .unwrap_or(difficulty.noise);
+            let noise = if effective_noise > 0.0 {
+                (rng.random::<f64>() - 0.5) * 2.0 * effective_noise
             } else {
                 0.0
             };

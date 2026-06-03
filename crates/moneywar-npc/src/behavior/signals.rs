@@ -177,18 +177,39 @@ pub fn compute_inputs(
 }
 
 /// Brain sinyallerini mevcut inputs map'ine ekle.
-/// Brain yoksa (None) ekleme yapılmaz — önceki davranış korunur.
+/// `state` Faz 3 beklenti hesabı için gerekli (anlık fiyat karşılaştırması).
 pub fn inject_brain_signals(
     inputs: &mut Inputs,
     brain: &AgentBrain,
     city: CityId,
     product: ProductKind,
     player_id: PlayerId,
+    state: &moneywar_domain::GameState,
 ) {
+    // ── Faz 2 sinyalleri ─────────────────────────────────────────────────────
     inputs.insert("pnl_trend", brain.pnl_trend);
     inputs.insert("cash_surplus", brain.cash_surplus);
     inputs.insert("market_ownership", brain.ownership_of(city, product));
     inputs.insert("rival_threat", brain.rival_threat_for(city, product, player_id));
+
+    // ── Faz 3: beklenti kenarı ────────────────────────────────────────────────
+    // Anlık fiyat beklentinin altındaysa → "ucuz, al" (edge > 0.5).
+    // Anlık fiyat beklentinin üstündeyse → "pahalı, sat" (edge < 0.5).
+    let current_lira = state
+        .price_history
+        .get(&(city, product))
+        .and_then(|h| h.last().map(|(_, p)| p.as_cents() as f64 / 100.0));
+
+    let edge = match (current_lira, brain.expected_price(city, product)) {
+        (Some(cur), Some(exp)) if exp > 0.0 => {
+            // edge > 0 → anlık ucuz (alım fırsatı)
+            // edge < 0 → anlık pahalı (satış fırsatı)
+            ((exp - cur) / exp).clamp(-1.0, 1.0)
+        }
+        _ => 0.0, // beklenti veya anlık fiyat yok → nötr
+    };
+    // [0,1]: 0.5 nötr, >0.5 ucuz (al), <0.5 pahalı (sat)
+    inputs.insert("expected_edge", (0.5 + edge * 0.5).clamp(0.0, 1.0));
 }
 
 // ============================================================================
