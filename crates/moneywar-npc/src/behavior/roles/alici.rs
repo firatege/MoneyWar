@@ -46,7 +46,16 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             }
             // Alıcı CROSS policy — tüketici talep esnek değil, best_ask
             // üzerine atlar. Cash_ceiling = stok-based urgency (100-110%).
-            let cash_ceiling = bid_with_urgency(reference, player, city, product);
+            let mut cash_ceiling = bid_with_urgency(reference, player, city, product);
+            // Güven bonusu: tanıdık satıcı varsa %10 daha fazla öde → önce onunla eşleş.
+            let trust = state.max_trust_in_bucket(player.id, city, product);
+            if trust > 0.3 {
+                // max %10 bonus (0.3 güven → %3, 1.0 güven → %10)
+                let bonus_pct = ((trust - 0.3) / 0.7 * 10.0) as i64;
+                cash_ceiling = Money::from_cents(
+                    cash_ceiling.as_cents().saturating_mul(100 + bonus_pct) / 100
+                );
+            }
             let Some(unit_price) = marketable_bid(
                 state,
                 player.id,

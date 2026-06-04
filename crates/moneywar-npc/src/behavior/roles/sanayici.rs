@@ -206,16 +206,21 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
         // Nakit kritikse taban düşür — ücret ödemek için satmak zorunda.
         let cash_lira = player.cash.as_cents() / 100;
-        let stock_floor_pct: i64 = if cash_lira < 5_000 {
-            78  // kritik nakit → ne olursa satalım
+        // Güvenilen alıcı varsa taban biraz düşür → sadık müşteriye indirim.
+        let trust_discount = {
+            let trust = state.max_trust_in_bucket(player.id, city, product);
+            if trust > 0.5 { 3i64 } else { 0i64 } // max %3 indirim
+        };
+        let stock_floor_pct: i64 = (if cash_lira < 5_000 {
+            78
         } else {
             match qty {
-                0..=49 => 95,  // taze mamul
-                50..=99 => 90, // orta stok
-                _ => 85,       // yüksek stok → kervan da dispatch edecek
+                0..=49 => 95,
+                50..=99 => 90,
+                _ => 85,
             }
-        };
-        let stock_floor = scale_pct(reference, stock_floor_pct);
+        }) - trust_discount;
+        let stock_floor = scale_pct(reference, stock_floor_pct.max(70));
         // Faz 4: Rakip bu bucket'ta aktifse cross — altına fiyatla ez.
         // rivalry_score: kitaptaki rakip sell qty / kendi sell qty.
         let rival_sell: u32 = state
