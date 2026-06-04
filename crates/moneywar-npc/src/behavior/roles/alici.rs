@@ -47,13 +47,36 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             // Alıcı CROSS policy — tüketici talep esnek değil, best_ask
             // üzerine atlar. Cash_ceiling = stok-based urgency (100-110%).
             let mut cash_ceiling = bid_with_urgency(reference, player, city, product);
-            // Güven bonusu: tanıdık satıcı varsa %10 daha fazla öde → önce onunla eşleş.
+
+            // Güven bonusu: tanıdık satıcı varsa daha fazla öde.
             let trust = state.max_trust_in_bucket(player.id, city, product);
             if trust > 0.3 {
-                // max %10 bonus (0.3 güven → %3, 1.0 güven → %10)
                 let bonus_pct = ((trust - 0.3) / 0.7 * 10.0) as i64;
                 cash_ceiling = Money::from_cents(
                     cash_ceiling.as_cents().saturating_mul(100 + bonus_pct) / 100
+                );
+            }
+
+            // Monopol kabulü: bucket'ta tek satıcı varsa daha yüksek fiyata razı ol.
+            // Alıcının başka seçeneği yoksa premium ödemeye mecbur.
+            let seller_count = state.order_book.get(&(city, product))
+                .map(|orders| {
+                    let sellers: std::collections::BTreeSet<_> = orders.iter()
+                        .filter(|o| o.side.is_sell())
+                        .map(|o| o.player)
+                        .collect();
+                    sellers.len()
+                })
+                .unwrap_or(0);
+            if seller_count <= 1 {
+                // Tek satıcı → %20 daha fazla öde (monopoly tax)
+                cash_ceiling = Money::from_cents(
+                    cash_ceiling.as_cents().saturating_mul(120) / 100
+                );
+            } else if seller_count == 2 {
+                // Az satıcı → %10 daha fazla
+                cash_ceiling = Money::from_cents(
+                    cash_ceiling.as_cents().saturating_mul(110) / 100
                 );
             }
             let Some(unit_price) = marketable_bid(

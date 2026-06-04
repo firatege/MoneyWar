@@ -215,20 +215,31 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         });
         // Nakit kritikse taban düşür — ücret ödemek için satmak zorunda.
         let cash_lira = player.cash.as_cents() / 100;
-        // Güvenilen alıcı varsa taban biraz düşür → sadık müşteriye indirim.
+        // Fabrika sahipliği = piyasa gücü ölçütü (emir kitabından daha stabil).
+        // Bu bucket'ta rakip fabrika var mı?
+        let rival_fab_count = state.factories.values()
+            .filter(|f| f.city == city && f.product == product && f.owner != player.id)
+            .count();
+        let own_fab_count = state.factories.values()
+            .filter(|f| f.city == city && f.product == product && f.owner == player.id)
+            .count();
+        // Sadık müşteriye indirim
         let trust_discount = {
             let trust = state.max_trust_in_bucket(player.id, city, product);
-            if trust > 0.5 { 3i64 } else { 0i64 } // max %3 indirim
+            if trust > 0.5 { 3i64 } else { 0i64 }
         };
-        let stock_floor_pct: i64 = (if cash_lira < 5_000 {
+        let stock_floor_pct: i64 = if rival_fab_count == 0 && own_fab_count > 0 {
+            // TEK ÜRETİCİ: monopol premium → baseline'ın %120
+            120 - trust_discount
+        } else if rival_fab_count == 1 && own_fab_count >= rival_fab_count {
+            // Az rakip, ben dominant → hafif premium (%108)
+            108 - trust_discount
+        } else if cash_lira < 5_000 {
             78
         } else {
-            match qty {
-                0..=49 => 95,
-                50..=99 => 90,
-                _ => 85,
-            }
-        }) - trust_discount;
+            // Rekabetçi
+            match qty { 0..=49 => 95, 50..=99 => 90, _ => 85 }
+        } - trust_discount;
         let stock_floor = scale_pct(reference, stock_floor_pct.max(70));
         // Faz 4: Rakip bu bucket'ta aktifse cross — altına fiyatla ez.
         // rivalry_score: kitaptaki rakip sell qty / kendi sell qty.
@@ -556,7 +567,29 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         .count();
 
     if own_count == 0 {
-        // İlk fab — player_id ile deterministic farklı yer
+        // İlk fab: player_id % 3 → ürün uzmanlığı belirle.
+        // Her sanayici farklı mamul ürünüyle başlar → doğal uzmanlaşma temeli.
+        // ID 104→Kumaş, 105→Un, 106→Zeytinyağı (mod değil ID-100 mod 3)
+        let preferred_product = match (player.id.value().saturating_sub(100)) % 3 {
+            0 => ProductKind::Kumas,
+            1 => ProductKind::Un,
+            _ => ProductKind::Zeytinyagi,
+        };
+        // Tercih edilen ürün için en iyi şehri seç (specialty varsa orası)
+        let preferred = candidates.iter()
+            .filter(|(_, p)| *p == preferred_product)
+            .min_by_key(|(c, _)| {
+                // Specialty şehiri tercih et (daha ucuz hammadde)
+                let is_specialty = state.city_specialty.get(c)
+                    .and_then(|raw| preferred_product.raw_input().map(|r| *raw == r))
+                    .unwrap_or(false);
+                if is_specialty { 0usize } else { 1 }
+            })
+            .copied();
+        if let Some(target) = preferred {
+            return Some(target);
+        }
+        // Fallback: id-bazlı genel seçim
         let idx = (player.id.value() as usize) % candidates.len();
         return Some(candidates[idx]);
     }
