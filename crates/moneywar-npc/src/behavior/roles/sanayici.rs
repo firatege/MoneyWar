@@ -602,7 +602,9 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
         // Zeytinyağı için ek global penalty — Zeytin kıt, fazla Zeyt.yağı fab
         // kurulmasın. Global same_product yerine ürün bazlı ek ağırlık.
         let product_bias = if *product == ProductKind::Zeytinyagi { 2 } else { 0 };
-        let competition_factor = 1 + 2 * rival_count + 3 * own_count + 3 * same_product_global + product_bias;
+        // Rakip ağırlığını artır: kendi slot'una girmek çok pahalı → uzmanlaşma zorlar.
+        // rival_count 6× (eski 2×): 1 rakip varken skor 7× düşer → başka slot seç.
+        let competition_factor = 1 + 6 * rival_count + 3 * own_count + 3 * same_product_global + product_bias;
         let base_score = margin / competition_factor;
 
         // Specialty bonus: şehrin prime hammaddesi bu ürünün girdisiyle eşleşirse
