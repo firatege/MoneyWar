@@ -1,5 +1,13 @@
 // Backend DTO katmanının (crates/moneywar-web/src/dto.rs) birebir karşılığı.
 
+export interface BrainTraitsDto {
+  aggression: number;
+  patience: number;
+  risk: number;
+  greed: number;
+  pnl_trend: number;
+}
+
 export interface PlayerDto {
   id: number;
   name: string;
@@ -8,6 +16,9 @@ export interface PlayerDto {
   cash_lira: number;
   pnl_lira: number;
   is_npc: boolean;
+  /** "EXPAND" | "CORNER" | "PRICE_WAR" | "CONSOLIDATE" | "RETREAT" | null */
+  goal: string | null;
+  traits: BrainTraitsDto | null;
 }
 
 export interface PriceCell {

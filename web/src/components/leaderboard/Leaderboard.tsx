@@ -108,10 +108,28 @@ function LeaderRow({
       <span className="lb__role" style={{ color, borderColor: color }}>
         {roleCode(player.npc_kind)}
       </span>
-      <span className="lb__name">{player.name}</span>
+      <span className="lb__name">
+        {player.name}
+        {player.goal && player.goal !== "EXPAND" && (
+          <GoalBadge goal={player.goal} />
+        )}
+      </span>
       <span className={`lb__pnl lb__pnl--${sign} num`}>{signedCompact(player.pnl_lira)}</span>
     </button>
   );
+}
+
+const GOAL_META: Record<string, { label: string; cls: string }> = {
+  CORNER:      { label: "◈ KÖŞE",     cls: "lb__goal--corner" },
+  PRICE_WAR:   { label: "⚡ SAVAŞ",   cls: "lb__goal--war" },
+  CONSOLIDATE: { label: "◎ PEKİŞTİR", cls: "lb__goal--consolidate" },
+  RETREAT:     { label: "↩ ÇEKİL",   cls: "lb__goal--retreat" },
+};
+
+function GoalBadge({ goal }: { goal: string }) {
+  const meta = GOAL_META[goal];
+  if (!meta) return null;
+  return <span className={`lb__goal ${meta.cls}`}>{meta.label}</span>;
 }
 
 /** Sıra değişimi göstergesi: ▲n yükseldi, ▼n düştü, — sabit. */

@@ -9,6 +9,7 @@ use moneywar_domain::{
     CityId, GameState, Money, NpcKind, OrderSide, PlayerId, ProductKind,
 };
 use moneywar_engine::{LogEntry, LogEvent, TickReport, leaderboard};
+use moneywar_npc::BrainPool;
 use serde::Serialize;
 
 /// Bir tick anının tam görüntüsü — ilk yükleme + her tick WS push.
@@ -37,6 +38,21 @@ pub struct PlayerDto {
     pub cash_lira: f64,
     pub pnl_lira: f64,
     pub is_npc: bool,
+    /// Ajan hedef durumu: "Expand" | "Corner:istanbul:kumas" | "PriceWar:…" | "Consolidate" | "Retreat" | null
+    pub goal: Option<String>,
+    /// Kişilik trait vektörü [0,1] — sadece NPC'ler için.
+    pub traits: Option<BrainTraitsDto>,
+}
+
+/// NPC ajan kişilik trait özeti.
+#[derive(Debug, Clone, Serialize)]
+pub struct BrainTraitsDto {
+    pub aggression: f64,
+    pub patience: f64,
+    pub risk: f64,
+    pub greed: f64,
+    /// Sezon boyunca PnL trendi: 0=kaybediyor, 0.5=sabit, 1=kazanıyor.
+    pub pnl_trend: f64,
 }
 
 /// Tek bir (şehir, ürün) pazar hücresi — fiyat ızgarası kaynağı.
@@ -163,13 +179,14 @@ pub fn build_snapshot(
     season: u64,
     season_ticks: u32,
     seconds_per_tick: u32,
+    brains: &BrainPool,
 ) -> Snapshot {
     Snapshot {
         season,
         tick: state.current_tick.value(),
         season_ticks,
         seconds_per_tick,
-        leaderboard: build_leaderboard(state),
+        leaderboard: build_leaderboard(state, brains),
         prices: build_prices(state),
         factories: build_factories(state),
         caravans: build_caravans(state),
@@ -216,11 +233,20 @@ fn is_feed_worthy(event: &LogEvent) -> bool {
     )
 }
 
-fn build_leaderboard(state: &GameState) -> Vec<PlayerDto> {
+fn build_leaderboard(state: &GameState, brains: &BrainPool) -> Vec<PlayerDto> {
     leaderboard(state)
         .into_iter()
         .filter_map(|score| {
             let player = state.players.get(&score.player_id)?;
+            let brain = brains.get(score.player_id);
+            let goal = brain.map(|b| b.goal_label().to_owned());
+            let traits = brain.map(|b| BrainTraitsDto {
+                aggression: b.traits.aggression,
+                patience: b.traits.patience,
+                risk: b.traits.risk,
+                greed: b.traits.greed,
+                pnl_trend: b.pnl_trend,
+            });
             Some(PlayerDto {
                 id: score.player_id.value(),
                 name: player.name.clone(),
@@ -229,6 +255,8 @@ fn build_leaderboard(state: &GameState) -> Vec<PlayerDto> {
                 cash_lira: lira(player.cash),
                 pnl_lira: lira(score.total),
                 is_npc: player.is_npc,
+                goal,
+                traits,
             })
         })
         .collect()

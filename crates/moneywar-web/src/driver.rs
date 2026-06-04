@@ -158,6 +158,7 @@ impl SimDriver {
             self.season,
             self.season_ticks,
             self.seconds_per_tick,
+            &self.brains,
         )
     }
 }

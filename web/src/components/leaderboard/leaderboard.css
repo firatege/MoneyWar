@@ -118,3 +118,19 @@
   color: var(--text-ghost);
   font-size: var(--text-sm);
 }
+
+/* Goal badge — leaderboard'da ajan hedef durumu */
+.lb__goal {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+.lb__goal--corner     { background: color-mix(in oklch, var(--accent) 20%, transparent); color: var(--accent); border: 1px solid var(--accent-faint); }
+.lb__goal--war        { background: color-mix(in oklch, var(--loss) 20%, transparent);   color: var(--loss);   border: 1px solid color-mix(in oklch, var(--loss) 35%, transparent); }
+.lb__goal--consolidate{ background: color-mix(in oklch, var(--gain) 15%, transparent);   color: var(--gain-dim); border: 1px solid color-mix(in oklch, var(--gain) 30%, transparent); }
+.lb__goal--retreat    { background: color-mix(in oklch, var(--text-ghost) 15%, transparent); color: var(--text-faint); border: 1px solid var(--line); }

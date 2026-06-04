@@ -58,7 +58,8 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             .factories
             .values()
             .any(|f| f.product.raw_input() == Some(product) && f.city == city);
-        let bid_pct = if has_sanayici_fab { 85 } else { 99 };
+        // 85 → 93: Sanayici'nin 105+'sının altında ama Çiftçi ile eşleşebilir.
+        let bid_pct = if has_sanayici_fab { 93 } else { 99 };
         let bid_base = scale_pct(reference, bid_pct);
         let bid_price = apply_jitter(
             bid_base,
@@ -68,6 +69,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             OrderSide::Buy,
             player.id,
         );
+        // TTL=6: NPC_DEFAULT_ORDER_TTL=3 → her tick relist → %67 cooldown red.
+        // 6 tick ile emir aktif kalır, ancak 7. tickte yenilenir.
+        const SPEK_TTL: u32 = 6;
+
         if bid_price.as_cents() > 0 {
             let qty = affordable_qty(bucket_cash, bid_price, 30);
             if qty > 0 {
@@ -77,15 +82,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     product,
                     quantity: qty,
                     unit_price: bid_price,
-                    ttl_override: None,
+                    ttl_override: Some(SPEK_TTL),
                 });
             }
         }
 
-        // ASK — stok-baskılı pricing. Az stoklu → reference × 1.01 (kar
-        // marjı). Birikmiş stoklu → reference × 0.97 (Çiftçi'den ucuz
-        // sat, hızlı erit). v0.6.0 Faz 2 sonrası: 15-bucket Spek mal alıp
-        // satamazdı (-22K), stok-baskılı ASK ile satış akışı açılır.
         let stock = player.inventory.get(city, product);
         if stock > 0 {
             let ask_pct = if stock >= 100 { 97 } else if stock >= 50 { 99 } else { 101 };
@@ -106,7 +107,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                     product,
                     quantity: qty,
                     unit_price: ask_price,
-                    ttl_override: None,
+                    ttl_override: Some(SPEK_TTL),
                 });
             }
         }

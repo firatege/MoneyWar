@@ -487,6 +487,12 @@ impl BrainPool {
         self.0.entry(player_id).or_default()
     }
 
+    /// Mevcut beyin (read-only). Dashboard/DTO için.
+    #[must_use]
+    pub fn get(&self, player_id: PlayerId) -> Option<&AgentBrain> {
+        self.0.get(&player_id)
+    }
+
     /// Mevcut state'i gözlemleyerek tüm beyinleri güncelle.
     pub fn observe_all(&mut self, state: &GameState) {
         for (pid, brain) in &mut self.0 {

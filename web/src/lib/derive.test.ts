@@ -109,6 +109,8 @@ describe("appendHistory", () => {
     cash_lira: 0,
     pnl_lira: pnl,
     is_npc: false,
+    goal: null,
+    traits: null,
   });
 
   it("appends one PnL point per player for a new tick", () => {
