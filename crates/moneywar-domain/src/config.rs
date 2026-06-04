@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(c.spekulator, 3);
         assert_eq!(c.ciftci, 9);
         assert_eq!(c.banka, 3);
-        assert_eq!(c.total(), 32); // 3 san + 4 tuc + 10 ali + 3 spek + 9 cif + 3 ban
+        assert_eq!(c.total(), 32); // 6 san + 4 tuc + 10 ali + 3 spek + 9 cif + 3 ban
     }
 
     #[test]
