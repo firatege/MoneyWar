@@ -304,10 +304,10 @@ pub const PRIVATE_FARM_BUILD_COST_LIRA: i64 = 15_000;
 
 /// Özel çiftlik tick başına üretim (birim ham madde).
 /// Piyasa Çiftçisi ortalama ~8-12/tick; özel çiftlik biraz daha az (özel = küçük tarla).
-pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 10;
+pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 20;
 
 /// Sanayici başına max özel çiftlik sayısı.
-pub const PRIVATE_FARM_MAX_PER_OWNER: usize = 3;
+pub const PRIVATE_FARM_MAX_PER_OWNER: usize = 6;
 
 // =============================================================================
 // Fabrika yükseltme

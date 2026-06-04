@@ -32,9 +32,19 @@ use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
 /// 50K başlangıç nakdi ilk 4-5 fabrikayı karşılar, sonrası kârdan finanse edilir.
 const TARGET_FACTORIES: usize = usize::MAX; // sınırsız — kaç kurarsa kursun
 
-/// Sanayici'nin bu tick için aday listesi.
+/// Brain ile birlikte enumerate — Goal-bilinçli fabrika seçimi.
+#[must_use]
+pub fn enumerate_with_brain(state: &GameState, player: &Player, brain: Option<&crate::behavior::brain::AgentBrain>) -> Vec<ActionCandidate> {
+    enumerate_inner(state, player, brain)
+}
+
+/// Geriye uyumluluk için brain'siz versiyon.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    enumerate_inner(state, player, None)
+}
+
+fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::behavior::brain::AgentBrain>) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
 
     // 1) Fabrika kurma: hedef sayıdan azsa + 1 fab kuruluş maliyeti
@@ -47,8 +57,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     if owned < TARGET_FACTORIES {
         let next_cost = moneywar_domain::Factory::build_cost(u32::try_from(owned).unwrap_or(0));
         if player.cash >= next_cost {
-            // Önce mevcut fabrikaların kapsamadığı (city, mamul) seç.
-            if let Some((city, product)) = pick_factory_target(state, player) {
+            if let Some((city, product)) = pick_factory_target(state, player, brain) {
                 out.push(ActionCandidate::BuildFactory { city, product });
             }
         }
@@ -507,7 +516,7 @@ fn scale_pct(price: Money, pct: i64) -> Money {
 /// 2. **Sonraki fab**: en yüksek **profit margin** (mamul_price - raw_price).
 ///    Lüks talep şehirleri (Ist-Kumas 36₺, Ank-Un 36₺) çekici çünkü mamul
 ///    pahalı + ham aynı baseline. Sezgisel kârlı yatırım kararı.
-fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, ProductKind)> {
+fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate::behavior::brain::AgentBrain>) -> Option<(CityId, ProductKind)> {
     let world_taken: std::collections::BTreeSet<(CityId, ProductKind)> = state
         .factories
         .values()
@@ -640,7 +649,18 @@ fn pick_factory_target(state: &GameState, player: &Player) -> Option<(CityId, Pr
             .wrapping_mul(7)
             .wrapping_add(*product as u64);
         let jitter = ((hash_seed % 100) as i64) * margin.max(1) / 500;
-        base_score + specialty_bonus + jitter
+
+        // Goal bonus: Corner modunda hedef ürüne büyük bonus → o ürüne odaklan.
+        let corner_bonus: i64 = if let Some(b) = brain {
+            match &b.goal {
+                crate::behavior::brain::Goal::Corner { product: target_prod, .. }
+                | crate::behavior::brain::Goal::PriceWar { product: target_prod, .. }
+                    if target_prod == product => base_score * 4, // 4× avantaj
+                _ => 0,
+            }
+        } else { 0 };
+
+        base_score + specialty_bonus + jitter + corner_bonus
     })
 }
 

@@ -7,11 +7,11 @@ import type { FeedItem, Snapshot } from "../types";
 /** Feed tamponu üst sınırı (birikmiş olaylar). */
 export const FEED_CAP = 60;
 /** Oyuncu başına PnL geçmişi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
-export const HISTORY_CAP = 250;
+export const HISTORY_CAP = 350;
 /** Bucket başına sparkline geçmişi üst sınırı (tick). */
 export const BUCKET_HIST_CAP = 26;
 /** Genel piyasa serisi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
-export const MARKET_CAP = 250;
+export const MARKET_CAP = 350;
 
 export interface PnlPoint {
   tick: number;

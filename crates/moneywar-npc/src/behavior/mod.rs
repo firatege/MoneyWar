@@ -73,7 +73,7 @@ pub fn decide_behavior(
     }
 
     // Rol-spesifik aday listesi.
-    let candidates = enumerate_for_kind(state, player);
+    let candidates = enumerate_for_kind(state, player, brain);
     if candidates.is_empty() {
         return Vec::new();
     }
@@ -163,15 +163,14 @@ pub fn decide_behavior(
 
 /// Player'ın `npc_kind`'ına göre aday üretici dispatch.
 /// Faz B: Çiftçi pilot. Faz C+'da diğer roller eklenecek.
-fn enumerate_for_kind(state: &GameState, player: &moneywar_domain::Player) -> Vec<ActionCandidate> {
+fn enumerate_for_kind(state: &GameState, player: &moneywar_domain::Player, brain: Option<&brain::AgentBrain>) -> Vec<ActionCandidate> {
     match player.npc_kind {
         Some(NpcKind::Ciftci) => roles::ciftci::enumerate(state, player),
         Some(NpcKind::Alici) => roles::alici::enumerate(state, player),
-        Some(NpcKind::Sanayici) => roles::sanayici::enumerate(state, player),
+        Some(NpcKind::Sanayici) => roles::sanayici::enumerate_with_brain(state, player, brain),
         Some(NpcKind::Esnaf) => roles::esnaf::enumerate(state, player),
         Some(NpcKind::Spekulator) => roles::spekulator::enumerate(state, player),
         Some(NpcKind::Tuccar) => roles::tuccar::enumerate(state, player),
-        // Banka behavior'da yok — özel akış (`engine::tick_banks`).
         Some(NpcKind::Banka) | None => Vec::new(),
     }
 }
