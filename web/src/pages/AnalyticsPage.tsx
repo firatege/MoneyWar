@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+
+import "./analytics.css";
 import { useGameSocket } from "../hooks/useGameSocket";
 import { topProducts } from "../lib/derive";
 import { compact, lira, signedCompact } from "../lib/format";
