@@ -117,20 +117,33 @@ pub fn decide_all_npcs(
                 behavior::decide_behavior(&shadow, pid, rng, tick, difficulty.behavior(), brain)
             }
         };
-        // BuildFactory komutlarını shadow'a yansıt — sonraki NPC görür.
+        // Shadow'a komutları yansıt — sonraki NPC güncel durumu görür.
         for cmd in &next {
-            if let moneywar_domain::Command::BuildFactory {
-                owner,
-                city,
-                product,
-            } = cmd
-            {
-                let next_id = shadow.counters.next_factory_id;
-                shadow.counters.next_factory_id = shadow.counters.next_factory_id.saturating_add(1);
-                let fid = moneywar_domain::FactoryId::new(next_id);
-                if let Ok(f) = moneywar_domain::Factory::new(fid, *owner, *city, *product) {
-                    shadow.factories.insert(fid, f);
+            match cmd {
+                moneywar_domain::Command::BuildFactory { owner, city, product } => {
+                    // Fabrika ekle
+                    let next_id = shadow.counters.next_factory_id;
+                    shadow.counters.next_factory_id = shadow.counters.next_factory_id.saturating_add(1);
+                    let fid = moneywar_domain::FactoryId::new(next_id);
+                    if let Ok(f) = moneywar_domain::Factory::new(fid, *owner, *city, *product) {
+                        shadow.factories.insert(fid, f);
+                    }
+                    // Cash'i düş — sonraki NPC gerçek nakit görür
+                    let owned_before = shadow.factories.values()
+                        .filter(|f| f.owner == *owner)
+                        .count()
+                        .saturating_sub(1) as u32;
+                    let cost = moneywar_domain::Factory::build_cost(owned_before);
+                    if let Some(p) = shadow.players.get_mut(owner) {
+                        let _ = p.debit(cost);
+                    }
                 }
+                moneywar_domain::Command::BuildPrivateFarm { owner, .. }
+                | moneywar_domain::Command::DemolishFactory { owner, .. } => {
+                    // Tarla/kapatma da nakit etkisi var ama fabrika kadar kritik değil
+                    let _ = owner;
+                }
+                _ => {}
             }
         }
         cmds.extend(next);

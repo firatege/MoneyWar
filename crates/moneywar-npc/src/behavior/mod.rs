@@ -144,6 +144,20 @@ pub fn decide_behavior(
 
     scored.truncate(difficulty.top_k as usize);
 
+    // BuildFactory: tick başına en fazla 1 — shadow cash güncellense de
+    // aynı NPC aynı tick'te birden fazla fabrika kurmasın.
+    let fab_count = scored.iter().filter(|(c, _)| matches!(c, ActionCandidate::BuildFactory { .. })).count();
+    if fab_count > 1 {
+        let mut kept = false;
+        scored.retain(|(c, _)| {
+            if matches!(c, ActionCandidate::BuildFactory { .. }) {
+                if kept { return false; }
+                kept = true;
+            }
+            true
+        });
+    }
+
     // Eğer öncelikli aday top_k'ya giremediyse, sona ekle.
     if !priority_exist {
         for pc in priority_cands.into_iter().take(1) {

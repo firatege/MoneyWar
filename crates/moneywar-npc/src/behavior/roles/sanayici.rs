@@ -56,14 +56,21 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         .count();
     if owned < TARGET_FACTORIES {
         let next_cost = moneywar_domain::Factory::build_cost(u32::try_from(owned).unwrap_or(0));
-        // Eşik: owned fazlaysa daha fazla nakit gerekli.
-        // Formül: cost + owned×owned×2K (quadratic: 0fab→0, 3fab→18K, 8fab→128K)
-        // İlk 3 fab hızlı, sonrakiler kâr birikince kurulabilir.
-        let quad_buffer = (owned as i64) * (owned as i64) * 2_000 * 100;
-        let needed = moneywar_domain::Money::from_cents(
-            next_cost.as_cents().saturating_add(quad_buffer)
-        );
-        if player.cash >= needed {
+        // Büyüme freni: ilk 3 fab hızlı, 4-8 fab kademeli, 8+ serbest.
+        // owned 4-7 arasında "orta faz" → 3 fab başlangıç fazı bitti, rekabetçi büyüme.
+        // Tick bazlı rate limit: owned fabrika sayısına göre minimum tick eşiği.
+        // owned fab başına X tick minimum geçmiş olmalı (büyüme doğrusal).
+        // Reserve: her fabrika başına 12K operasyon nakiti gerekli.
+        // owned=0: 12K → needed=12K < 50K ✓ (1. fab kurulur)
+        // owned=1: 24K → needed=32K < 50K ✓ (2. fab)
+        // owned=2: 36K → needed=44K < 50K ✓ (3. fab)
+        // owned=3: 48K → needed=56K > 50K ✗ (BLOKE — kâr bekle)
+        // Shadow doğru cash'i yansıtıyor, 4. fabrika için kâr gerekiyor.
+        let reserve_per_owned = 12_000i64;
+        let min_reserve_cents = (owned as i64 + 1) * reserve_per_owned * 100;
+        let reserve_ok = player.cash.as_cents() >= next_cost.as_cents() + min_reserve_cents;
+
+        if reserve_ok {
             if let Some((city, product)) = pick_factory_target(state, player, brain) {
                 out.push(ActionCandidate::BuildFactory { city, product });
             }
