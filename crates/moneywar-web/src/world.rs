@@ -41,7 +41,10 @@ fn seed_baselines(s: &mut GameState) {
                     DemandLevel::Low => base * 8 / 10,
                 }
             } else if product == cheap {
-                4
+                4 // Specialty hammadde (Konya=Buğday, Bursa=Pamuk, vb.)
+            } else if product == ProductKind::Bugday {
+                // Buğday non-specialty şehirlerde daha pahalı → Un cazibesini dengele.
+                9
             } else {
                 7
             };
@@ -55,17 +58,28 @@ fn seed_baselines(s: &mut GameState) {
 /// Şehir specialty/secondary/demand profilini kur — sim ile aynı 3-tier
 /// rotasyon (ilk 3 şehir shuffle edilmiş ham, Bursa=Pamuk, Konya=Buğday).
 fn seed_profiles(s: &mut GameState, rng: &mut ChaCha8Rng) {
-    let mut raws = ProductKind::RAW_MATERIALS;
-    for i in (1..raws.len()).rev() {
+    // 5 şehrin tamamı shuffle — her ham madde 1-2 şehirde specialty.
+    // Zeytin artık her seed'de mutlaka 1-2 şehirde → daha bol Zeytin arzı.
+    let all_cities = [
+        CityId::Istanbul, CityId::Ankara, CityId::Izmir,
+        CityId::Bursa, CityId::Konya,
+    ];
+    let mut raws_repeated = [
+        ProductKind::Pamuk, ProductKind::Pamuk,
+        ProductKind::Bugday, ProductKind::Bugday,
+        ProductKind::Zeytin, ProductKind::Zeytin,
+    ];
+    // Shuffle'dan 5 seç (tekrarlı 6'dan 5 şehir için dengeli dağılım)
+    for i in (1..raws_repeated.len()).rev() {
         let j = rng.random_range(0..=i);
-        raws.swap(i, j);
+        raws_repeated.swap(i, j);
     }
     let prime_per_city: [(CityId, ProductKind); 5] = [
-        (CityId::Istanbul, raws[0]),
-        (CityId::Ankara, raws[1]),
-        (CityId::Izmir, raws[2]),
-        (CityId::Bursa, ProductKind::Pamuk),
-        (CityId::Konya, ProductKind::Bugday),
+        (all_cities[0], raws_repeated[0]),
+        (all_cities[1], raws_repeated[1]),
+        (all_cities[2], raws_repeated[2]),
+        (all_cities[3], raws_repeated[3]),
+        (all_cities[4], raws_repeated[4]),
     ];
     s.seed_city_profiles(prime_per_city);
 }

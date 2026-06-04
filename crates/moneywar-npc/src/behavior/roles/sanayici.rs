@@ -575,11 +575,17 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         let mamul_cents = state
             .reference_price(*city, *product)
             .map_or(0, |m| m.as_cents());
+        // Gerçek kâr: (mamul_fiyat × çıktı_adedi) - (ham_fiyat × batch_size)
+        // Çıktı oranı: Kumaş %80, Un %90, Zeytinyağı %100
+        let output_pct = product.output_ratio_pct() as i64;
+        let batch = moneywar_domain::balance::FACTORY_BATCH_SIZE as i64;
+        let gross_revenue = mamul_cents * (batch * output_pct / 100);
         let raw_cents = product
             .raw_input()
             .and_then(|raw| state.reference_price(*city, raw))
             .map_or(0, |m| m.as_cents());
-        let margin = (mamul_cents - raw_cents).max(0);
+        let raw_cost = raw_cents * batch;
+        let margin = (gross_revenue - raw_cost).max(0) / batch; // normalize
 
         let rival_count = state
             .factories
@@ -610,10 +616,11 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
             .count() as i64;
         // Zeytinyağı için ek global penalty — Zeytin kıt, fazla Zeyt.yağı fab
         // kurulmasın. Global same_product yerine ürün bazlı ek ağırlık.
-        let product_bias = if *product == ProductKind::Zeytinyagi { 2 } else { 0 };
+        let product_bias = 0; // Zeytinyagi bias kaldırıldı — eşit fırsat
         // Rakip ağırlığını artır: kendi slot'una girmek çok pahalı → uzmanlaşma zorlar.
-        // rival_count 6× (eski 2×): 1 rakip varken skor 7× düşer → başka slot seç.
-        let competition_factor = 1 + 6 * rival_count + 3 * own_count + 3 * same_product_global + product_bias;
+        // Sadece slot bazlı rekabet cezası — global ürün sayısı kaldırıldı.
+        // Zeytinyağı yüksek marjıyla doğal seçilsin, yapay kısıtlama olmasın.
+        let competition_factor = 1 + 10 * rival_count + 3 * own_count + product_bias;
         let base_score = margin / competition_factor;
 
         // Specialty bonus: şehrin prime hammaddesi bu ürünün girdisiyle eşleşirse
@@ -655,7 +662,7 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
             match &b.goal {
                 crate::behavior::brain::Goal::Corner { product: target_prod, .. }
                 | crate::behavior::brain::Goal::PriceWar { product: target_prod, .. }
-                    if target_prod == product => base_score * 4, // 4× avantaj
+                    if target_prod == product => base_score * 10, // 10× → güçlü odak
                 _ => 0,
             }
         } else { 0 };

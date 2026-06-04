@@ -94,7 +94,7 @@ impl PersonalityTraits {
 
 // Goal geçiş eşikleri
 /// Corner hedefi için gereken minimum sahiplik oranı.
-const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.15;
+const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.08; // daha erken corner
 /// PriceWar başlatmak için rakip tehdidin yeterince yüksek olması.
 const PRICE_WAR_THREAT_THRESHOLD: f64 = 0.15;
 /// Consolidate'ten Expand'e dönmek için gereken nakit fazlası.
@@ -350,7 +350,7 @@ impl AgentBrain {
     fn update_goal(&mut self, _player_id: PlayerId) {
         self.goal_age += 1;
         // Minimum hedef süresi: gereksiz titreşimi önle.
-        const MIN_GOAL_TICKS: u32 = 5;
+        const MIN_GOAL_TICKS: u32 = 15; // corner'da uzun kal
         if self.goal_age < MIN_GOAL_TICKS {
             return;
         }
