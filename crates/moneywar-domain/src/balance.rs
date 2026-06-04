@@ -100,8 +100,9 @@ pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 2] = [0, 4_000];
 /// Eski değerler 40+10/oyuncu → 12 oyuncu için 140 birim. Pratikte tek bucket'ta
 /// 140 birim eşleşme nadir → eşik tetiklenmiyordu (ölü kod). Şu an 25+5/oyuncu →
 /// 12 oyuncu için 75 — tetiklenebilir, anti-snowball mekanizması canlı.
-/// 25 → 250: hacim 10× ölçek revizyonu — büyük emirler ceza yememeli.
-pub const SATURATION_BASE: u32 = 250;
+/// Faz 1: 250 → 2000. Dominant üretici tam fiyat alabilsin; monopol dinamiği
+/// yapay olarak frenlenmemeli. Anti-snowball mekanizması fiilen devre dışı.
+pub const SATURATION_BASE: u32 = 2000;
 /// Her ek oyuncu başına doygunluk eşiği artışı.
 /// 5 → 50: hacim 10× ölçek revizyonu.
 pub const SATURATION_PER_PLAYER: u32 = 50;

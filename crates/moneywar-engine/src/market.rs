@@ -1263,8 +1263,8 @@ mod tests {
 
     #[test]
     fn saturation_reports_qty_over_threshold_at_half_price() {
-        // 10 oyuncu → threshold = 250 + (10-2)*50 = 650 (10× hacim ölçek).
-        // Tek eşleşme 1000 birim → 650 full, 350 half.
+        // Faz 1: SATURATION_BASE=2000. 10 oyuncu → threshold = 2000 + (10-2)*50 = 2400.
+        // Tek eşleşme 1000 birim → tümü full tier (threshold'ın altında).
         let mut s = state();
         for i in 1..=10 {
             seed_player(&mut s, i, Role::Tuccar);
@@ -1286,8 +1286,8 @@ mod tests {
                 matched_qty,
                 ..
             }) => {
-                assert_eq!(*saturation_threshold, 650);
-                assert_eq!(*saturation_qty, 350);
+                assert_eq!(*saturation_threshold, 2400);
+                assert_eq!(*saturation_qty, 0); // 1000 < 2400 → half tier yok
                 assert_eq!(*matched_qty, 1000);
             }
             other => panic!("expected MarketCleared, got {other:?}"),

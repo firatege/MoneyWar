@@ -208,61 +208,77 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         }
     }
 
-    // 3) Mamul SAT — stok-baskılı pricing (donmuş mamul fiyatı sorununun fix'i).
-    //    Eski `baseline × 0.95 sabit` → fiyat 80+ tick boyunca kıpırdamıyordu
-    //    (rolling avg self-reinforcing). Yeni tier: stok birikince ASK düşer,
-    //    fiyat keşfi açılır.
-    //    PASSIVE policy korunur: Sanayici cross etmez (Alıcı CROSS yetişir).
-    //    Stok>150 → CROSS (mamul çürümez ama cash kilitlenir, hızlı erit).
+    // 3) Mamul SAT — stok-baskılı pricing.
+    //    Faz 4: brain.goal → fiyat (premium/undercut) + hacim kararını etkiler.
+    //    Corner(c,p): tam baskın → monopol premium + daha büyük hacim flood.
+    //    PriceWar(c,p): rakibi ez → agresif undercut + orta hacim.
     for (city, product, qty) in player.inventory.entries() {
         if !product.is_finished() || qty == 0 {
             continue;
         }
-        let quantity = (qty / 2).max(1).min(50);
-        // v0.5.1: rolling_avg self-reinforcing loop (eski yüksek clearing'ler
-        // NPC fiyat tavanını yukarı tutuyordu, Alıcı bütçesi yetmiyordu) için
-        // Sanayici reference = effective_baseline (Walras-shifted). Rolling avg
-        // değil. Walras imbalance'a göre kayan baseline gerçek piyasa dengesi.
+        // Faz 4: goal'e göre hacim ve fiyat stratejisi.
+        // Flood fazla agresif olmasın — volume × 2 yeterli; fiyatı çok düşürme.
+        let (goal_vol_mult, goal_price_adj, goal_force_cross): (u32, i64, bool) =
+            if let Some(b) = brain {
+                use crate::behavior::brain::Goal;
+                match &b.goal {
+                    Goal::Corner { city: gc, product: gp } if *gc == city && *gp == product => {
+                        let ownership = b.ownership_of(city, product);
+                        if ownership > 0.55 {
+                            // Baskın: monopol premium, normal hacim
+                            (1, 18, false)
+                        } else {
+                            // Köşeleme: daha fazla hacim, hafif indirim → piyasayı doldur
+                            (2, -3, false)
+                        }
+                    }
+                    Goal::PriceWar { city: gc, product: gp } if *gc == city && *gp == product => {
+                        // Fiyat savaşı: undercut + biraz daha fazla hacim
+                        (2, -10, true)
+                    }
+                    _ => (1, 0, false),
+                }
+            } else {
+                (1, 0, false)
+            };
+
+        let base_qty = (qty / 2).max(1).min(50);
+        let quantity = base_qty.saturating_mul(goal_vol_mult).min(200);
+
         let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
             Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
                 .unwrap_or(Money::ZERO)
         });
-        // Nakit kritikse taban düşür — ücret ödemek için satmak zorunda.
         let cash_lira = player.cash.as_cents() / 100;
-        // Fabrika sahipliği = piyasa gücü ölçütü (emir kitabından daha stabil).
-        // Bu bucket'ta rakip fabrika var mı?
         let rival_fab_count = state.factories.values()
             .filter(|f| f.city == city && f.product == product && f.owner != player.id)
             .count();
         let own_fab_count = state.factories.values()
             .filter(|f| f.city == city && f.product == product && f.owner == player.id)
             .count();
-        // Sadık müşteriye indirim
         let trust_discount = {
             let trust = state.max_trust_in_bucket(player.id, city, product);
             if trust > 0.5 { 3i64 } else { 0i64 }
         };
-        let stock_floor_pct: i64 = if rival_fab_count == 0 && own_fab_count > 0 {
-            // TEK ÜRETİCİ: monopol premium → baseline'ın %120
+        // Baz fiyat katmanı — rakip/stok durumuna göre.
+        let base_floor_pct: i64 = if rival_fab_count == 0 && own_fab_count > 0 {
             120 - trust_discount
         } else if rival_fab_count == 1 && own_fab_count >= rival_fab_count {
-            // Az rakip, ben dominant → hafif premium (%108)
             108 - trust_discount
         } else if cash_lira < 5_000 {
             78
         } else {
-            // Rekabetçi
             match qty { 0..=49 => 95, 50..=99 => 90, _ => 85 }
         } - trust_discount;
-        let stock_floor = scale_pct(reference, stock_floor_pct.max(70));
-        // Faz 4: Rakip bu bucket'ta aktifse cross — altına fiyatla ez.
-        // rivalry_score: kitaptaki rakip sell qty / kendi sell qty.
+        // Faz 4: goal price adj uygula.
+        let stock_floor_pct = (base_floor_pct + goal_price_adj).max(70);
+        let stock_floor = scale_pct(reference, stock_floor_pct);
+
         let rival_sell: u32 = state
             .order_book
             .get(&(city, product))
             .map_or(0, |orders| {
-                orders
-                    .iter()
+                orders.iter()
                     .filter(|o| o.side == OrderSide::Sell && o.player != player.id)
                     .map(|o| o.quantity)
                     .sum()
@@ -271,14 +287,12 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
             .order_book
             .get(&(city, product))
             .map_or(0, |orders| {
-                orders
-                    .iter()
+                orders.iter()
                     .filter(|o| o.side == OrderSide::Sell && o.player == player.id)
                     .map(|o| o.quantity)
                     .sum()
             });
-        // Rakip benden fazla satıyorsa → cross (altına gir, ezmeye çalış).
-        let policy = if rival_sell > my_sell.saturating_add(5) {
+        let policy = if goal_force_cross || rival_sell > my_sell.saturating_add(5) {
             CrossPolicy::Cross
         } else {
             CrossPolicy::Passive
@@ -928,7 +942,6 @@ mod tests {
         assert!(has_build, "fab yoksa BuildFactory emit etmeli");
     }
 
-    #[test]
     // TARGET_FACTORIES sınırsız olduğu için bu test kaldırıldı.
 
     #[test]

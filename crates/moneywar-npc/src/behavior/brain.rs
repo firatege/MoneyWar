@@ -38,7 +38,8 @@ const PNL_TREND_REF_CENTS: f64 = 100_000.0; // 1000₺ = 100_000 cent
 const CASH_SURPLUS_REF: f64 = 40_000.0; // 40K₺
 
 // Trait drift hızı — her tick max bu kadar kayar (çok hızlı salınmayı önler).
-const TRAIT_DRIFT_RATE: f64 = 0.02;
+/// Faz 6: 0.02 → 0.05. 350 tick'te trait tam hedefine varmalı (~60 tickte %95).
+const TRAIT_DRIFT_RATE: f64 = 0.05;
 
 /// Sürekli kişilik trait vektörü — tüm değerler [0,1].
 /// Statik Personality enum'un yerine geçmez; onu başlangıç noktası olarak
@@ -326,17 +327,17 @@ impl AgentBrain {
         let trend = self.pnl_trend; // 0=kaybediyor, 0.5=sabit, 1=kazanıyor
 
         if trend > 0.6 {
-            // Kazanıyor: özgüvenle büyü
-            drift(&mut t.risk,       0.7, TRAIT_DRIFT_RATE);
-            drift(&mut t.aggression, 0.65, TRAIT_DRIFT_RATE);
+            // Kazanıyor: özgüven + açgözlülük artar → monopol premium fiyat
+            drift(&mut t.risk,       0.75, TRAIT_DRIFT_RATE);
+            drift(&mut t.aggression, 0.8, TRAIT_DRIFT_RATE);
             drift(&mut t.patience,   0.7, TRAIT_DRIFT_RATE);
-            drift(&mut t.greed,      0.7, TRAIT_DRIFT_RATE);
+            drift(&mut t.greed,      0.85, TRAIT_DRIFT_RATE); // daha yüksek fiyat ısrarı
         } else if trend < 0.35 {
-            // Kaybediyor: panik + çaresiz saldırganlık
-            drift(&mut t.risk,       0.3, TRAIT_DRIFT_RATE);  // korkak
-            drift(&mut t.aggression, 0.75, TRAIT_DRIFT_RATE); // çaresiz saldırı
-            drift(&mut t.patience,   0.25, TRAIT_DRIFT_RATE); // panik sat
-            drift(&mut t.greed,      0.3, TRAIT_DRIFT_RATE);  // daha ucuza satar
+            // Kaybediyor: panik sat + çaresiz saldırganlık
+            drift(&mut t.risk,       0.3, TRAIT_DRIFT_RATE);
+            drift(&mut t.aggression, 0.75, TRAIT_DRIFT_RATE);
+            drift(&mut t.patience,   0.2, TRAIT_DRIFT_RATE);  // daha fazla panik
+            drift(&mut t.greed,      0.25, TRAIT_DRIFT_RATE); // ucuza ver, hızlı sat
         } else {
             // Nötr: yavaşça ortaya dön
             drift(&mut t.risk,       0.5, TRAIT_DRIFT_RATE * 0.3);

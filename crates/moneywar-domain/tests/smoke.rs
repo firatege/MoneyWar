@@ -258,9 +258,9 @@ fn command_flow_wires_to_order_and_contract() {
 #[test]
 fn saturation_threshold_scales_with_participants() {
     let cfg = RoomConfig::hizli();
-    // 250 + (n-2) × 50 (hacim 10× ölçek).
-    assert_eq!(cfg.saturation_threshold(2), 250);
-    assert_eq!(cfg.saturation_threshold(5), 400);
+    // Faz 1: SATURATION_BASE=2000 + (n-2) × 50.
+    assert_eq!(cfg.saturation_threshold(2), 2000);
+    assert_eq!(cfg.saturation_threshold(5), 2150);
 }
 
 #[test]
