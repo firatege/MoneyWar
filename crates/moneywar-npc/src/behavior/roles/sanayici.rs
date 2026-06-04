@@ -265,9 +265,9 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
 
-    // 4c) Özel çiftlik — sadece fabrika hedefine ulaşıldıktan sonra.
-    // Önce fabrika → sonra tarla (sermaye sıralaması).
-    if owned >= TARGET_FACTORIES {
+    // 4c) Özel çiftlik — en az 3 fabrika kurulmuşsa başlar.
+    // Çok erken tarla kurmak ilk fab yatırımını yavaşlatır.
+    if owned >= 3 {
         out.extend(enumerate_private_farm(state, player));
     }
 
@@ -678,30 +678,20 @@ fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
             .map(|f| (f.city, f.product))
             .collect();
 
-    // En çok ihtiyaç duyulan (stok en az) ham madde için çiftlik öner
-    let mut best: Option<(moneywar_domain::CityId, moneywar_domain::ProductKind, u32)> = None;
-    for (city, raw) in &needed_raws {
-        if existing.contains(&(*city, *raw)) {
-            continue;
-        }
-        let stock = player.inventory.get(*city, *raw);
-        // Stok eşiği: BATCH_SIZE'ın yarısından az → sıkıntı var
-        // Eşiği yükselt: 2 batch'lik stok yoksa tarla kur.
-        // Eski: BATCH_SIZE/2 = 32 → çok geç kuruyordu.
-        // Yeni: BATCH_SIZE*2 = 130 → proaktif tedarik zinciri.
-        let threshold = Factory::BATCH_SIZE * 2;
-        if stock < threshold {
-            match best {
-                None => best = Some((*city, *raw, stock)),
-                Some((_, _, best_stock)) if stock < best_stock => {
-                    best = Some((*city, *raw, stock));
-                }
-                _ => {}
-            }
-        }
+    // Henüz tarla kurulmamış ilk (city, raw) çiftini bul.
+    let candidate = needed_raws.iter()
+        .find(|cp| !existing.contains(*cp))
+        .copied();
+
+    // Debug: neden çalışmıyor?
+    #[cfg(debug_assertions)]
+    if needed_raws.is_empty() {
+        // Fab yok ya da raw_input() None
+    } else if candidate.is_none() {
+        // Tüm raw'lar için tarla var
     }
 
-    best.map(|(city, product, _)| {
+    candidate.map(|(city, product)| {
         vec![ActionCandidate::BuildPrivateFarm { city, product }]
     }).unwrap_or_default()
 }

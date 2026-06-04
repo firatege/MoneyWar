@@ -101,7 +101,7 @@ pub fn decide_behavior(
                 match &cand {
                     ActionCandidate::BuyCaravan { .. } => 0.4,
                     ActionCandidate::DispatchCaravan { .. } => 0.4,
-                    ActionCandidate::BuildPrivateFarm { .. } => 0.65,
+                    ActionCandidate::BuildPrivateFarm { .. } => 0.99, // tarla en öncelikli
                     ActionCandidate::DemolishFactory { .. } => 0.7,
                     // Yükseltme de filtreli — yüksek sabit skor.
                     ActionCandidate::UpgradeFactory { .. } => 0.65,
@@ -129,7 +129,27 @@ pub fn decide_behavior(
 
     // Top-K (skor desc, tie deterministic via insertion order).
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+
+    // Kritik aksiyonlar (tarla, fabrika kapat) top_k'ya garanti girer.
+    // Bunlar context'siz sabit skor alır — BuildFactory gibi yüksek-sinyalli
+    // adayların arkasında kalabilir. Top_k'ya zorla ekliyoruz.
+    let priority_exist = scored.iter().take(difficulty.top_k as usize)
+        .any(|(c, _)| matches!(c, ActionCandidate::BuildPrivateFarm { .. }
+            | ActionCandidate::DemolishFactory { .. }));
+    let priority_cands: Vec<_> = scored.iter()
+        .filter(|(c, _)| matches!(c, ActionCandidate::BuildPrivateFarm { .. }
+            | ActionCandidate::DemolishFactory { .. }))
+        .map(|(c, s)| (c.clone(), *s))
+        .collect();
+
     scored.truncate(difficulty.top_k as usize);
+
+    // Eğer öncelikli aday top_k'ya giremediyse, sona ekle.
+    if !priority_exist {
+        for pc in priority_cands.into_iter().take(1) {
+            scored.push(pc);
+        }
+    }
 
     // ActionCandidate → Command.
     let mut cmds = Vec::with_capacity(scored.len());
