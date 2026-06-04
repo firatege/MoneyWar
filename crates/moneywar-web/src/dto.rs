@@ -85,6 +85,8 @@ pub struct PrivateFarmDto {
     pub owner: u64,
     pub city: String,
     pub product: String,
+    pub level: u8,
+    pub output_per_tick: u32,
 }
 
 /// Kervan durum kartı.
@@ -309,6 +311,8 @@ fn build_private_farms(state: &GameState) -> Vec<PrivateFarmDto> {
         owner: f.owner.value(),
         city: city_slug(f.city).to_string(),
         product: product_slug(f.product).to_string(),
+        level: f.level,
+        output_per_tick: f.output_per_tick(),
     }).collect()
 }
 

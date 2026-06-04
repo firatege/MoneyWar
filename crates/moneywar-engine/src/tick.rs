@@ -47,6 +47,7 @@ use crate::{
         process_build_private_farm as build_private_farm_impl,
         process_demolish_factory as demolish_factory_impl,
         process_upgrade_factory as upgrade_factory_impl,
+        process_upgrade_farm as upgrade_farm_impl,
     },
     report::{LogEntry, TickReport},
     rng::rng_for,
@@ -196,6 +197,9 @@ fn dispatch(
         }
         Command::BuildPrivateFarm { owner, city, product } => {
             build_private_farm_impl(state, report, tick, *owner, *city, *product)
+        }
+        Command::UpgradeFarm { owner, farm_id } => {
+            upgrade_farm_impl(state, report, tick, *owner, *farm_id)
         }
     }
 }

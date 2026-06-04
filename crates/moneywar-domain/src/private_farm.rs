@@ -1,13 +1,4 @@
 //! Özel çiftlik — Sanayici'nin münhasır ham madde kaynağı.
-//!
-//! Sanayici `BuildPrivateFarm` komutuyla bir şehirde ham madde üreten özel
-//! bir çiftlik kurar. Çiftlik her tick sahibinin envanterine doğrudan ham madde
-//! yükler; piyasaya satmaz, başka oyuncular bu malı alamaz.
-//!
-//! Dikey entegrasyon mekaniği:
-//! - Ham madde maliyetini sabitler (piyasa fiyatından bağımsız)
-//! - Rakipler ham madde açlığı çekerken sahip üretimine devam eder
-//! - Fazla üretim piyasaya sabit düşük fiyatla akar (isteğe bağlı)
 
 use serde::{Deserialize, Serialize};
 
@@ -18,14 +9,8 @@ use crate::{CityId, PlayerId, ProductKind};
 pub struct PrivateFarmId(pub u64);
 
 impl PrivateFarmId {
-    #[must_use]
-    pub const fn new(v: u64) -> Self {
-        Self(v)
-    }
-    #[must_use]
-    pub const fn value(self) -> u64 {
-        self.0
-    }
+    #[must_use] pub const fn new(v: u64) -> Self { Self(v) }
+    #[must_use] pub const fn value(self) -> u64 { self.0 }
 }
 
 impl std::fmt::Display for PrivateFarmId {
@@ -34,19 +19,46 @@ impl std::fmt::Display for PrivateFarmId {
     }
 }
 
-/// Sanayici'nin münhasır ham madde üreticisi.
+/// Sanayici'nin münhasır ham madde üreticisi — seviyeli.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrivateFarm {
     pub id: PrivateFarmId,
     pub owner: PlayerId,
     pub city: CityId,
-    /// Üretilen ham madde. Sadece ham ürünler geçerli.
     pub product: ProductKind,
+    /// Çiftlik seviyesi (1-3). Seviye arttıkça daha fazla üretim.
+    #[serde(default = "PrivateFarm::default_level")]
+    pub level: u8,
 }
 
 impl PrivateFarm {
     #[must_use]
     pub fn new(id: PrivateFarmId, owner: PlayerId, city: CityId, product: ProductKind) -> Self {
-        Self { id, owner, city, product }
+        Self { id, owner, city, product, level: 1 }
     }
+
+    pub const fn default_level() -> u8 { 1 }
+
+    /// Seviyeye göre tick başına üretim.
+    /// lv1=20, lv2=35, lv3=55 birim/tick
+    #[must_use]
+    pub const fn output_per_tick(&self) -> u32 {
+        match self.level {
+            1 => 20,
+            2 => 35,
+            _ => 55, // lv3+
+        }
+    }
+
+    /// Bir üst seviyeye yükseltme maliyeti.
+    #[must_use]
+    pub fn upgrade_cost(current_level: u8) -> Option<crate::Money> {
+        match current_level {
+            1 => crate::Money::from_lira(10_000).ok(),
+            2 => crate::Money::from_lira(20_000).ok(),
+            _ => None, // max seviye
+        }
+    }
+
+    pub const FARM_MAX_LEVEL: u8 = 3;
 }

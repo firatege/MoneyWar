@@ -31,6 +31,8 @@ pub enum ActionCandidate {
     BuildFactory { city: CityId, product: ProductKind },
     /// Özel çiftlik kur — münhasır ham madde kaynağı.
     BuildPrivateFarm { city: CityId, product: ProductKind },
+    /// Özel çiftlik yükselt — daha fazla üretim (lv1→2→3).
+    UpgradeFarm { farm_id: moneywar_domain::PrivateFarmId },
     /// Fabrika kapat — zarar eden / atıl fabrikadan çık, sermayeyi kurtar.
     DemolishFactory { factory_id: moneywar_domain::FactoryId },
     /// Fabrika yükselt — kâr eden fabrikayı güçlendir (level 1→2→3).
@@ -61,6 +63,7 @@ impl ActionCandidate {
             Self::BuildFactory { city, product } => Some((*city, *product)),
             Self::BuyCaravan { .. }
             | Self::BuildPrivateFarm { .. }
+            | Self::UpgradeFarm { .. }
             | Self::DemolishFactory { .. }
             | Self::UpgradeFactory { .. }
             | Self::DispatchCaravan { .. }

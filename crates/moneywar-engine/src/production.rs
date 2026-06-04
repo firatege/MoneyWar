@@ -16,7 +16,7 @@
 use moneywar_domain::{
     CityId, DomainError, Factory, FactoryBatch, FactoryId, GameState, Money, PlayerId,
     PrivateFarm, PrivateFarmId, ProductKind, Role, Tick,
-    balance::{FACTORY_MAX_LEVEL, PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER, PRIVATE_FARM_OUTPUT_PER_TICK},
+    balance::{FACTORY_MAX_LEVEL, PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER},
 };
 
 use crate::{
@@ -84,17 +84,47 @@ pub(crate) fn process_build_factory(
 const DEMOLISH_REFUND_PCT: i64 = 50;
 
 /// Özel çiftlikleri ilerlet — her tick sahibinin envanterine ham madde ekle.
+/// Üretim miktarı seviyeye göre değişir: lv1=20, lv2=35, lv3=55
 pub(crate) fn advance_private_farms(state: &mut GameState, _tick: Tick) {
     let farm_ids: Vec<PrivateFarmId> = state.private_farms.keys().copied().collect();
     for fid in farm_ids {
-        let (owner, city, product) = {
+        let (owner, city, product, output) = {
             let f = &state.private_farms[&fid];
-            (f.owner, f.city, f.product)
+            (f.owner, f.city, f.product, f.output_per_tick())
         };
         if let Some(player) = state.players.get_mut(&owner) {
-            let _ = player.inventory.add(city, product, PRIVATE_FARM_OUTPUT_PER_TICK);
+            let _ = player.inventory.add(city, product, output);
         }
     }
+}
+
+/// `UpgradeFarm` komutunu uygula — çiftlik seviye atlar, üretim artar.
+pub(crate) fn process_upgrade_farm(
+    state: &mut GameState,
+    _report: &mut TickReport,
+    _tick: Tick,
+    owner: PlayerId,
+    farm_id: PrivateFarmId,
+) -> Result<(), EngineError> {
+    let farm = state.private_farms.get(&farm_id).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!("farm {farm_id} not found")))
+    })?;
+    if farm.owner != owner {
+        return Err(EngineError::Domain(DomainError::Validation("not owner".into())));
+    }
+    let current_level = farm.level;
+    let cost = moneywar_domain::PrivateFarm::upgrade_cost(current_level).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation("farm at max level".into()))
+    })?;
+    let player = state.players.get_mut(&owner).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation("player not found".into()))
+    })?;
+    if player.cash < cost {
+        return Err(EngineError::Domain(DomainError::InsufficientFunds { have: player.cash, want: cost }));
+    }
+    player.debit(cost)?;
+    state.private_farms.get_mut(&farm_id).unwrap().level += 1;
+    Ok(())
 }
 
 /// `BuildPrivateFarm` komutunu uygula.

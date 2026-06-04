@@ -312,7 +312,10 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         out.extend(enumerate_private_farm(state, player));
     }
 
-    // 4a) Fabrika yükseltme — bol nakit + aktif fab + makul seviye varsa güçlendir.
+    // 4a-i) Tarla yükseltme — aktif tarla + nakit varsa lv artır (önce tarla yükselt)
+    out.extend(enumerate_upgrade_farm(state, player));
+
+    // 4a-ii) Fabrika yükseltme — bol nakit + aktif fab + makul seviye varsa güçlendir.
     out.extend(enumerate_upgrade(state, player));
 
     // 4b) Fabrika kapatma — nakit kritik + uzun atıl → kapat, sermaye kurtar.
@@ -777,6 +780,22 @@ fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
     candidate.map(|(city, product)| {
         vec![ActionCandidate::BuildPrivateFarm { city, product }]
     }).unwrap_or_default()
+}
+
+/// Yükseltmeye uygun özel tarlalar — aktif tarla + nakit varsa.
+fn enumerate_upgrade_farm(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    state.private_farms.values()
+        .filter(|f| f.owner == player.id)
+        .filter(|f| f.level < moneywar_domain::PrivateFarm::FARM_MAX_LEVEL)
+        .filter_map(|f| {
+            let cost = moneywar_domain::PrivateFarm::upgrade_cost(f.level)?;
+            // 1.5× maliyet buffer
+            let needed = moneywar_domain::Money::from_cents(cost.as_cents() * 3 / 2);
+            if player.cash >= needed { Some(ActionCandidate::UpgradeFarm { farm_id: f.id }) }
+            else { None }
+        })
+        .take(1) // tick başına max 1
+        .collect()
 }
 
 /// Yükseltmeye uygun fabrikaları listele.

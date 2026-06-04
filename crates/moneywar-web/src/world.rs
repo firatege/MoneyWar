@@ -101,7 +101,7 @@ fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
         let pers = pick_personality(rng);
         let mut npc = make_npc(next_id, "Sanayici", Role::Sanayici, 50_000, NpcKind::Sanayici)
             .with_personality(pers);
-        distribute_inv(&mut npc, rng, 5_000);
+        distribute_raw_inv(&mut npc, rng, 5_000); // sadece ham madde
         insert_npc(s, npc, &mut next_id);
     }
 
@@ -222,6 +222,22 @@ fn pick_personality(rng: &mut ChaCha8Rng) -> Personality {
 }
 
 /// Stoğu ağırlıklı rastgele dağıt (sim build_state ile aynı algoritma).
+/// Sanayici başlangıç stoğu — sadece ham madde.
+/// Mamul stoğuyla başlayınca t1'de haksız satış yapıyorlardı.
+fn distribute_raw_inv(player: &mut Player, rng: &mut ChaCha8Rng, total: u32) {
+    let buckets: Vec<(CityId, ProductKind)> = CityId::ALL
+        .iter()
+        .flat_map(|c| ProductKind::RAW_MATERIALS.iter().map(move |p| (*c, *p)))
+        .collect();
+    let weights: Vec<u32> = (0..buckets.len()).map(|_| rng.random_range(0u32..=10)).collect();
+    let total_w: u32 = weights.iter().sum();
+    if total_w == 0 { return; }
+    for ((city, product), w) in buckets.iter().zip(weights.iter()) {
+        let share = u32::try_from(u64::from(total) * u64::from(*w) / u64::from(total_w)).unwrap_or(0);
+        if share > 0 { let _ = player.inventory.add(*city, *product, share); }
+    }
+}
+
 fn distribute_inv(player: &mut Player, rng: &mut ChaCha8Rng, total: u32) {
     let buckets: Vec<(CityId, ProductKind)> = CityId::ALL
         .iter()

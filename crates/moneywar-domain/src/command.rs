@@ -90,6 +90,12 @@ pub enum Command {
         factory_id: crate::FactoryId,
     },
 
+    /// Özel çiftlik yükselt (lv1→2→3) — daha fazla ham madde üretir.
+    UpgradeFarm {
+        owner: PlayerId,
+        farm_id: crate::PrivateFarmId,
+    },
+
     /// Fabrika kapat — geri ödeme nakit olarak alınır.
     /// Sadece Sanayici, sadece kendi fabrikası. Üretim bekleyen fabrika da
     /// kapatılabilir (yarım batch fire olur).
@@ -119,7 +125,8 @@ impl Command {
             | Self::BuyCaravan { owner, .. }
             | Self::DemolishFactory { owner, .. }
             | Self::UpgradeFactory { owner, .. }
-            | Self::BuildPrivateFarm { owner, .. } => *owner,
+            | Self::BuildPrivateFarm { owner, .. }
+            | Self::UpgradeFarm { owner, .. } => *owner,
             Self::DispatchCaravan { .. } => {
                 // Dispatch'in sahibi caravan'ın sahibi — motor validate eder.
                 // Burada placeholder: komut engine'e gidince caravan lookup yapılır.

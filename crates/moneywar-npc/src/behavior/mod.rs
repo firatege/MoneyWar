@@ -101,10 +101,12 @@ pub fn decide_behavior(
                 match &cand {
                     ActionCandidate::BuyCaravan { .. } => 0.4,
                     ActionCandidate::DispatchCaravan { .. } => 0.4,
-                    ActionCandidate::BuildPrivateFarm { .. } => 0.99, // tarla en öncelikli
+                    ActionCandidate::BuildPrivateFarm { .. } => 0.99,
+                    ActionCandidate::UpgradeFarm { .. } => 0.92, // tarla yükseltme karlı
                     ActionCandidate::DemolishFactory { .. } => 0.7,
                     // Yükseltme de filtreli — yüksek sabit skor.
-                    ActionCandidate::UpgradeFactory { .. } => 0.65,
+                    // Yükseltme kârlıdır (ROI 4-7×) — fabrika kurmaktan öncelikli.
+                    ActionCandidate::UpgradeFactory { .. } => 0.95,
                     ActionCandidate::ProposeContract(_)
                     | ActionCandidate::AcceptContract { .. } => 0.2,
                     // SubmitOrder/BuildFactory context döner, buraya düşmez.
@@ -246,6 +248,10 @@ fn candidate_to_command(
         ActionCandidate::AcceptContract { contract_id } => Some(Command::AcceptContract {
             contract_id,
             acceptor: pid,
+        }),
+        ActionCandidate::UpgradeFarm { farm_id } => Some(Command::UpgradeFarm {
+            owner: pid,
+            farm_id,
         }),
         ActionCandidate::BuildPrivateFarm { city, product } => Some(Command::BuildPrivateFarm {
             owner: pid,

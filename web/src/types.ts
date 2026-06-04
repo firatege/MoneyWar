@@ -59,6 +59,8 @@ export interface PrivateFarmDto {
   owner: number;
   city: string;
   product: string;
+  level: number;
+  output_per_tick: number;
 }
 
 export interface RelationDto {
