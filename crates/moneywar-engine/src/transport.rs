@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn buy_second_caravan_tuccar_costs_3000() {
+    fn buy_second_caravan_tuccar_costs_4000() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         let pid = add_player(&mut s, 1, Role::Tuccar, 50_000);
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(s.caravans.len(), 2);
         assert_eq!(
             s.players[&pid].cash,
-            Money::from_lira(50_000 - 3_000).unwrap()
+            Money::from_lira(50_000 - 4_000).unwrap()
         );
     }
 

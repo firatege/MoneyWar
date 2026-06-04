@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn second_factory_costs_2k_and_debits_cash() {
+    fn second_factory_costs_8k_and_debits_cash() {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, Role::Sanayici, 50_000);
@@ -482,7 +482,7 @@ mod tests {
             ProductKind::Kumas,
         )
         .unwrap();
-        // İkinci 2k (FACTORY_BUILD_COSTS_LIRA[1]=2000).
+        // İkinci 8k (FACTORY_BUILD_COSTS_LIRA[1]=8000).
         process_build_factory(
             &mut s,
             &mut r,
@@ -495,7 +495,7 @@ mod tests {
         assert_eq!(s.factories.len(), 2);
         assert_eq!(
             s.players[&PlayerId::new(1)].cash,
-            Money::from_lira(48_000).unwrap() // 50K - 0 - 2K
+            Money::from_lira(42_000).unwrap() // 50K - 0 - 8K
         );
     }
 

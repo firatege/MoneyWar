@@ -58,12 +58,11 @@ pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 // =============================================================================
 
 /// Kurulum maliyet tablosu — `existing_count` index'i ile oku.
-/// İlk fabrika bedava, sonra artan maliyet. Faz 1: 5→9 giriş (TARGET=8).
-/// 4→8: Sanayici kârından finanse ederek büyüsün; 5–8 pahalı → monopol
-/// sıyrılmak için kâr üretmek gerekir (serbest para ile spam önlenir).
-pub const FACTORY_BUILD_COSTS_LIRA: [i64; 9] = [
-    0, 2_000, 6_000, 12_000, 20_000,   // 0–4: %~40 ucuzlatıldı (erken yatırım)
-    32_000, 46_000, 62_000, 78_000,    // 5–8: daha erişilebilir büyüme
+/// 1. fabrika bedava, sonrakiler sabit 8K. Gittikçe zorlaşmıyor —
+/// sadece nakit kısıtı sınır. Sınırsız fabrika mümkün.
+pub const FACTORY_BUILD_COSTS_LIRA: [i64; 2] = [
+    0,      // 1. bedava
+    8_000,  // 2.+ sabit 8K
 ];
 
 // =============================================================================
@@ -87,10 +86,9 @@ pub const CARAVAN_CAPACITY_TUCCAR: u32 = 1080; // 1200→1080: %10 kısıtlama, 
 /// Sanayici kervan maliyet tablosu (§10).
 pub const CARAVAN_COSTS_SANAYICI_LIRA: [i64; 3] = [0, 5_000, 10_000];
 
-/// Tüccar kervan maliyet tablosu. Faz 5: 4→3 giriş.
-/// Tablo uzunluğu = doğal üst sınır. 1. bedava, 2. ucuz, 3. pahalı.
-/// 3. kervan ancak sezon erken + bol nakit durumunda alınır (caravan_target).
-pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 3] = [0, 3_000, 10_000];
+/// Tüccar kervan maliyeti — sabit, gittikçe zorlaşmıyor.
+/// 1. bedava, sonrakiler sabit 4K. Sınırsız kervan mümkün.
+pub const CARAVAN_COSTS_TUCCAR_LIRA: [i64; 2] = [0, 4_000];
 
 // =============================================================================
 // Piyasa
@@ -329,7 +327,7 @@ mod tests {
 
     #[test]
     fn factory_cost_table_has_entries() {
-        assert_eq!(FACTORY_BUILD_COSTS_LIRA.len(), 9); // Faz 1: 0–8 basamak
+        assert_eq!(FACTORY_BUILD_COSTS_LIRA.len(), 2); // sabit maliyet: bedava + 8K
         assert_eq!(FACTORY_BUILD_COSTS_LIRA[0], 0); // starter bedava
         assert!(FACTORY_BUILD_COSTS_LIRA.windows(2).all(|w| w[0] <= w[1]));
     }

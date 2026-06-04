@@ -240,16 +240,12 @@ mod tests {
 
     #[test]
     fn build_cost_follows_design_schedule() {
-        // balance::FACTORY_BUILD_COSTS_LIRA ile senkron — değiştiğinde test güncelle.
+        // Sabit maliyet: 1. bedava, 2.+ 8K.
         assert_eq!(Factory::build_cost(0), Money::ZERO);
-        assert_eq!(Factory::build_cost(1), Money::from_lira(2_000).unwrap());
-        assert_eq!(Factory::build_cost(2), Money::from_lira(6_000).unwrap());
-        assert_eq!(Factory::build_cost(3), Money::from_lira(12_000).unwrap());
-        assert_eq!(Factory::build_cost(4), Money::from_lira(20_000).unwrap());
-        assert_eq!(Factory::build_cost(5), Money::from_lira(32_000).unwrap());
-        assert_eq!(Factory::build_cost(8), Money::from_lira(78_000).unwrap());
-        assert_eq!(Factory::build_cost(9), Money::from_lira(78_000).unwrap());
-        assert_eq!(Factory::build_cost(20), Money::from_lira(78_000).unwrap());
+        assert_eq!(Factory::build_cost(1), Money::from_lira(8_000).unwrap());
+        assert_eq!(Factory::build_cost(2), Money::from_lira(8_000).unwrap());
+        assert_eq!(Factory::build_cost(10), Money::from_lira(8_000).unwrap());
+        assert_eq!(Factory::build_cost(99), Money::from_lira(8_000).unwrap());
     }
 
     #[test]

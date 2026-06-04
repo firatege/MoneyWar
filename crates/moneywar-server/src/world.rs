@@ -33,8 +33,8 @@ pub fn build_initial_state(lobby: &Lobby) -> GameState {
     for (player_id, slot) in &lobby.slots {
         let role = slot.role.unwrap_or(Role::Tuccar);
         let starting_cash = match role {
-            Role::Sanayici => 25_000_i64,
-            Role::Tuccar => 40_000_i64,
+            Role::Sanayici => 10_000_i64,
+            Role::Tuccar => 15_000_i64,
         };
         let mut human = Player::new(
             *player_id,
@@ -49,7 +49,7 @@ pub fn build_initial_state(lobby: &Lobby) -> GameState {
             let city_idx = rng.random_range(0..CityId::ALL.len());
             let starter_city = CityId::ALL[city_idx];
             let starter_raw = state.cheap_raw_for(starter_city);
-            let starter_qty: u32 = rng.random_range(700..=1_300);
+            let starter_qty: u32 = rng.random_range(100..=500);
             let _ = human.inventory.add(starter_city, starter_raw, starter_qty);
         }
         state.players.insert(*player_id, human);
@@ -95,7 +95,7 @@ pub fn build_initial_state(lobby: &Lobby) -> GameState {
             pid,
             format!("Sanayici-{}", i + 1),
             Role::Sanayici,
-            Money::from_lira(30_000).unwrap(),
+            Money::from_lira(10_000).unwrap(),
             true,
         )
         .unwrap()

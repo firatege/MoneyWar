@@ -418,21 +418,11 @@ mod tests {
 
     #[test]
     fn buy_cost_tuccar_schedule() {
-        // Faz 5: tablo 3 giriş [0, 3K, 10K] — 3. kervan pahalı (hak edilmeli)
+        // Sabit: 1. bedava, 2.+ 4K
         assert_eq!(Caravan::buy_cost(Role::Tuccar, 0), Money::ZERO);
-        assert_eq!(
-            Caravan::buy_cost(Role::Tuccar, 1),
-            Money::from_lira(3_000).unwrap()
-        );
-        assert_eq!(
-            Caravan::buy_cost(Role::Tuccar, 2),
-            Money::from_lira(10_000).unwrap()
-        );
-        // 3+ sabit 10K (tavan)
-        assert_eq!(
-            Caravan::buy_cost(Role::Tuccar, 10),
-            Money::from_lira(10_000).unwrap()
-        );
+        assert_eq!(Caravan::buy_cost(Role::Tuccar, 1), Money::from_lira(4_000).unwrap());
+        assert_eq!(Caravan::buy_cost(Role::Tuccar, 2), Money::from_lira(4_000).unwrap());
+        assert_eq!(Caravan::buy_cost(Role::Tuccar, 10), Money::from_lira(4_000).unwrap());
     }
 
     #[test]
