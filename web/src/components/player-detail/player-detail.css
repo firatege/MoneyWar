@@ -94,7 +94,7 @@
 }
 
 .pd__chart-wrap {
-  height: 120px;   /* sabit — flex:1 çöküyor */
+  height: 160px;   /* biraz daha yüksek — daha net görünüm */
   flex-shrink: 0;
   display: flex;
   flex-direction: column;

@@ -195,7 +195,8 @@ pub fn inject_brain_signals(
     // ── İlişki güveni ────────────────────────────────────────────────────────
     // Bu bucket'ta daha önce işlem yaptığım biri var mı?
     // Yüksekse → güvenilir ortak tanıyorum → daha agresif işlem yap.
-    let trust = state.avg_trust_in_bucket(player_id, city, product);
+    // max_trust: en güçlü bağ kişisini tercih et (avg yerine max → seçicilik)
+    let trust = state.max_trust_in_bucket(player_id, city, product);
     inputs.insert("partner_trust", trust.clamp(0.0, 1.0));
 
     // ── Faz 4: bucket hâkimiyeti ─────────────────────────────────────────────

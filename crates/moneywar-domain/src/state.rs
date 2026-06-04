@@ -256,9 +256,29 @@ impl GameState {
             .map_or(0.0, |r| r.trust_score())
     }
 
-    /// Bu bucket'ta belirli bir oyuncunun (karşı taraf) güven ortalaması.
-    /// Benim ID'm `me`, bucket (city, product) içindeki aktif emirlerin sahipleriyle
-    /// ortalama güven. Yüksekse "bu yerde güvendiğim biri var".
+    /// Bu bucket'ta en güvendiğim kişinin güven skoru.
+    /// Ortalama yerine MAX: bir kişiyle güçlü bağ varsa o kişiyle
+    /// tercihli işlem yap → ilişki seçicilik kazanır.
+    #[must_use]
+    pub fn max_trust_in_bucket(
+        &self,
+        me: PlayerId,
+        city: crate::CityId,
+        product: crate::ProductKind,
+    ) -> f64 {
+        self.order_book
+            .get(&(city, product))
+            .map(|orders| {
+                orders
+                    .iter()
+                    .filter(|o| o.player != me)
+                    .map(|o| self.trust_between(me, o.player))
+                    .fold(0.0f64, f64::max)
+            })
+            .unwrap_or(0.0)
+    }
+
+    /// Eski avg_trust (geriye uyumluluk için saklandı).
     #[must_use]
     pub fn avg_trust_in_bucket(
         &self,

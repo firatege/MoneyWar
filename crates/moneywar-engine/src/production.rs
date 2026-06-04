@@ -125,8 +125,13 @@ pub(crate) fn process_build_private_farm(
             "max private farms ({PRIVATE_FARM_MAX_PER_OWNER}) reached"
         ))));
     }
-    let cost = Money::from_lira(PRIVATE_FARM_BUILD_COST_LIRA)
-        .map_err(|e| EngineError::Domain(e))?;
+    // Aynı (city, product) slot'unda başka tarla varsa 1.5× maliyet.
+    // Her ek tarla için +%50 daha pahalı → tarla yeri kıymetli.
+    let existing_in_slot = state.private_farms.values()
+        .filter(|f| f.city == city && f.product == product)
+        .count() as i64;
+    let cost_lira = PRIVATE_FARM_BUILD_COST_LIRA + existing_in_slot * PRIVATE_FARM_BUILD_COST_LIRA / 2;
+    let cost = Money::from_lira(cost_lira).map_err(|e| EngineError::Domain(e))?;
     let player_mut = state.players.get_mut(&owner).expect("validated");
     if player_mut.cash < cost {
         return Err(EngineError::Domain(DomainError::InsufficientFunds {
