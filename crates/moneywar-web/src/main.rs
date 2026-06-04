@@ -120,6 +120,8 @@ async fn main() -> std::io::Result<()> {
             .route("/api/snapshot", web::get().to(get_snapshot))
             .route("/api/series", web::get().to(get_series))
             .route("/api/log", web::get().to(get_log))
+            .route("/api/seasons", web::get().to(get_seasons))
+            .route("/api/reset", web::post().to(post_reset))
             .route("/ws", web::get().to(ws_handler));
 
         if static_dir_exists {
@@ -166,6 +168,27 @@ fn spawn_tick_loop(
 async fn get_snapshot(state: web::Data<AppState>) -> impl Responder {
     let snapshot = state.driver.read().await.snapshot();
     HttpResponse::Ok().json(snapshot)
+}
+
+/// Son 20 sezonu özet olarak döndürür (en yeni önce).
+async fn get_seasons(state: web::Data<AppState>) -> impl Responder {
+    let d = state.driver.read().await;
+    let mut history = d.season_history.clone();
+    history.reverse();
+    HttpResponse::Ok().json(history)
+}
+
+/// Mevcut sezonu sıfırlar — tick 0'dan başlar, önceki skor geçmişe eklenir.
+async fn post_reset(state: web::Data<AppState>) -> impl Responder {
+    {
+        let mut d = state.driver.write().await;
+        d.reset_season();
+    }
+    // Sıfırlanmış snapshot'ı broadcast et.
+    if let Ok(json) = serde_json::to_string(&state.driver.read().await.snapshot()) {
+        let _ = state.tx.send(Arc::from(json.as_str()));
+    }
+    HttpResponse::Ok().json(serde_json::json!({ "ok": true }))
 }
 
 #[derive(Debug, Deserialize)]

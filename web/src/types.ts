@@ -96,6 +96,21 @@ export interface PriceSeries {
   points: PricePoint[];
 }
 
+export interface SeasonEntry {
+  rank: number;
+  id: number;
+  name: string;
+  npc_kind: string | null;
+  pnl_lira: number;
+  cash_lira: number;
+}
+
+export interface SeasonSummary {
+  season: number;
+  ticks_completed: number;
+  top: SeasonEntry[];
+}
+
 export type ConnStatus = "connecting" | "open" | "closed";
 
 /** Feed satırı — birikmiş, benzersiz anahtarlı. */

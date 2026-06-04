@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ConnStatus, FeedItem, Snapshot } from "../types";
+import type { ConnStatus, FeedItem, SeasonSummary, Snapshot } from "../types";
 import {
   appendBucketHistory,
   appendHistory,
@@ -34,6 +34,10 @@ interface GameSocket {
   tradeStats: PlayerTradeStats;
   /** Ticker haberleri — her TICKER_UPDATE_EVERY tick'te bir güncellenir (statik). */
   stableNews: NewsItem[];
+  /** Son sezon özetleri (en yeni önce). */
+  seasons: SeasonSummary[];
+  /** Mevcut sezonu sıfırla. */
+  resetSeason: () => Promise<void>;
 }
 
 /**
@@ -50,6 +54,7 @@ export function useGameSocket(): GameSocket {
   const [tradeStats, setTradeStats] = useState<PlayerTradeStats>({});
   const [stableNews, setStableNews] = useState<NewsItem[]>([]);
   const [status, setStatus] = useState<ConnStatus>("connecting");
+  const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
   const lastNewsTickRef = useRef<number>(-1);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -121,6 +126,32 @@ export function useGameSocket(): GameSocket {
     };
   }, [ingest]);
 
+  // Sezon geçmişini yükle (sayfa açılışında + her sezon değişiminde).
+  const fetchSeasons = useCallback(async () => {
+    try {
+      const res = await fetch("/api/seasons");
+      if (res.ok) setSeasons((await res.json()) as SeasonSummary[]);
+    } catch { /* ağ hatası — sessiz */ }
+  }, []);
+
+  const resetSeason = useCallback(async () => {
+    await fetch("/api/reset", { method: "POST" });
+    await fetchSeasons();
+  }, [fetchSeasons]);
+
+  useEffect(() => {
+    void fetchSeasons();
+  }, [fetchSeasons]);
+
+  // Her yeni sezon başlangıcında listeyi güncelle.
+  const lastSeasonForFetch = useRef<number>(-1);
+  useEffect(() => {
+    if (snapshot && snapshot.season !== lastSeasonForFetch.current) {
+      lastSeasonForFetch.current = snapshot.season;
+      void fetchSeasons();
+    }
+  }, [snapshot?.season, fetchSeasons]);
+
   useEffect(() => {
     closedByUs.current = false;
     connect();
@@ -130,5 +161,5 @@ export function useGameSocket(): GameSocket {
     };
   }, [connect]);
 
-  return { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews };
+  return { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews, seasons, resetSeason };
 }

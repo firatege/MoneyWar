@@ -21,7 +21,7 @@ const DEFAULT_PRODUCT = "pamuk";
 const INTRO_SEEN_KEY = "mw_intro_seen";
 
 export function DashboardPage() {
-  const { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews } =
+  const { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews, seasons, resetSeason } =
     useGameSocket();
   const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
   const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
@@ -42,7 +42,7 @@ export function DashboardPage() {
   return (
     <div className="app">
       {showHelp && <HelpOverlay onClose={closeHelp} />}
-      <SeasonHeader snapshot={snapshot} status={status} onHelp={() => setShowHelp(true)} />
+      <SeasonHeader snapshot={snapshot} status={status} onHelp={() => setShowHelp(true)} seasons={seasons} onReset={resetSeason} />
       <TickerTape news={stableNews} />
       <main className="app__grid">
         <div className="app__col app__col--left">

@@ -148,6 +148,18 @@
   transition: width var(--dur) var(--ease-snap);
 }
 
+.hdr__reset {
+  color: var(--accent-dim);
+  border-color: var(--accent-faint);
+}
+.hdr__reset:hover {
+  color: var(--accent);
+}
+.hdr__reset:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 @media (max-width: 760px) {
   .hdr {
     grid-template-columns: 1fr 1fr;
@@ -162,3 +174,114 @@
     width: 100%;
   }
 }
+
+/* ─── Sezon geçmişi modal ─────────────────────────────────────────────── */
+.sh-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.sh-modal {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  width: min(560px, 95vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sh-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+.sh-modal__title {
+  font-size: var(--text-xs);
+  letter-spacing: 0.25em;
+  color: var(--text-dim);
+}
+.sh-modal__close {
+  all: unset;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+  padding: 0.15rem 0.4rem;
+}
+.sh-modal__close:hover { color: var(--text); }
+.sh-modal__body {
+  overflow-y: auto;
+  padding: 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.sh-modal__empty {
+  color: var(--text-ghost);
+  font-size: var(--text-xs);
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.sh-season {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.sh-season__head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--surface-hi);
+  border-bottom: 1px solid var(--line);
+}
+.sh-season__num {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.05em;
+}
+.sh-season__ticks {
+  font-size: var(--text-xs);
+  color: var(--text-ghost);
+  margin-right: auto;
+}
+.sh-season__winner {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sh-season__pnl {
+  font-weight: 600;
+}
+.sh-season__table {
+  display: flex;
+  flex-direction: column;
+}
+.sh-season__row {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr 5rem 6rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.8rem;
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--line);
+}
+.sh-season__row:last-child { border-bottom: none; }
+.sh-season__rank {
+  color: var(--text-ghost);
+  text-align: right;
+}
+.sh-season__name { color: var(--text); }
+.sh-season__kind { color: var(--text-faint); font-size: 0.7rem; letter-spacing: 0.1em; }
+.sh-season__val { text-align: right; font-weight: 600; }
