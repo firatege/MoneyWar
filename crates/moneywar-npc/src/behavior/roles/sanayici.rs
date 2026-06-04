@@ -56,7 +56,14 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         .count();
     if owned < TARGET_FACTORIES {
         let next_cost = moneywar_domain::Factory::build_cost(u32::try_from(owned).unwrap_or(0));
-        if player.cash >= next_cost {
+        // Eşik: owned fazlaysa daha fazla nakit gerekli.
+        // Formül: cost + owned×owned×2K (quadratic: 0fab→0, 3fab→18K, 8fab→128K)
+        // İlk 3 fab hızlı, sonrakiler kâr birikince kurulabilir.
+        let quad_buffer = (owned as i64) * (owned as i64) * 2_000 * 100;
+        let needed = moneywar_domain::Money::from_cents(
+            next_cost.as_cents().saturating_add(quad_buffer)
+        );
+        if player.cash >= needed {
             if let Some((city, product)) = pick_factory_target(state, player, brain) {
                 out.push(ActionCandidate::BuildFactory { city, product });
             }
@@ -290,9 +297,11 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         });
     }
 
-    // 4c) Özel çiftlik — en az 3 fabrika kurulmuşsa başlar.
-    // Çok erken tarla kurmak ilk fab yatırımını yavaşlatır.
-    if owned >= 3 {
+    // 4c) Özel çiftlik — yeterli fabrika VE minimum tick.
+    // state.config.season_ticks hizli=90 olduğundan season_pct güvenilmez.
+    // Mutlak eşik: t60 sonrası (350 tickin ~17%'si) + en az 8 fab.
+    let current_tick = state.current_tick.value();
+    if owned >= 8 && current_tick >= 60 {
         out.extend(enumerate_private_farm(state, player));
     }
 
