@@ -148,6 +148,20 @@
   transition: width var(--dur) var(--ease-snap);
 }
 
+.hdr__nav-link {
+  text-decoration: none;
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+.hdr__nav-link:hover {
+  color: var(--accent);
+  border-color: var(--accent-faint);
+}
+.hdr__nav-link--active {
+  color: var(--accent-dim);
+  border-color: var(--accent-faint);
+}
+
 .hdr__reset {
   color: var(--accent-dim);
   border-color: var(--accent-faint);
