@@ -109,11 +109,14 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
     //    Her fab'ın raw_input'unu hesapla. Sanayici Ist'te Kumaş fab kurmuşsa
     //    Pamuk her 3 şehirde de arar (Tüccar Ist'ten Ank'a getirebilir).
     //    Fab yoksa fallback: şehir specialty raw'ı.
+    // Faz 2: tarifin TAMAMI alınır. Ana girdiyi alıp ek girdiyi unutmak
+    // fabrikayı aç bırakır — çok parçalı üründe her parça ayrı tedariktir.
     let needed_raws: std::collections::BTreeSet<ProductKind> = state
         .factories
         .values()
         .filter(|f| f.owner == player.id)
-        .filter_map(|f| f.product.raw_input())
+        .flat_map(|f| f.product.recipe())
+        .map(|(input, _)| input)
         .collect();
     // v8.20: Cross policy = fab var ise CROSS (ham açlığı, agresif al).
     // Fab yoksa PASSIVE (gelecek fab planı için seyrek alım, kâr odaklı).
@@ -180,7 +183,8 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
                 .factories
                 .values()
                 .filter(|f| f.owner == player.id && f.city == city)
-                .filter_map(|f| f.product.raw_input())
+                .flat_map(|f| f.product.recipe())
+                .map(|(input, _)| input)
                 .collect();
             for &product in &city_raws {
                 // Fix 5: stok eksiği kadar iste — talep sinyali + gerçek ihtiyaç.
@@ -198,8 +202,8 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
                 let baseline = state
                     .effective_baseline(city, product)
                     .unwrap_or_else(|| {
-                        Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
-                            .unwrap_or(Money::ZERO)
+                        // Ek girdiler mamul olabilir — ürünün kendi baz fiyatı.
+                        Money::from_lira(product.base_price_lira()).unwrap_or(Money::ZERO)
                     });
                 // Kademeli premium: stok ne kadar azsa o kadar yüksek teklif.
                 // Kitapta hep tavana gitmek yerine organik fiyat keşfi.

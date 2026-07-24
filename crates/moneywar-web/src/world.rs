@@ -58,28 +58,25 @@ fn seed_baselines(s: &mut GameState) {
 /// Şehir specialty/secondary/demand profilini kur — sim ile aynı 3-tier
 /// rotasyon (ilk 3 şehir shuffle edilmiş ham, Bursa=Pamuk, Konya=Buğday).
 fn seed_profiles(s: &mut GameState, rng: &mut ChaCha8Rng) {
-    // 5 şehrin tamamı shuffle — her ham madde 1-2 şehirde specialty.
-    // Zeytin artık her seed'de mutlaka 1-2 şehirde → daha bol Zeytin arzı.
+    // Faz 2: 5 ham madde, 5 şehir → her şehir bir hammaddenin ana kaynağı.
+    // Boya ve Üzüm tek şehirden çıkar; Elbise/Ziyafet üretmek isteyen o
+    // şehrin arzına bağımlı olur — tedarik boğmanın (SupplyChoke) zemini.
+    // Hangi şehrin neyi ürettiği her seed'de değişir: ezbere strateji yok.
     let all_cities = [
         CityId::Istanbul, CityId::Ankara, CityId::Izmir,
         CityId::Bursa, CityId::Konya,
     ];
-    let mut raws_repeated = [
-        ProductKind::Pamuk, ProductKind::Pamuk,
-        ProductKind::Bugday, ProductKind::Bugday,
-        ProductKind::Zeytin, ProductKind::Zeytin,
-    ];
-    // Shuffle'dan 5 seç (tekrarlı 6'dan 5 şehir için dengeli dağılım)
-    for i in (1..raws_repeated.len()).rev() {
+    let mut raws = ProductKind::RAW_MATERIALS;
+    for i in (1..raws.len()).rev() {
         let j = rng.random_range(0..=i);
-        raws_repeated.swap(i, j);
+        raws.swap(i, j);
     }
     let prime_per_city: [(CityId, ProductKind); 5] = [
-        (all_cities[0], raws_repeated[0]),
-        (all_cities[1], raws_repeated[1]),
-        (all_cities[2], raws_repeated[2]),
-        (all_cities[3], raws_repeated[3]),
-        (all_cities[4], raws_repeated[4]),
+        (all_cities[0], raws[0]),
+        (all_cities[1], raws[1]),
+        (all_cities[2], raws[2]),
+        (all_cities[3], raws[3]),
+        (all_cities[4], raws[4]),
     ];
     s.seed_city_profiles(prime_per_city);
 }

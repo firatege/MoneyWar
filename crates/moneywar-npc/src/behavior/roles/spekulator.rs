@@ -195,7 +195,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(bid_buckets.len(), 15, "5 şehir × 3 raw = 15 BID");
+        assert_eq!(
+            bid_buckets.len(),
+            CityId::ALL.len() * ProductKind::RAW_MATERIALS.len(),
+            "her şehir × her ham madde için bir BID"
+        );
     }
 
     #[test]

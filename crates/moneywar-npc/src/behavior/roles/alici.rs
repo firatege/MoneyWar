@@ -187,8 +187,11 @@ mod tests {
     fn rich_alici_emits_buy_candidates_per_city_product() {
         let (s, p) = alici_with_cash(100_000);
         let cands = enumerate(&s, &p);
-        // v0.6.0: 5 şehir × 3 mamul = 15 aday (baseline > 0 olmalı).
-        assert_eq!(cands.len(), 15);
+        // Her şehir × her mamul için bir aday (baseline > 0 olmalı).
+        assert_eq!(
+            cands.len(),
+            CityId::ALL.len() * ProductKind::FINISHED_GOODS.len()
+        );
         for cand in &cands {
             let ActionCandidate::SubmitOrder { side, product, .. } = cand else {
                 panic!("Alıcı sadece SubmitOrder emit etmeli");
@@ -310,8 +313,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // v0.6.0: 5 şehir × 3 mamul = 15.
-        assert_eq!(pairs.len(), 15);
+        // Her şehir × her mamul — katalog büyüdükçe beklenti de büyür.
+        assert_eq!(
+            pairs.len(),
+            CityId::ALL.len() * ProductKind::FINISHED_GOODS.len()
+        );
         for city in CityId::ALL {
             for product in ProductKind::FINISHED_GOODS {
                 assert!(pairs.contains(&(city, product)));

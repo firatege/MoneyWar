@@ -48,8 +48,73 @@ pub fn detect_intrigue(state: &mut GameState, report: &mut TickReport, tick: Tic
     detect_monopolies(state, report, tick);
     let undercuts = detect_undercuts(state, report, &asks, tick);
     advance_price_wars(state, report, &asks, &undercuts, tick);
+    detect_supply_chokes(state, report, tick);
     decay_grudges(state);
     detect_bankruptcies(state, report, tick);
+}
+
+/// Tedarik boğma: bir fabrika girdi yokluğundan atıl kalıyor **ve** o girdinin
+/// pazarını başka bir firma tekelinde tutuyor. Boğan taraf bunu bilinçli
+/// yapmış olmak zorunda değil — sonuç aynı: rakibin bandı durdu.
+/// Faz 2'nin çok girdili tarifleri bu olayı mümkün kılan şey.
+fn detect_supply_chokes(state: &mut GameState, report: &mut TickReport, tick: Tick) {
+    // Bu tick girdi yokluğundan atıl kalan fabrikalar.
+    let starved: Vec<(PlayerId, CityId, ProductKind)> = report
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let LogEvent::FactoryIdle { factory_id, city, reason } = &entry.event else {
+                return None;
+            };
+            // `production.rs` açlık mesajları "raw X shortage" / "input X shortage".
+            let missing = parse_shortage_input(reason)?;
+            let owner = state.factories.get(factory_id)?.owner;
+            Some((owner, *city, missing))
+        })
+        .collect();
+
+    let mut new_chokes: Vec<(PlayerId, PlayerId, CityId, ProductKind)> = Vec::new();
+    for (victim, city, missing) in starved {
+        let Some(choker) = state.intrigue.rival_monopolist(victim, city, missing) else {
+            continue;
+        };
+        let key = (choker, victim, city, missing);
+        if state.intrigue.active_chokes.contains(&key) {
+            continue; // süregelen boğma — her tick haber olmaz
+        }
+        new_chokes.push(key);
+    }
+
+    // Artık geçerli olmayan boğmaları unut ki tekrar haber olabilsinler.
+    state.intrigue.active_chokes.retain(|(choker, _, city, product)| {
+        state.intrigue.monopolist.get(&(*city, *product)) == Some(choker)
+    });
+
+    for key in new_chokes {
+        state.intrigue.active_chokes.insert(key);
+        report.push(LogEntry {
+            tick,
+            actor: Some(key.0),
+            event: LogEvent::SupplyChoke {
+                city: key.2,
+                product: key.3,
+                choker: key.0,
+                victim: key.1,
+            },
+        });
+        // Boğulan taraf bunu unutmaz.
+        form_grudge(state, report, key.1, key.0, tick);
+    }
+}
+
+/// `FactoryIdle` mesajından eksik girdiyi çıkar. Motor mesajı
+/// `"raw <Ürün> shortage at ..."` ya da `"input <Ürün> shortage at ..."`.
+fn parse_shortage_input(reason: &str) -> Option<ProductKind> {
+    let rest = reason
+        .strip_prefix("raw ")
+        .or_else(|| reason.strip_prefix("input "))?;
+    let name = rest.split(" shortage").next()?;
+    ProductKind::ALL.into_iter().find(|p| p.display_name() == name)
 }
 
 /// Bu tick'in eşleşmelerinden pazar → (satıcı → birim) dökümü.
@@ -462,6 +527,9 @@ mod tests {
                         | LogEvent::PriceWarWon { .. }
                         | LogEvent::GrudgeFormed { .. }
                         | LogEvent::FirmBankrupt { .. }
+                        | LogEvent::SupplyChoke { .. }
+                        | LogEvent::CartelFormed { .. }
+                        | LogEvent::CartelBetrayed { .. }
                 )
             })
             .collect()
@@ -677,6 +745,93 @@ mod tests {
         }
         assert!(won, "mağdur çekilince savaş kazanılmalıydı");
         assert!(s.intrigue.price_wars.is_empty());
+    }
+
+    #[test]
+    fn shortage_reason_parses_both_message_shapes() {
+        assert_eq!(
+            parse_shortage_input("raw Pamuk shortage at İstanbul: have=3, need=12"),
+            Some(ProductKind::Pamuk)
+        );
+        assert_eq!(
+            parse_shortage_input("input Boya shortage at Konya: have=0, need=20"),
+            Some(ProductKind::Boya)
+        );
+        // Açlıkla ilgisiz atıl sebepleri boğma sayılmaz.
+        assert_eq!(parse_shortage_input("inventory add failed: overflow"), None);
+    }
+
+    #[test]
+    fn supply_choke_fires_once_while_monopoly_holds() {
+        let mut s = state();
+        // Boya tekeli 7'de; 5'in fabrikası Boya bulamıyor.
+        s.intrigue.monopolist.insert((CityId::Konya, ProductKind::Boya), pid(7));
+        let fid = moneywar_domain::FactoryId::new(1);
+        s.factories.insert(
+            fid,
+            moneywar_domain::Factory::new(fid, pid(5), CityId::Konya, ProductKind::Elbise).unwrap(),
+        );
+
+        let idle = |t: u32| LogEntry {
+            tick: Tick::new(t),
+            actor: Some(pid(5)),
+            event: LogEvent::FactoryIdle {
+                factory_id: fid,
+                city: CityId::Konya,
+                reason: "input Boya shortage at Konya: have=0, need=20".into(),
+            },
+        };
+
+        let mut r1 = TickReport::new(Tick::new(1));
+        r1.push(idle(1));
+        detect_supply_chokes(&mut s, &mut r1, Tick::new(1));
+        assert_eq!(
+            story_events(&r1)
+                .iter()
+                .filter(|e| matches!(e, LogEvent::SupplyChoke { .. }))
+                .count(),
+            1
+        );
+
+        // Aynı boğma sürerken tekrar haber olmaz.
+        let mut r2 = TickReport::new(Tick::new(2));
+        r2.push(idle(2));
+        detect_supply_chokes(&mut s, &mut r2, Tick::new(2));
+        assert!(
+            !story_events(&r2)
+                .iter()
+                .any(|e| matches!(e, LogEvent::SupplyChoke { .. })),
+            "süregelen boğma her tick manşet olmamalı"
+        );
+
+        // Tekel düşerse kayıt temizlenir → yeniden haber olabilir.
+        s.intrigue.monopolist.remove(&(CityId::Konya, ProductKind::Boya));
+        let mut r3 = TickReport::new(Tick::new(3));
+        detect_supply_chokes(&mut s, &mut r3, Tick::new(3));
+        assert!(s.intrigue.active_chokes.is_empty());
+    }
+
+    #[test]
+    fn own_monopoly_does_not_choke_itself() {
+        let mut s = state();
+        s.intrigue.monopolist.insert((CityId::Konya, ProductKind::Boya), pid(5));
+        let fid = moneywar_domain::FactoryId::new(1);
+        s.factories.insert(
+            fid,
+            moneywar_domain::Factory::new(fid, pid(5), CityId::Konya, ProductKind::Elbise).unwrap(),
+        );
+        let mut r = TickReport::new(Tick::new(1));
+        r.push(LogEntry {
+            tick: Tick::new(1),
+            actor: Some(pid(5)),
+            event: LogEvent::FactoryIdle {
+                factory_id: fid,
+                city: CityId::Konya,
+                reason: "input Boya shortage at Konya: have=0, need=20".into(),
+            },
+        });
+        detect_supply_chokes(&mut s, &mut r, Tick::new(1));
+        assert!(story_events(&r).is_empty(), "kendi tekelin seni boğamaz");
     }
 
     #[test]

@@ -36,14 +36,11 @@ pub fn jitter_pct(
         CityId::Bursa => 4,
         CityId::Konya => 5,
     };
-    let product_idx: u64 = match product {
-        ProductKind::Pamuk => 1,
-        ProductKind::Bugday => 2,
-        ProductKind::Zeytin => 3,
-        ProductKind::Kumas => 4,
-        ProductKind::Un => 5,
-        ProductKind::Zeytinyagi => 6,
-    };
+    // Katalog sırasındaki konum — yeni ürün eklendiğinde otomatik genişler.
+    let product_idx: u64 = ProductKind::ALL
+        .iter()
+        .position(|p| *p == product)
+        .map_or(0, |i| i as u64 + 1);
     let side_idx: u64 = match side {
         OrderSide::Buy => 1,
         OrderSide::Sell => 2,

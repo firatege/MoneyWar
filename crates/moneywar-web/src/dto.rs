@@ -165,9 +165,15 @@ fn product_slug(p: ProductKind) -> &'static str {
         ProductKind::Pamuk => "pamuk",
         ProductKind::Bugday => "bugday",
         ProductKind::Zeytin => "zeytin",
+        ProductKind::Boya => "boya",
+        ProductKind::Uzum => "uzum",
         ProductKind::Kumas => "kumas",
         ProductKind::Un => "un",
         ProductKind::Zeytinyagi => "zeytinyagi",
+        ProductKind::Sarap => "sarap",
+        ProductKind::Elbise => "elbise",
+        ProductKind::Ekmek => "ekmek",
+        ProductKind::Ziyafet => "ziyafet",
     }
 }
 

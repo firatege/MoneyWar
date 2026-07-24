@@ -92,6 +92,10 @@ pub struct IntrigueState {
 
     /// İflası ilan edilmiş firmalar (sezonda bir kez damgalanır).
     pub bankrupt: BTreeSet<PlayerId>,
+
+    /// Süregelen tedarik boğmaları: (boğan, boğulan, şehir, girdi).
+    /// Aynı boğma her tick haber olmasın diye tutulur; tekel düşünce temizlenir.
+    pub active_chokes: BTreeSet<(PlayerId, PlayerId, CityId, ProductKind)>,
 }
 
 impl IntrigueState {

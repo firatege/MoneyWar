@@ -1,31 +1,50 @@
-//! Ürün kataloğu ve üretim zinciri.
+//! Ürün kataloğu ve üretim zinciri (docs/finish-plan.md Faz 2).
 //!
-//! 3 üretim zinciri, 6 ürün (game-design.md §4):
+//! Zincir 4 katmanlıdır. Derinlik entrikanın malzemesidir: çok girdili ürün
+//! **boğaz noktası** demektir — Boya pazarını tutan firma, elbise üreten
+//! herkesin gırtlağını sıkar. Fabrikan olması yetmez, girdin de olmalı.
 //!
-//! | Ham madde | Bitmiş ürün | Ucuz üretim yeri |
-//! |-----------|-------------|------------------|
-//! | Pamuk     | Kumaş       | İstanbul         |
-//! | Buğday    | Un          | Ankara           |
-//! | Zeytin    | Zeytinyağı  | İzmir            |
+//! | Kat | Ürün | Girdiler |
+//! |-----|------|----------|
+//! | 0 (ham) | Pamuk, Buğday, Zeytin, Boya, Üzüm | — (mahsul) |
+//! | 1 | Kumaş, Un, Zeytinyağı, Şarap | tek ham |
+//! | 2 | Elbise, Ekmek | iki girdi |
+//! | 3 | Ziyafet Sofrası | üç girdi |
+//!
+//! Üst katman daha kârlı ama daha kırılgan: üç ayrı tedarik zinciri aynı
+//! anda ayakta olmalı.
+//!
+//! **Üretim modeli:** her mamulün bir *ana girdisi* (`raw_input`) ve isteğe
+//! bağlı *ek girdileri* (`extra_inputs`) vardır. Batch boyutu ana girdiden
+//! belirlenir; ek girdiler batch'in yüzdesi kadar tüketilir. Tek girdili
+//! eski ürünlerin (Kumaş/Un/Zeytinyağı) davranışı bu modelde birebir aynıdır.
 //!
 //! Bozulma (§4):
-//! - Un: 3 tick sonra %100 kayıp (tamamen bozulur)
-//! - Zeytinyağı: 5 tick sonra %10 fire
-//! - Diğerleri (Pamuk, Kumaş, Buğday, Zeytin): dayanıklı
+//! - Un, Ekmek: hızlı bozulur (%100 kayıp)
+//! - Zeytinyağı, Ziyafet: kısmi fire
+//! - Diğerleri: dayanıklı
 
 use serde::{Deserialize, Serialize};
 
-/// 6 ürün çeşidi.
+/// 12 ürün çeşidi — 5 ham, 7 üretilen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ProductKind {
-    // Ham maddeler
+    // Ham maddeler (mahsul — fabrika değil, tarla üretir)
     Pamuk,
     Bugday,
     Zeytin,
-    // Bitmiş ürünler
+    Boya,
+    Uzum,
+    // Katman 1 — tek ham girdi
     Kumas,
     Un,
     Zeytinyagi,
+    Sarap,
+    // Katman 2 — iki girdi
+    Elbise,
+    Ekmek,
+    // Katman 3 — üç girdi, sezonun amiral gemisi
+    Ziyafet,
 }
 
 /// Bir ürünün sınıfı: ham ya da bitmiş.
@@ -45,29 +64,97 @@ pub struct Perishability {
 }
 
 impl ProductKind {
-    /// Tüm ürünler (deterministik sıra: ham → bitmiş).
-    pub const ALL: [Self; 6] = [
+    /// Tüm ürünler (deterministik sıra: ham → katman 1 → 2 → 3).
+    pub const ALL: [Self; 12] = [
         Self::Pamuk,
         Self::Bugday,
         Self::Zeytin,
+        Self::Boya,
+        Self::Uzum,
         Self::Kumas,
         Self::Un,
         Self::Zeytinyagi,
+        Self::Sarap,
+        Self::Elbise,
+        Self::Ekmek,
+        Self::Ziyafet,
     ];
 
-    /// Ham madde listesi.
-    pub const RAW_MATERIALS: [Self; 3] = [Self::Pamuk, Self::Bugday, Self::Zeytin];
+    /// Ham madde listesi — tarlada üretilir, fabrikada değil.
+    pub const RAW_MATERIALS: [Self; 5] = [
+        Self::Pamuk,
+        Self::Bugday,
+        Self::Zeytin,
+        Self::Boya,
+        Self::Uzum,
+    ];
 
-    /// Bitmiş ürün listesi.
-    pub const FINISHED_GOODS: [Self; 3] = [Self::Kumas, Self::Un, Self::Zeytinyagi];
+    /// Fabrikada üretilen ürünler (tüm katmanlar).
+    pub const FINISHED_GOODS: [Self; 7] = [
+        Self::Kumas,
+        Self::Un,
+        Self::Zeytinyagi,
+        Self::Sarap,
+        Self::Elbise,
+        Self::Ekmek,
+        Self::Ziyafet,
+    ];
 
     /// Ürünün sınıfı.
     #[must_use]
     pub const fn class(self) -> ProductClass {
         match self {
-            Self::Pamuk | Self::Bugday | Self::Zeytin => ProductClass::Raw,
-            Self::Kumas | Self::Un | Self::Zeytinyagi => ProductClass::Finished,
+            Self::Pamuk | Self::Bugday | Self::Zeytin | Self::Boya | Self::Uzum => {
+                ProductClass::Raw
+            }
+            Self::Kumas
+            | Self::Un
+            | Self::Zeytinyagi
+            | Self::Sarap
+            | Self::Elbise
+            | Self::Ekmek
+            | Self::Ziyafet => ProductClass::Finished,
         }
+    }
+
+    /// Üretim zincirindeki derinlik: 0 ham, 1-3 işlenmiş katmanlar.
+    /// Fiyatlandırma, talep ağırlığı ve UI gruplaması bunu kullanır.
+    #[must_use]
+    pub const fn tier(self) -> u8 {
+        match self {
+            Self::Pamuk | Self::Bugday | Self::Zeytin | Self::Boya | Self::Uzum => 0,
+            Self::Kumas | Self::Un | Self::Zeytinyagi | Self::Sarap => 1,
+            Self::Elbise | Self::Ekmek => 2,
+            Self::Ziyafet => 3,
+        }
+    }
+
+    /// Ana girdinin yanında gereken **ek girdiler**: (ürün, batch'in yüzdesi).
+    /// Boş ise tek girdili klasik üretim. Bir tanesi bile eksikse fabrika
+    /// girdi açlığına düşer — çok girdili ürünün kırılganlığı buradan gelir.
+    #[must_use]
+    pub const fn extra_inputs(self) -> &'static [(Self, u32)] {
+        match self {
+            // Elbise: kumaşı boyamadan elbise olmaz.
+            Self::Elbise => &[(Self::Boya, 40)],
+            // Ekmek: un + yağ.
+            Self::Ekmek => &[(Self::Zeytinyagi, 20)],
+            // Ziyafet Sofrası: ekmek + şarap + yağ.
+            Self::Ziyafet => &[(Self::Sarap, 50), (Self::Zeytinyagi, 30)],
+            _ => &[],
+        }
+    }
+
+    /// Tam tarif: ana girdi (batch'in %100'ü) + ek girdiler. UI ve NPC
+    /// tedarik planlaması bunu okur.
+    #[must_use]
+    pub fn recipe(self) -> Vec<(Self, u32)> {
+        let mut out = Vec::new();
+        if let Some(primary) = self.raw_input() {
+            out.push((primary, 100));
+        }
+        out.extend_from_slice(self.extra_inputs());
+        out
     }
 
     #[must_use]
@@ -80,24 +167,35 @@ impl ProductKind {
         matches!(self.class(), ProductClass::Finished)
     }
 
-    /// Bu ham maddenin ürettiği bitmiş ürün. Bitmiş için `None`.
+    /// Bu girdinin beslediği bir üst katman ürünü. Zincirin sonu için `None`.
+    /// Çok girdili ürünlerde yalnız **ana girdi** için tanımlıdır.
     #[must_use]
     pub const fn finished_output(self) -> Option<Self> {
         match self {
             Self::Pamuk => Some(Self::Kumas),
             Self::Bugday => Some(Self::Un),
             Self::Zeytin => Some(Self::Zeytinyagi),
+            Self::Uzum => Some(Self::Sarap),
+            Self::Kumas => Some(Self::Elbise),
+            Self::Un => Some(Self::Ekmek),
+            Self::Ekmek => Some(Self::Ziyafet),
             _ => None,
         }
     }
 
-    /// Bu bitmiş ürün için gereken ham madde. Ham için `None`.
+    /// Bu ürünün **ana girdisi** — batch boyutunu belirleyen girdi.
+    /// Katman 2+ ürünlerde bu bir ham madde değil, alt katman mamulüdür.
+    /// Ham maddeler ve girdisiz ürünler için `None`.
     #[must_use]
     pub const fn raw_input(self) -> Option<Self> {
         match self {
             Self::Kumas => Some(Self::Pamuk),
             Self::Un => Some(Self::Bugday),
             Self::Zeytinyagi => Some(Self::Zeytin),
+            Self::Sarap => Some(Self::Uzum),
+            Self::Elbise => Some(Self::Kumas),
+            Self::Ekmek => Some(Self::Un),
+            Self::Ziyafet => Some(Self::Ekmek),
             _ => None,
         }
     }
@@ -142,6 +240,16 @@ impl ProductKind {
                 after_ticks: 5,
                 loss_percent: 10,
             }),
+            // Ekmek unun kaderini paylaşır — bayatlar.
+            Self::Ekmek => Some(Perishability {
+                after_ticks: 4,
+                loss_percent: 100,
+            }),
+            // Hazır sofra beklemez; şarap ise tam tersine dayanıklıdır.
+            Self::Ziyafet => Some(Perishability {
+                after_ticks: 3,
+                loss_percent: 50,
+            }),
             _ => None,
         }
     }
@@ -158,6 +266,11 @@ impl ProductKind {
             Self::Kumas => 80,
             Self::Un => 90,
             Self::Zeytinyagi => 40,
+            Self::Sarap => 60,   // mayalanma firesi
+            // Katman 2-3: montaj işi, fire az — değer girdilerin birleşmesinden gelir.
+            Self::Elbise => 85,
+            Self::Ekmek => 95,
+            Self::Ziyafet => 90,
             _ => 100,
         }
     }
@@ -174,6 +287,11 @@ impl ProductKind {
             Self::Un => 20,       // temel gıda, hızlı tüketim
             Self::Kumas => 15,    // eski CONSUME_PCT — stok baskısı Sanayici'yi eziyor
             Self::Zeytinyagi => 8, // lüks ama çok düşük olunca stok birikti
+            Self::Sarap => 10,
+            // Üst katman: az ama iştahlı talep — kıtlık primi burada doğar.
+            Self::Elbise => 18,
+            Self::Ekmek => 25,
+            Self::Ziyafet => 30,
             _ => 0,
         }
     }
@@ -190,6 +308,11 @@ impl ProductKind {
             Self::Un => 2,
             Self::Zeytinyagi => 3,
             Self::Kumas => 4,
+            Self::Sarap => 4,
+            // Katman 2-3 montajı hızlıdır; zorluk tedarikte, sürede değil.
+            Self::Elbise => 3,
+            Self::Ekmek => 2,
+            Self::Ziyafet => 2,
             _ => 0,
         }
     }
@@ -206,8 +329,17 @@ impl ProductKind {
             Self::Un => 22,
             Self::Kumas => 35,
             Self::Zeytinyagi => 65,
+            Self::Sarap => 45,
+            // Katman 2-3: girdilerinin toplamı + montaj primi. Üst katman
+            // daha kârlı ama üç tedarik zinciri birden ayakta olmalı.
+            Self::Elbise => 90,
+            Self::Ekmek => 60,
+            Self::Ziyafet => 180,
             // Ham ürünler — eski NPC_BASE_PRICE_RAW_LIRA değeri (5)
             Self::Pamuk | Self::Bugday | Self::Zeytin => 5,
+            // Boya kimyasal, üzüm bağ işi — hammadde ama daha değerli.
+            Self::Boya => 12,
+            Self::Uzum => 8,
         }
     }
 
@@ -221,6 +353,12 @@ impl ProductKind {
             Self::Kumas => "Kumaş",
             Self::Un => "Un",
             Self::Zeytinyagi => "Zeytinyağı",
+            Self::Boya => "Boya",
+            Self::Uzum => "Üzüm",
+            Self::Sarap => "Şarap",
+            Self::Elbise => "Elbise",
+            Self::Ekmek => "Ekmek",
+            Self::Ziyafet => "Ziyafet Sofrası",
         }
     }
 }
@@ -236,14 +374,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_contains_six_products() {
-        assert_eq!(ProductKind::ALL.len(), 6);
+    fn catalog_covers_every_variant_once() {
+        assert_eq!(ProductKind::ALL.len(), 12);
+        let mut seen: Vec<ProductKind> = ProductKind::ALL.to_vec();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), ProductKind::ALL.len(), "ALL tekrar içermemeli");
+        assert_eq!(
+            ProductKind::RAW_MATERIALS.len() + ProductKind::FINISHED_GOODS.len(),
+            ProductKind::ALL.len(),
+            "ham + mamul tüm kataloğu kapsamalı"
+        );
     }
 
     #[test]
     fn raw_and_finished_partition_correctly() {
-        assert_eq!(ProductKind::RAW_MATERIALS.len(), 3);
-        assert_eq!(ProductKind::FINISHED_GOODS.len(), 3);
+        assert_eq!(ProductKind::RAW_MATERIALS.len(), 5);
+        assert_eq!(ProductKind::FINISHED_GOODS.len(), 7);
         for raw in ProductKind::RAW_MATERIALS {
             assert!(raw.is_raw(), "{raw:?} should be raw");
             assert!(!raw.is_finished());
@@ -282,10 +429,42 @@ mod tests {
     }
 
     #[test]
-    fn finished_has_no_finished_output() {
-        assert!(ProductKind::Kumas.finished_output().is_none());
-        assert!(ProductKind::Un.finished_output().is_none());
-        assert!(ProductKind::Zeytinyagi.finished_output().is_none());
+    fn chain_terminates_at_top_tier() {
+        // Zincirin ucu: Ziyafet hiçbir şeyin girdisi değil.
+        assert!(ProductKind::Ziyafet.finished_output().is_none());
+        assert!(ProductKind::Elbise.finished_output().is_none());
+    }
+
+    #[test]
+    fn recipe_lists_primary_then_extras() {
+        // Tek girdili katman 1: sadece ana girdi.
+        assert_eq!(ProductKind::Un.recipe(), vec![(ProductKind::Bugday, 100)]);
+        // Katman 2: ana girdi + bir ek.
+        assert_eq!(
+            ProductKind::Elbise.recipe(),
+            vec![(ProductKind::Kumas, 100), (ProductKind::Boya, 40)]
+        );
+        // Katman 3: üç parça.
+        assert_eq!(ProductKind::Ziyafet.recipe().len(), 3);
+        // Ham maddenin tarifi yok.
+        assert!(ProductKind::Pamuk.recipe().is_empty());
+    }
+
+    #[test]
+    fn every_recipe_input_is_a_real_product_of_lower_tier() {
+        for product in ProductKind::FINISHED_GOODS {
+            let recipe = product.recipe();
+            assert!(!recipe.is_empty(), "{product:?} girdisiz üretilemez");
+            for (input, pct) in recipe {
+                assert!(pct > 0, "{product:?} girdisi {input:?} sıfır oranlı");
+                assert!(
+                    input.tier() < product.tier(),
+                    "{product:?} (kat {}) kendi katmanından girdi alamaz: {input:?} (kat {})",
+                    product.tier(),
+                    input.tier()
+                );
+            }
+        }
     }
 
     #[test]

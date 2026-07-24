@@ -204,7 +204,11 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, ActionCandidate::SubmitOrder { side: OrderSide::Buy, product, .. } if product.is_raw()))
             .count();
-        assert_eq!(buy_count, 15, "5 şehir × 3 ham = 15 BUY raw");
+        assert_eq!(
+            buy_count,
+            CityId::ALL.len() * ProductKind::RAW_MATERIALS.len(),
+            "her şehir × her ham madde için bir BUY"
+        );
     }
 
     #[test]

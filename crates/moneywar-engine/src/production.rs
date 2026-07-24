@@ -359,6 +359,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
     let raw = product
         .raw_input()
         .expect("finished product always has raw_input");
+    let extras = product.extra_inputs();
     let Some(player) = state.players.get_mut(&owner) else {
         return;
     };
@@ -367,7 +368,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
     // Batch boyutu fabrika seviyesine göre değişir (level 1=50, 2=75, 3=100).
     let level_batch = state.factories.get(&fid).map_or(Factory::BATCH_SIZE, |f| f.batch_size());
     let partial_min = (level_batch / 4).max(1);
-    let batch_size = if have_raw >= level_batch {
+    let mut batch_size = if have_raw >= level_batch {
         level_batch
     } else if have_raw >= partial_min {
         have_raw
@@ -381,6 +382,31 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         ));
         return;
     };
+
+    // Faz 2: ek girdiler. Batch, en kısıtlı girdiye göre daralır — üç
+    // parçalı üründe tek bir parçanın yokluğu bandı durdurur. Girdi
+    // pazarını tutan rakip fabrikayı böyle boğar (SupplyChoke).
+    for (input, pct) in extras {
+        let need = (batch_size.saturating_mul(*pct) / 100).max(1);
+        let have = player.inventory.get(city, *input);
+        if have >= need {
+            continue;
+        }
+        // Elimizdeki kadarına batch'i küçült: have = b×pct/100 → b = have×100/pct.
+        let feasible = have.saturating_mul(100) / (*pct).max(1);
+        if feasible < partial_min {
+            report.push(LogEntry::factory_idle(
+                tick,
+                owner,
+                fid,
+                city,
+                format!("input {input} shortage at {city}: have={have}, need={need}"),
+            ));
+            return;
+        }
+        batch_size = batch_size.min(feasible);
+    }
+
     if let Err(e) = player.inventory.remove(city, raw, batch_size) {
         report.push(LogEntry::factory_idle(
             tick,
@@ -390,6 +416,21 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
             format!("raw removal failed: {e}"),
         ));
         return;
+    }
+    for (input, pct) in extras {
+        let need = (batch_size.saturating_mul(*pct) / 100).max(1);
+        if let Err(e) = player.inventory.remove(city, *input, need) {
+            // Ana girdi zaten düşüldü; tutarlılık için geri koy ve çık.
+            let _ = player.inventory.add(city, raw, batch_size);
+            report.push(LogEntry::factory_idle(
+                tick,
+                owner,
+                fid,
+                city,
+                format!("input {input} removal failed: {e}"),
+            ));
+            return;
+        }
     }
 
     // v0.4.1: Per-product üretim süresi + verim oranı.

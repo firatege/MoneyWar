@@ -1873,15 +1873,13 @@ fn seed_world(
             let j = rng.random_range(0..=i);
             cities.swap(i, j);
         }
-        // İlk 3 şehir → 3 farklı ham (her ham 1 kez), son 2 şehir → 2 ham tekrar
-        let extra0 = raws[rng.random_range(0..raws.len())];
-        let extra1 = raws[rng.random_range(0..raws.len())];
+        // Faz 2: 5 ham, 5 şehir → her şehir bir hammaddenin ana kaynağı.
         let prime_per_city: [(CityId, ProductKind); 5] = [
             (cities[0], raws[0]),
             (cities[1], raws[1]),
             (cities[2], raws[2]),
-            (cities[3], extra0),
-            (cities[4], extra1),
+            (cities[3], raws[3]),
+            (cities[4], raws[4]),
         ];
         s.seed_city_profiles(prime_per_city);
     }
@@ -8892,9 +8890,15 @@ fn product_color(p: ProductKind) -> Color {
         ProductKind::Pamuk => Color::Rgb(240, 240, 220),
         ProductKind::Bugday => Color::Rgb(220, 190, 100),
         ProductKind::Zeytin => Color::Rgb(120, 130, 70),
+        ProductKind::Boya => Color::Rgb(190, 80, 150),
+        ProductKind::Uzum => Color::Rgb(150, 90, 180),
         ProductKind::Kumas => Color::Rgb(200, 160, 220),
         ProductKind::Un => Color::Rgb(240, 220, 180),
         ProductKind::Zeytinyagi => Color::Rgb(180, 200, 100),
+        ProductKind::Sarap => Color::Rgb(140, 40, 70),
+        ProductKind::Elbise => Color::Rgb(230, 130, 200),
+        ProductKind::Ekmek => Color::Rgb(210, 160, 90),
+        ProductKind::Ziyafet => Color::Rgb(255, 200, 60),
     }
 }
 
