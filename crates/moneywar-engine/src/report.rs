@@ -1027,6 +1027,83 @@ pub enum LogEvent {
         total_amount: Money,
         recipient_count: u32,
     },
+
+    // ════════════════════════════════════════════════════════════════════
+    // Anlatı olayları — drama skorkartının saydığı, failli/mağdurlu hikâye
+    // damgaları (docs/finish-plan.md). Emisyon: Faz 1 (tekel/undercut/savaş),
+    // Faz 2 (SupplyChoke), Faz 5 (kartel). İzleyicinin "kim ne yapıyor"
+    // takibi bu event'ler üzerinden akar.
+    // ════════════════════════════════════════════════════════════════════
+    /// Bir firma (şehir, ürün) pazarında satış payı eşiğini aştı — tekel.
+    MonopolyFormed {
+        city: CityId,
+        product: ProductKind,
+        firm: PlayerId,
+        share_percent: u32,
+    },
+
+    /// Tekel düştü. `breaker` payı eşiğin altına iten rakip (belirlenebiliyorsa).
+    MonopolyBroken {
+        city: CityId,
+        product: ProductKind,
+        former: PlayerId,
+        breaker: Option<PlayerId>,
+    },
+
+    /// `attacker`, `victim`'in fiyatını art arda kırıyor — kampanya damgası.
+    UndercutCampaign {
+        city: CityId,
+        product: ProductKind,
+        attacker: PlayerId,
+        victim: PlayerId,
+        ticks: u32,
+    },
+
+    /// Firma, bir rakibi hedef alan fiyat savaşı başlattı.
+    PriceWarDeclared {
+        city: CityId,
+        product: ProductKind,
+        attacker: PlayerId,
+        target: PlayerId,
+    },
+
+    /// Fiyat savaşı bitti — `loser` pazardan çekildi ya da iflas etti.
+    PriceWarWon {
+        city: CityId,
+        product: ProductKind,
+        winner: PlayerId,
+        loser: PlayerId,
+    },
+
+    /// Firma iflas etti; varlıkları tasfiye sürecine girer.
+    FirmBankrupt { firm: PlayerId },
+
+    /// `holder`, `against`'e kin tutmaya başladı (undercut / ihanet sonrası).
+    GrudgeFormed { holder: PlayerId, against: PlayerId },
+
+    /// Girdi pazarını tutan firma, rakibin fabrikasını hammaddesiz bıraktı.
+    SupplyChoke {
+        city: CityId,
+        product: ProductKind,
+        choker: PlayerId,
+        victim: PlayerId,
+    },
+
+    /// İki firma aynı pazarda zımni kartel kurdu — kırma kesildi, fiyat yükseliyor.
+    CartelFormed {
+        city: CityId,
+        product: ProductKind,
+        a: PlayerId,
+        b: PlayerId,
+    },
+
+    /// Kartel içinden biri gizlice fiyat kırdı — ihanet.
+    CartelBetrayed {
+        city: CityId,
+        product: ProductKind,
+        betrayer: PlayerId,
+        victim: PlayerId,
+    },
 }
 
 #[cfg(test)]

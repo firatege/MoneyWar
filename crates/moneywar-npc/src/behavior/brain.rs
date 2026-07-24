@@ -112,12 +112,73 @@ pub enum Goal {
     Expand,
     /// Belirli bir bucket'ı ele geçir — odak modu.
     Corner { city: CityId, product: ProductKind },
-    /// Rakibi belirli bir bucket'ta ez — savaş modu.
-    PriceWar { city: CityId, product: ProductKind },
+    /// **Bir rakibi** belirli bir bucket'ta ez — savaş modu (Faz 1: savaşın
+    /// hedefi artık bir raf değil, bir firma).
+    PriceWar {
+        city: CityId,
+        product: ProductKind,
+        target: PlayerId,
+    },
     /// Mevcut pozisyonu güçlendir ve savun — istikrar modu.
     Consolidate,
     /// Zararı kes, sermayeyi koru — geri çekilme modu.
     Retreat,
+}
+
+/// Entrika arketipi (docs/finish-plan.md Faz 1) — firmanın kalıcı kurnazlık
+/// karakteri. `player_id` hash'inden deterministik türetilir; sezon boyu
+/// değişmez. Tek soruya cevap verir: bu firma tekelci mi, kırıcı mı,
+/// fırsatçı mı?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntrigueArchetype {
+    /// Pazarı köşeler, tekel kurunca fiyat şişirir; savaştan kaçınır.
+    Tekelci,
+    /// Rakip fiyatını kırarak yaşar; kin tuttu mu savaş açar.
+    Kirici,
+    /// Başkasının tekelini fırsat görür — şişmiş pazara girip tekeli kırar.
+    Firsatci,
+}
+
+impl IntrigueArchetype {
+    /// `player_id`'den kalıcı, deterministik arketip. RNG yok — saf hash.
+    #[must_use]
+    pub fn from_player(player_id: PlayerId) -> Self {
+        // splitmix64 sabiti ile karıştır: ardışık id'ler bile dağılsın.
+        let h = player_id.value().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        match (h >> 32) % 3 {
+            0 => Self::Tekelci,
+            1 => Self::Kirici,
+            _ => Self::Firsatci,
+        }
+    }
+
+    /// UI/log etiketi.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tekelci => "TEKELCİ",
+            Self::Kirici => "KIRICI",
+            Self::Firsatci => "FIRSATÇI",
+        }
+    }
+
+    /// Corner'a geçiş eşiği çarpanı (küçük = daha erken köşeler).
+    const fn corner_threshold_mult(self) -> f64 {
+        match self {
+            Self::Tekelci => 0.75,
+            Self::Kirici => 1.0,
+            Self::Firsatci => 0.9,
+        }
+    }
+
+    /// Savaş ilanı eşiği çarpanı (küçük = daha kolay savaşır).
+    const fn war_threshold_mult(self) -> f64 {
+        match self {
+            Self::Tekelci => 1.5,
+            Self::Kirici => 0.6,
+            Self::Firsatci => 1.0,
+        }
+    }
 }
 /// Fiyat beklentisi EWMA katsayısı (0=donmuş hafıza, 1=anlık).
 /// 0.2 → ~5 tick gecikmeli beklenti; ani şoklara aşırı tepki vermez.
@@ -152,6 +213,14 @@ pub struct AgentBrain {
     /// Deneyimle kayan sürekli trait vektörü.
     pub traits: PersonalityTraits,
 
+    // ── Entrika (docs/finish-plan.md Faz 1) ──────────────────────────────────
+    /// Kalıcı kurnazlık karakteri — `player_id` hash'inden, her observe'da
+    /// aynı değere set edilir (Default'tan gelen beyin ilk gözlemde kimliğini bulur).
+    pub archetype: IntrigueArchetype,
+    /// Baş düşman: dedektörün kaydettiği en taze kinin hedefi.
+    /// `state.intrigue.grudges`'tan okunur; savaş hedefi seçiminde önceliklidir.
+    pub nemesis: Option<PlayerId>,
+
     // -- İç izleme (dışarıya kapalı) --
     prev_pnl_cents: i64,
     pnl_deltas: VecDeque<i64>,
@@ -168,6 +237,8 @@ impl Default for AgentBrain {
             goal: Goal::Expand,
             goal_age: 0,
             traits: PersonalityTraits::default(),
+            archetype: IntrigueArchetype::Firsatci,
+            nemesis: None,
             prev_pnl_cents: 0,
             pnl_deltas: VecDeque::with_capacity(PNL_WINDOW + 1),
         }
@@ -178,12 +249,14 @@ impl AgentBrain {
     /// Mevcut `state`'i gözlemle, hafızayı güncelle.
     /// Deterministik — RNG yok.
     pub fn observe(&mut self, state: &GameState, player_id: PlayerId) {
+        self.archetype = IntrigueArchetype::from_player(player_id);
+        self.nemesis = state.intrigue.strongest_grudge_of(player_id);
         self.update_pnl_trend(state, player_id);
         self.update_cash_surplus(state, player_id);
         self.update_market_ownership(state, player_id);
         self.update_rival_threat(state, player_id);
         self.update_price_beliefs(state);
-        self.update_goal(player_id);
+        self.update_goal(state, player_id);
         self.update_traits();
     }
 
@@ -201,7 +274,7 @@ impl AgentBrain {
                 // Corner: sadece hedef bucket maksimum, diğerleri düşük.
                 if city == *tc && product == *tp { 1.0 } else { 0.1 }
             }
-            Goal::PriceWar { city: tc, product: tp } => {
+            Goal::PriceWar { city: tc, product: tp, .. } => {
                 // PriceWar: hedef bucket'ta çok agresif.
                 if city == *tc && product == *tp { 1.0 } else { 0.2 }
             }
@@ -348,13 +421,18 @@ impl AgentBrain {
     }
 
     /// Goal state machine geçişleri — deterministik.
-    fn update_goal(&mut self, _player_id: PlayerId) {
+    /// Faz 1: entrika farkındalığı — kin savaş doğurur, rakip tekeli fırsat.
+    fn update_goal(&mut self, state: &GameState, player_id: PlayerId) {
         self.goal_age += 1;
         // Minimum hedef süresi: gereksiz titreşimi önle.
         const MIN_GOAL_TICKS: u32 = 15; // corner'da uzun kal
         if self.goal_age < MIN_GOAL_TICKS {
             return;
         }
+
+        let corner_threshold =
+            CORNER_OWNERSHIP_THRESHOLD * self.archetype.corner_threshold_mult();
+        let war_threshold = PRICE_WAR_THREAT_THRESHOLD * self.archetype.war_threshold_mult();
 
         let new_goal = match &self.goal {
             Goal::Retreat => {
@@ -370,9 +448,19 @@ impl AgentBrain {
                 if self.pnl_trend < RETREAT_PNL_THRESHOLD && self.cash_surplus < 0.1 {
                     return self.transition(Goal::Retreat);
                 }
+                // Kin varsa ve karakter savaşçıysa → düşmana savaş aç.
+                if let Some(war) = self.grudge_war(player_id) {
+                    return self.transition(war);
+                }
+                // Fırsatçı: bir rakibin tekelleştirdiği (fiyat şişirdiği) pazara gir.
+                if self.archetype == IntrigueArchetype::Firsatci {
+                    if let Some((city, product)) = rival_monopoly_bucket(state, player_id) {
+                        return self.transition(Goal::Corner { city, product });
+                    }
+                }
                 // Bir bucket'ta baskın pozisyon kazandıysam → Corner.
                 if let Some((city, product)) = self.strongest_owned_bucket() {
-                    if self.ownership_of(city, product) >= CORNER_OWNERSHIP_THRESHOLD {
+                    if self.ownership_of(city, product) >= corner_threshold {
                         Some(Goal::Corner { city, product })
                     } else {
                         None
@@ -386,27 +474,33 @@ impl AgentBrain {
                 if self.pnl_trend < RETREAT_PNL_THRESHOLD {
                     return self.transition(Goal::Retreat);
                 }
-                // Rakip tehdidi yüksekse → PriceWar.
-                let threat = self.rival_threat_for(c, p, _player_id);
-                if threat > PRICE_WAR_THREAT_THRESHOLD {
-                    Some(Goal::PriceWar { city: c, product: p })
+                // Rakip tehdidi yüksekse → en tehditkar rakibe savaş.
+                let threat = self.rival_threat_for(c, p, player_id);
+                if threat > war_threshold {
+                    if let Some(target) = self.war_target() {
+                        return self.transition(Goal::PriceWar { city: c, product: p, target });
+                    }
+                }
                 // Pekiştirildiyse (yüksek sahiplik) → Consolidate.
-                } else if self.ownership_of(c, p) > 0.6 {
+                if self.ownership_of(c, p) > 0.6 {
                     Some(Goal::Consolidate)
                 } else {
                     None
                 }
             }
-            Goal::PriceWar { city, product } => {
-                let (c, p) = (*city, *product);
+            Goal::PriceWar { city, product, target } => {
+                let (c, p, t) = (*city, *product, *target);
+                // Hedef battı ya da savaş kazanıldı → pazarı köşele.
+                if state.intrigue.bankrupt.contains(&t) {
+                    Some(Goal::Corner { city: c, product: p })
                 // Kazanıyorsam → Consolidate.
-                if self.pnl_trend > 0.65 {
+                } else if self.pnl_trend > 0.65 {
                     Some(Goal::Consolidate)
                 // Kaybediyorsam → Retreat.
                 } else if self.pnl_trend < RETREAT_PNL_THRESHOLD {
                     Some(Goal::Retreat)
                 // Rakip gitti → Corner'a dön.
-                } else if self.rival_threat_for(c, p, _player_id) < 0.1 {
+                } else if self.rival_threat_for(c, p, player_id) < 0.1 {
                     Some(Goal::Corner { city: c, product: p })
                 } else {
                     None
@@ -415,6 +509,10 @@ impl AgentBrain {
             Goal::Consolidate => {
                 if self.pnl_trend < RETREAT_PNL_THRESHOLD {
                     return self.transition(Goal::Retreat);
+                }
+                // Kin savaşı burada da tetiklenebilir (savunmadan saldırıya).
+                if let Some(war) = self.grudge_war(player_id) {
+                    return self.transition(war);
                 }
                 // Bol nakit + iyiydim → Expand.
                 if self.cash_surplus > EXPAND_CASH_THRESHOLD && self.pnl_trend > 0.6 {
@@ -428,6 +526,34 @@ impl AgentBrain {
         if let Some(next) = new_goal {
             self.transition(next);
         }
+    }
+
+    /// Kin varsa ve karakter savaşmaya yatkınsa: en güçlü bucket'ımda
+    /// düşmana savaş. Kırıcı her kinde savaşır; diğerleri ancak agresiflik
+    /// yüksekse.
+    fn grudge_war(&self, _player_id: PlayerId) -> Option<Goal> {
+        let enemy = self.nemesis?;
+        let warlike =
+            self.archetype == IntrigueArchetype::Kirici || self.traits.aggression > 0.75;
+        if !warlike {
+            return None;
+        }
+        let (city, product) = self.strongest_owned_bucket()?;
+        Some(Goal::PriceWar { city, product, target: enemy })
+    }
+
+    /// Savaş hedefi: önce baş düşman (kin), yoksa en tehditkar rakip.
+    fn war_target(&self) -> Option<PlayerId> {
+        self.nemesis.or_else(|| {
+            self.rival_threat
+                .iter()
+                .max_by(|a, b| {
+                    a.1.partial_cmp(b.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.0.cmp(b.0))
+                })
+                .map(|(pid, _)| *pid)
+        })
     }
 
     fn transition(&mut self, new_goal: Goal) {
@@ -508,6 +634,17 @@ impl BrainPool {
             }
         }
     }
+}
+
+/// Bir rakibin tekelleştirdiği ilk pazar (BTreeMap sırası → deterministik).
+/// Fırsatçının "şişmiş fiyatlı pazara gir" sinyali.
+fn rival_monopoly_bucket(state: &GameState, player_id: PlayerId) -> Option<(CityId, ProductKind)> {
+    state
+        .intrigue
+        .monopolist
+        .iter()
+        .find(|(_, owner)| **owner != player_id)
+        .map(|(bucket, _)| *bucket)
 }
 
 // `1 / (1 + e^{-x})` — sonuç (0,1), x=0 → 0.5.

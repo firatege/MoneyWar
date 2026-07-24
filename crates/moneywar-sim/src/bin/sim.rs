@@ -24,6 +24,7 @@ use std::time::Instant;
 
 use moneywar_domain::Money;
 use moneywar_engine::{LogEvent, leaderboard};
+use moneywar_sim::drama::DramaScorecard;
 use moneywar_sim::metrics::{Metrics, MetricsAccumulator};
 use moneywar_web::driver::SimDriver;
 use moneywar_web::{DEFAULT_SEED, DIFFICULTY, SEASON_TICKS, TICK_SECONDS, debuglog::format_tick_block};
@@ -40,6 +41,9 @@ struct Outcome {
     rejected: u64,
     top: Vec<(String, f64)>,
     metrics: Metrics,
+    drama: DramaScorecard,
+    /// İsimlerle çözülmüş manşetler — "kim ne yaptı" satırları.
+    headlines: Vec<String>,
     log_path: PathBuf,
 }
 
@@ -135,12 +139,14 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
     let mut expired: u64 = 0;
     let mut rejected: u64 = 0;
     let mut acc = MetricsAccumulator::default();
+    let mut drama = DramaScorecard::default();
 
     for _ in 0..ticks {
         driver.step();
         log.push_str(&format_tick_block(&driver.state, &driver.last_report, driver.season));
 
         for entry in &driver.last_report.entries {
+            drama.record(entry.tick, &entry.event);
             match &entry.event {
                 LogEvent::OrderMatched { city, product, buyer, seller, quantity, .. } => {
                     matched_fills += 1;
@@ -167,6 +173,11 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
         }
     }
     let metrics = acc.finalize(&driver.state);
+    let headlines: Vec<String> = drama
+        .headlines
+        .iter()
+        .map(|(tick, ev)| format!("t{:<4} {}", tick.value(), headline(&driver.state, ev)))
+        .collect();
 
     let log_path = out_dir.join(format!("game_{:02}.log", i + 1));
     if let Err(e) = std::fs::write(&log_path, &log) {
@@ -197,7 +208,75 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
         rejected,
         top,
         metrics,
+        drama,
+        headlines,
         log_path,
+    }
+}
+
+/// Bir anlatı olayını okunur Türkçe manşete çevir — izleyicinin gördüğü
+/// "kim ne yapıyor" satırının sim karşılığı (Faz 3'te web ticker'ı bunu
+/// paylaşılan crate'ten alacak).
+fn headline(state: &moneywar_domain::GameState, ev: &LogEvent) -> String {
+    let who = |id: &moneywar_domain::PlayerId| -> String {
+        state
+            .players
+            .get(id)
+            .map_or_else(|| format!("#{}", id.value()), |p| p.name.clone())
+    };
+    let market = |c: &moneywar_domain::CityId, p: &moneywar_domain::ProductKind| {
+        format!("{} {}", c.display_name(), p.display_name())
+    };
+    match ev {
+        LogEvent::MonopolyFormed { city, product, firm, share_percent } => format!(
+            "👑 {} pazarını ele geçirdi: {} (%{share_percent})",
+            market(city, product),
+            who(firm),
+        ),
+        LogEvent::MonopolyBroken { city, product, former, breaker } => format!(
+            "⚡ {} tekeli kırıldı: {} düştü{}",
+            market(city, product),
+            who(former),
+            breaker.map_or(String::new(), |b| format!(", kıran {}", who(&b))),
+        ),
+        LogEvent::UndercutCampaign { city, product, attacker, victim, ticks } => format!(
+            "✂️  {} {} fiyatını kırıyor ({}, {ticks} tick)",
+            who(attacker),
+            who(victim),
+            market(city, product),
+        ),
+        LogEvent::PriceWarDeclared { city, product, attacker, target } => format!(
+            "⚔️  {} → {} fiyat savaşı açtı ({})",
+            who(attacker),
+            who(target),
+            market(city, product),
+        ),
+        LogEvent::PriceWarWon { city, product, winner, loser } => format!(
+            "🏳️  {} savaşı kazandı, {} çekildi ({})",
+            who(winner),
+            who(loser),
+            market(city, product),
+        ),
+        LogEvent::FirmBankrupt { firm } => format!("💀 {} iflas etti", who(firm)),
+        LogEvent::SupplyChoke { city, product, choker, victim } => format!(
+            "🔒 {} tedariki kesti: {} {} olmadan kaldı",
+            who(choker),
+            who(victim),
+            market(city, product),
+        ),
+        LogEvent::CartelFormed { city, product, a, b } => format!(
+            "🤝 {} ile {} {} pazarında anlaştı",
+            who(a),
+            who(b),
+            market(city, product),
+        ),
+        LogEvent::CartelBetrayed { city, product, betrayer, victim } => format!(
+            "🗡️  {} ittifakı bozdu, {} sırtından bıçaklandı ({})",
+            who(betrayer),
+            who(victim),
+            market(city, product),
+        ),
+        other => format!("{other:?}"),
     }
 }
 
@@ -276,6 +355,33 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
             m.route_dominance_hhi,
             m.total_caravan_vol,
         );
+    }
+
+    // ── DRAMA (docs/finish-plan.md Faz 0: hikâyelik olay skorkartı) ─────────
+    println!("\n  DRAMA");
+    println!("{:>5}  {:>6}  {:>5}  {}", "oyun", "olay", "fren", "döküm");
+    println!("{:-<82}", "");
+    for o in outcomes {
+        let v = o.drama.verdict(o.matched_qty);
+        let brake = if v.brakes_ok() { "OK" } else { "İHLAL" };
+        let target = if v.story_target_met { "✓" } else { " " };
+        let tag = if o.is_frontend { "★" } else { " " };
+        println!(
+            "{tag}{:>4}  {:>5}{target}  {:>5}  {}",
+            o.label + 1,
+            v.story_events,
+            brake,
+            o.drama.summary_line(),
+        );
+    }
+
+    // Manşetler: izleyicinin göreceği "kim ne yapıyor" akışının örneklemi.
+    if let Some(o) = outcomes.iter().find(|o| !o.headlines.is_empty()) {
+        println!("\n  MANŞETLER (oyun {})", o.label + 1);
+        println!("{:-<82}", "");
+        for line in o.headlines.iter().take(12) {
+            println!("  {line}");
+        }
     }
 
     // ── ORTAK ────────────────────────────────────────────────────────────────

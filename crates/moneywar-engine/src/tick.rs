@@ -120,6 +120,10 @@ pub fn advance_tick(
     // v4 banka: distress NPC'lere kredi akışı (closed loop, lender field)
     crate::bank::tick_banks(&mut new_state, &mut report, next_tick);
     clear_markets(&mut new_state, &mut report, next_tick);
+    // Anlatı dedektörü — bu tick'in eşleşme + emir verisinden entrika
+    // gerçeklerini damgalar (tekel, undercut, savaş, iflas). Rapor bazlı
+    // çalıştığı için clearing'ten sonra gelmek zorunda.
+    crate::narrative::detect_intrigue(&mut new_state, &mut report, next_tick);
 
     new_state.current_tick = next_tick;
     Ok((new_state, report))

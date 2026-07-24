@@ -14,6 +14,7 @@ mod error;
 mod event;
 mod factory;
 mod ids;
+mod intrigue;
 mod loan;
 mod money;
 mod news;
@@ -35,6 +36,12 @@ pub use event::{EventSeverity, GameEvent};
 pub use factory::{Factory, FactoryBatch};
 pub use ids::{
     CaravanId, ContractId, EventId, FactoryId, LoanId, NewsId, OrderId, PlayerId, RoomId,
+};
+pub use intrigue::{
+    DOMINANCE_MIN_VOLUME, DOMINANCE_WINDOW_TICKS, GRUDGE_TICKS, IntrigueState,
+    MONOPOLY_BREAK_CONFIRM_TICKS, MONOPOLY_BREAK_PCT, MONOPOLY_CONFIRM_TICKS, MONOPOLY_FORM_PCT,
+    PRICE_WAR_DECLARE_TICKS, PRICE_WAR_FIZZLE_TICKS, PRICE_WAR_RETREAT_TICKS, PriceWarTrack,
+    TickSales, UNDERCUT_CAMPAIGN_TICKS,
 };
 pub use private_farm::{PrivateFarm, PrivateFarmId};
 pub use loan::Loan;

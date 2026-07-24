@@ -18,8 +18,8 @@
 //! - `competition -0.2` — rakip baskı varsa bekle
 
 use moneywar_domain::{
-    CaravanState, Cargo, CityId, Factory, GameState, Money, OrderSide, Player, ProductKind,
-    balance::TRANSACTION_TAX_PCT,
+    CaravanState, Cargo, CityId, Factory, GameState, Money, OrderSide, Player, PlayerId,
+    ProductKind, balance::TRANSACTION_TAX_PCT,
 };
 
 use crate::behavior::candidates::ActionCandidate;
@@ -31,6 +31,34 @@ use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
 /// Maliyet kontrolü: build_cost tablosu 8 fab'a kadar genişletildi (max 90K),
 /// 50K başlangıç nakdi ilk 4-5 fabrikayı karşılar, sonrası kârdan finanse edilir.
 const TARGET_FACTORIES: usize = usize::MAX; // sınırsız — kaç kurarsa kursun
+
+/// Tekelci sömürü primi (puan). Dedektör tekeli onayladığında fiyat tabanına
+/// eklenir — tekel kârlıdır, ama şişen fiyat rakipleri pazara çeker.
+const MONOPOLY_PREMIUM_PCT: i64 = 25;
+
+/// Fiyat savaşında hedefin ask'inin bu yüzdesine inilir (%95 = %5 altına gir).
+/// Dedektörün undercut eşiği %98 olduğundan bu kırma kesin olarak sayılır.
+const WAR_UNDERCUT_PCT: i64 = 95;
+/// Savaşta bile inilmeyen taban: referans fiyatın bu yüzdesi. Savaş var diye
+/// firma kendini iflasa sürüklemesin.
+const WAR_PRICE_FLOOR_PCT: i64 = 60;
+
+/// `target` firmasının bu pazardaki en düşük SELL fiyatı (order book'ta açık
+/// emir varsa). Fiyat savaşının "kimin fiyatını kıracağım" sorusunu cevaplar.
+fn lowest_ask_of(
+    state: &GameState,
+    target: PlayerId,
+    city: CityId,
+    product: ProductKind,
+) -> Option<Money> {
+    state
+        .order_book
+        .get(&(city, product))?
+        .iter()
+        .filter(|o| o.side == OrderSide::Sell && o.player == target)
+        .map(|o| o.unit_price)
+        .min()
+}
 
 /// Brain ile birlikte enumerate — Goal-bilinçli fabrika seçimi.
 #[must_use]
@@ -211,13 +239,15 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
     // 3) Mamul SAT — stok-baskılı pricing.
     //    Faz 4: brain.goal → fiyat (premium/undercut) + hacim kararını etkiler.
     //    Corner(c,p): tam baskın → monopol premium + daha büyük hacim flood.
-    //    PriceWar(c,p): rakibi ez → agresif undercut + orta hacim.
+    //    PriceWar(c,p,target): o firmayı ez → fiyatının altına gir (kişisel).
     for (city, product, qty) in player.inventory.entries() {
         if !product.is_finished() || qty == 0 {
             continue;
         }
         // Faz 4: goal'e göre hacim ve fiyat stratejisi.
         // Flood fazla agresif olmasın — volume × 2 yeterli; fiyatı çok düşürme.
+        // Faz 1 (entrika): savaşta hedefin fiyatı doğrudan kırılır.
+        let mut war_price_cap: Option<Money> = None;
         let (goal_vol_mult, goal_price_adj, goal_force_cross): (u32, i64, bool) =
             if let Some(b) = brain {
                 use crate::behavior::brain::Goal;
@@ -232,8 +262,14 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
                             (2, -3, false)
                         }
                     }
-                    Goal::PriceWar { city: gc, product: gp } if *gc == city && *gp == product => {
-                        // Fiyat savaşı: undercut + biraz daha fazla hacim
+                    Goal::PriceWar { city: gc, product: gp, target }
+                        if *gc == city && *gp == product =>
+                    {
+                        // Fiyat savaşı kişiseldir: hedefin bu pazardaki en düşük
+                        // ask'ini bul, altına gir. Hedef bu tick fiyat vermediyse
+                        // yüzde bazlı undercut'a düşülür.
+                        war_price_cap = lowest_ask_of(state, *target, city, product)
+                            .map(|ask| scale_pct(ask, WAR_UNDERCUT_PCT));
                         (2, -10, true)
                     }
                     _ => (1, 0, false),
@@ -270,9 +306,23 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         } else {
             match qty { 0..=49 => 95, 50..=99 => 90, _ => 85 }
         } - trust_discount;
+        // Faz 1 (entrika): dedektörün onayladığı gerçek tekelse sömürü primi.
+        // Bu prim aynı zamanda rakiplere "bu pazar şişti, gir" sinyalidir —
+        // tekel-kırma dinamiğini besleyen şey tekelcinin kendi açgözlülüğüdür.
+        let monopoly_premium: i64 = if state.intrigue.is_monopolist(player.id, city, product) {
+            MONOPOLY_PREMIUM_PCT
+        } else {
+            0
+        };
         // Faz 4: goal price adj uygula.
-        let stock_floor_pct = (base_floor_pct + goal_price_adj).max(70);
-        let stock_floor = scale_pct(reference, stock_floor_pct);
+        let stock_floor_pct = (base_floor_pct + goal_price_adj + monopoly_premium).max(70);
+        let pct_floor = scale_pct(reference, stock_floor_pct);
+        // Faz 1: savaş fiyatı yüzde tabanını ezer — ama zarar tabanının
+        // (referansın %60'ı) altına inilmez, intihar değil savaş.
+        let stock_floor = match war_price_cap {
+            Some(cap) => cap.max(scale_pct(reference, WAR_PRICE_FLOOR_PCT)).min(pct_floor),
+            None => pct_floor,
+        };
 
         let rival_sell: u32 = state
             .order_book

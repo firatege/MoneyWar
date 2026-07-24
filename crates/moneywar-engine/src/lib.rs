@@ -33,6 +33,7 @@ mod events;
 mod indices;
 mod loans;
 mod market;
+mod narrative;
 mod news;
 mod production;
 mod report;
@@ -43,6 +44,7 @@ mod transport;
 
 pub use error::EngineError;
 pub use indices::{IndexKind, MarketIndex, all_indices, compute_index};
+pub use narrative::detect_intrigue;
 pub use report::{LogEntry, LogEvent, TickReport};
 pub use rng::{rng_for, seed_for};
 pub use scoring::{IDLE_FACTORY_THRESHOLD, PRICE_WINDOW, PlayerScore, leaderboard, score_player};

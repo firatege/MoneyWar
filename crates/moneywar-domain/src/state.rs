@@ -15,9 +15,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Caravan, CaravanId, CityId, Contract, ContractId, Factory, FactoryId, GameEvent, Loan, LoanId,
-    MarketOrder, Money, NewsItem, NewsTier, Player, PlayerId, PrivateFarm, PrivateFarmId,
-    ProductKind, RoomConfig, RoomId, Tick,
+    Caravan, CaravanId, CityId, Contract, ContractId, Factory, FactoryId, GameEvent, IntrigueState,
+    Loan, LoanId, MarketOrder, Money, NewsItem, NewsTier, Player, PlayerId, PrivateFarm,
+    PrivateFarmId, ProductKind, RoomConfig, RoomId, Tick,
 };
 
 /// `ProductKind::RAW_MATERIALS` order'ında bir sonraki raw'ı döner.
@@ -163,6 +163,12 @@ pub struct GameState {
     /// (CLI/sim seed) ve sezon boyu sabit kalır.
     #[serde(default)]
     pub price_baseline_initial: BTreeMap<(CityId, ProductKind), Money>,
+
+    /// Anlatı dedektörünün kalıcı durumu (docs/finish-plan.md Faz 1):
+    /// tekel takibi, undercut serileri, fiyat savaşları, kinler, iflaslar.
+    /// Motor tick kapanışında günceller; NPC beyinleri okuyup davranışa çevirir.
+    #[serde(default)]
+    pub intrigue: IntrigueState,
 }
 
 /// İki aktör arasındaki güven/ilişki puanı.
@@ -236,6 +242,7 @@ impl GameState {
 
             market_softener_pct: 0,
             price_baseline_initial: BTreeMap::new(),
+            intrigue: IntrigueState::default(),
         }
     }
 
