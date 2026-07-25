@@ -41,6 +41,18 @@ pub const PRICE_WAR_RETREAT_TICKS: u32 = 5;
 pub const PRICE_WAR_FIZZLE_TICKS: u32 = 8;
 /// Kinin ömrü (tick). Her tick 1 azalır, 0'da unutulur.
 pub const GRUDGE_TICKS: u32 = 40;
+/// Bu kadar kredi temerrüdünden sonra firma aciz sayılır ve iflas eder.
+/// Banka zaten yalnız batma riskindeki firmaya (nakit < 1000₺) kredi açar;
+/// bu can simidini de geri ödeyemeyen firma ayakta değildir. Tek temerrüt
+/// yeter — ayrıca banka ilk temerrütten sonra o firmaya bir daha kredi
+/// vermediği için ikinci temerrüt zaten imkânsızdı.
+pub const DEFAULTS_BEFORE_BANKRUPTCY: u32 = 1;
+/// Aciz eşiği (kuruş): nakit bunun altındaysa ve satacak malı/varlığı da
+/// yoksa firma ayakta duramıyor demektir.
+pub const INSOLVENT_CASH_CENTS: i64 = 50_000; // 500₺
+/// Acizliğin kesintisiz sürmesi gereken tick. Tek tick'lik nakit boşluğu
+/// iflas değildir — mal yolda olabilir, kontrat teslim bekliyor olabilir.
+pub const INSOLVENCY_CONFIRM_TICKS: u32 = 12;
 
 /// Bir pazarın (şehir, ürün) tek tick'lik satış dökümü: satıcı → birim.
 pub type TickSales = BTreeMap<PlayerId, u64>;
@@ -92,6 +104,16 @@ pub struct IntrigueState {
 
     /// İflası ilan edilmiş firmalar (sezonda bir kez damgalanır).
     pub bankrupt: BTreeSet<PlayerId>,
+
+    /// Aciz sayacı: firma → kesintisiz kaç tick'tir hiçbir varlığı yok.
+    /// `INSOLVENCY_CONFIRM_TICKS`'e ulaşınca iflas; toparlarsa sıfırlanır.
+    pub insolvency_streak: BTreeMap<PlayerId, u32>,
+
+    /// Kredi temerrüdü sayacı: firma → kaç kez borcunu ödeyemedi.
+    /// Temerrüt eskiden bedava kurtarmaydı (borç silinir, firma devam eder,
+    /// sonraki döngüde yeniden kredi alır). Artık iz bırakıyor: banka bir
+    /// daha aynı firmaya kredi vermez ve ikinci temerrüt iflastır.
+    pub loan_defaults: BTreeMap<PlayerId, u32>,
 
     /// Süregelen tedarik boğmaları: (boğan, boğulan, şehir, girdi).
     /// Aynı boğma her tick haber olmasın diye tutulur; tekel düşünce temizlenir.

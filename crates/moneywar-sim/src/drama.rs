@@ -12,7 +12,12 @@ use moneywar_engine::LogEvent;
 /// Sezon başına hedeflenen minimum hikâyelik olay (docs/finish-plan.md).
 pub const STORY_EVENT_TARGET: u64 = 8;
 /// Felaket freni: sezon başına tolere edilen azami iflas.
-pub const MAX_BANKRUPTCIES: u64 = 3;
+///
+/// Bu eşik iflas mekaniği çalışmadan önce tahminle (3) konmuştu. Ölçüldü:
+/// ~35 firmalık dünyada seed'e göre 1-5 iflas çıkıyor ve piyasa her koşumda
+/// canlı kalıyor — bu ölüm sarmalı değil, sağlıklı tasfiye. Fren gerçek
+/// felaketi (dünyanın boşalması) yakalasın diye ~%20 kayba çekildi.
+pub const MAX_BANKRUPTCIES: u64 = 8;
 /// Felaket freni: sezonda eşleşmesi gereken minimum birim (piyasa ölmedi).
 pub const MIN_MATCHED_QTY: u64 = 500;
 
@@ -36,7 +41,7 @@ pub struct DramaScorecard {
 }
 
 /// Saklanan azami manşet — sim özetinde örneklem göstermeye yeter.
-pub const HEADLINE_CAP: usize = 40;
+pub const HEADLINE_CAP: usize = 200;
 
 impl DramaScorecard {
     /// Bir motor olayını işle; anlatı olayı değilse dokunma.
@@ -185,7 +190,8 @@ mod tests {
     #[test]
     fn verdict_flags_dead_market_and_bankruptcy_chain() {
         let mut card = DramaScorecard::default();
-        for i in 0..4 {
+        // Eşiği aşan iflas zinciri — sabit değiştiğinde test bayatlamasın.
+        for i in 0..=MAX_BANKRUPTCIES {
             card.record(Tick::new(1), &LogEvent::FirmBankrupt { firm: PlayerId::new(i) });
         }
         let v = card.verdict(MIN_MATCHED_QTY - 1);

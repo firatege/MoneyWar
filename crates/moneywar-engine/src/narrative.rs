@@ -22,7 +22,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use moneywar_domain::{
-    CityId, Command, DOMINANCE_MIN_VOLUME, DOMINANCE_WINDOW_TICKS, GRUDGE_TICKS, GameState,
+    CityId, Command, DEFAULTS_BEFORE_BANKRUPTCY, DOMINANCE_MIN_VOLUME, DOMINANCE_WINDOW_TICKS,
+    GRUDGE_TICKS, GameState, INSOLVENCY_CONFIRM_TICKS, INSOLVENT_CASH_CENTS,
     MONOPOLY_BREAK_CONFIRM_TICKS, MONOPOLY_BREAK_PCT, MONOPOLY_CONFIRM_TICKS, MONOPOLY_FORM_PCT,
     NpcKind, OrderSide, PRICE_WAR_DECLARE_TICKS, PRICE_WAR_FIZZLE_TICKS, PRICE_WAR_RETREAT_TICKS,
     PlayerId, PriceWarTrack, ProductKind, Tick, TickSales, UNDERCUT_CAMPAIGN_TICKS,
@@ -133,8 +134,6 @@ pub fn story_headline(state: &GameState, event: &LogEvent) -> Option<String> {
 const UNDERCUT_MAX_PCT_OF_VICTIM: i64 = 98;
 /// Pencerede "yerleşik" (undercut mağduru olabilir) sayılmak için gereken pay (%).
 const INCUMBENT_MIN_SHARE_PCT: u64 = 30;
-/// İflas eşiği: nakit bu değerin (cent) altında + varlık yoksa firma batmıştır.
-const BANKRUPT_CASH_CENTS: i64 = 100;
 
 /// Tick kapanış dedektörü — `clear_markets` sonrası çağrılır.
 /// `state.intrigue`'i günceller, anlatı event'lerini `report`'a ekler.
@@ -511,7 +510,10 @@ fn advance_price_wars(
         } else {
             track.victim_absent_ticks += 1;
         }
-        if undercuts.contains(key) {
+        // Saldırgan yalnız hedef sahadayken "atıl" sayılır. Hedef fiyat
+        // vermiyorsa kırılacak fiyat da yoktur; bu saldırganın gevşemesi
+        // değil mağdurun çekilmesidir ve zafer sayacına işler.
+        if undercuts.contains(key) || !victim_present {
             track.attacker_idle_ticks = 0;
         } else {
             track.attacker_idle_ticks += 1;
@@ -552,36 +554,88 @@ fn decay_grudges(state: &mut GameState) {
     state.intrigue.grudges.retain(|_, r| *r > 0);
 }
 
-/// İflas: üretici/tacir rolünde, nakit tükendi + envanter boş + üretim
-/// varlığı yok. Sezonda bir kez damgalanır. Alıcı/Banka tüketici-altyapı
-/// rolleridir, iflas anlatısına girmez.
+/// İflas — **acizlik** testi. İki yoldan biriyle olur:
+///
+/// 1. **Tekrarlı temerrüt:** firma borcunu `DEFAULTS_BEFORE_BANKRUPTCY` kez
+///    ödeyemedi. Temerrüt artık bedelsiz değil.
+/// 2. **Sermaye tükenmesi:** nakit aciz eşiğinin altında, satacak malı yok
+///    ve üretim varlığı da yok — ayakta duracak hiçbir şeyi kalmamış.
+///
+/// Alıcı/Banka tüketici-altyapı rolleridir, iflas anlatısına girmez.
 fn detect_bankruptcies(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     let mut newly_bankrupt: Vec<PlayerId> = Vec::new();
+    let mut streak_updates: Vec<(PlayerId, bool)> = Vec::new();
     for (pid, player) in &state.players {
         if state.intrigue.bankrupt.contains(pid) {
+            continue;
+        }
+        // İnsan oyuncunun firması motor tarafından sessizce tasfiye edilmez —
+        // oyuncu iflası interaktif katmanın açık bir "oyun bitti" akışıdır.
+        if !player.is_npc {
             continue;
         }
         if matches!(player.npc_kind, Some(NpcKind::Alici | NpcKind::Banka)) {
             continue;
         }
-        if player.cash.as_cents() >= BANKRUPT_CASH_CENTS || !player.inventory.is_empty() {
-            continue;
-        }
+
+        let defaults = state.intrigue.loan_defaults.get(pid).copied().unwrap_or(0);
+        let repeat_defaulter = defaults >= DEFAULTS_BEFORE_BANKRUPTCY;
+
         let owns_production = state.factories.values().any(|f| f.owner == *pid)
             || state.private_farms.values().any(|f| f.owner == *pid)
             || state.caravans.values().any(|c| c.owner == *pid);
-        if owns_production {
-            continue;
+        let stripped = player.cash.as_cents() < INSOLVENT_CASH_CENTS
+            && player.inventory.is_empty()
+            && !owns_production;
+        streak_updates.push((*pid, stripped));
+        let sustained = stripped
+            && state.intrigue.insolvency_streak.get(pid).copied().unwrap_or(0) + 1
+                >= INSOLVENCY_CONFIRM_TICKS;
+
+        if repeat_defaulter || sustained {
+            newly_bankrupt.push(*pid);
         }
-        newly_bankrupt.push(*pid);
+    }
+    // Sayaçları yaz: acizlik sürüyorsa artır, toparladıysa sıfırla.
+    for (pid, stripped) in streak_updates {
+        if stripped {
+            *state.intrigue.insolvency_streak.entry(pid).or_insert(0) += 1;
+        } else {
+            state.intrigue.insolvency_streak.remove(&pid);
+        }
     }
     for pid in newly_bankrupt {
         state.intrigue.bankrupt.insert(pid);
+        state.intrigue.insolvency_streak.remove(&pid);
+        liquidate(state, pid);
         report.push(LogEntry {
             tick,
             actor: Some(pid),
             event: LogEvent::FirmBankrupt { firm: pid },
         });
+    }
+}
+
+/// Batan firmanın tasfiyesi: üretim varlıkları ve stoğu piyasadan çekilir,
+/// nakdi sıfırlanır. Arzın kaybolması rakipler için fırsat, tüketiciler için
+/// fiyat baskısıdır — ölümün piyasada gerçek bir izi olur.
+fn liquidate(state: &mut GameState, firm: PlayerId) {
+    state.factories.retain(|_, f| f.owner != firm);
+    state.private_farms.retain(|_, f| f.owner != firm);
+    state.caravans.retain(|_, c| c.owner != firm);
+    if let Some(player) = state.players.get_mut(&firm) {
+        player.inventory = moneywar_domain::Inventory::default();
+        player.cash = moneywar_domain::Money::ZERO;
+    }
+    // Batan firma artık kimsenin hedefi ya da ortağı değil.
+    state.intrigue.price_wars.retain(|(a, v, _, _), _| *a != firm && *v != firm);
+    state.intrigue.grudges.retain(|(h, g), _| *h != firm && *g != firm);
+    state.intrigue.active_chokes.retain(|(c, v, _, _)| *c != firm && *v != firm);
+    for bucket in state.intrigue.monopolist.clone().keys() {
+        if state.intrigue.monopolist.get(bucket) == Some(&firm) {
+            state.intrigue.monopolist.remove(bucket);
+            state.intrigue.announced_monopolies.remove(bucket);
+        }
     }
 }
 
@@ -942,11 +996,10 @@ mod tests {
         assert!(s.intrigue.grudges.is_empty());
     }
 
-    #[test]
-    fn bankruptcy_stamped_once_for_broke_producer() {
-        let mut s = state();
+    /// Varlıksız bir üretici ekle (aciz adayı).
+    fn insert_broke_producer(s: &mut GameState, id: u64) {
         let p = moneywar_domain::Player::new(
-            pid(5),
+            pid(id),
             "Batan",
             moneywar_domain::Role::Sanayici,
             Money::ZERO,
@@ -954,15 +1007,85 @@ mod tests {
         )
         .unwrap()
         .with_kind(NpcKind::Sanayici);
-        s.players.insert(pid(5), p);
+        s.players.insert(pid(id), p);
+    }
 
-        let mut r = TickReport::new(Tick::new(1));
-        detect_bankruptcies(&mut s, &mut r, Tick::new(1));
-        assert_eq!(story_events(&r).len(), 1);
+    fn run_bankruptcy_ticks(s: &mut GameState, from: u32, n: u32) -> usize {
+        let mut count = 0;
+        for t in from..from + n {
+            let mut r = TickReport::new(Tick::new(t));
+            detect_bankruptcies(s, &mut r, Tick::new(t));
+            count += story_events(&r).len();
+        }
+        count
+    }
 
-        let mut r2 = TickReport::new(Tick::new(2));
-        detect_bankruptcies(&mut s, &mut r2, Tick::new(2));
-        assert!(story_events(&r2).is_empty(), "iflas bir kez damgalanır");
+    #[test]
+    fn bankruptcy_needs_sustained_insolvency() {
+        let mut s = state();
+        insert_broke_producer(&mut s, 5);
+
+        // Onay süresi dolmadan iflas yok — mal yolda olabilir.
+        let early = run_bankruptcy_ticks(&mut s, 1, INSOLVENCY_CONFIRM_TICKS - 1);
+        assert_eq!(early, 0, "geçici nakit boşluğu iflas değil");
+        assert!(s.intrigue.bankrupt.is_empty());
+
+        // Onay tick'inde tam bir kez damgalanır.
+        assert_eq!(run_bankruptcy_ticks(&mut s, 100, 1), 1);
+        assert!(s.intrigue.bankrupt.contains(&pid(5)));
+        assert_eq!(run_bankruptcy_ticks(&mut s, 101, 3), 0, "iflas bir kez damgalanır");
+    }
+
+    #[test]
+    fn recovering_firm_escapes_bankruptcy() {
+        let mut s = state();
+        insert_broke_producer(&mut s, 5);
+        run_bankruptcy_ticks(&mut s, 1, INSOLVENCY_CONFIRM_TICKS - 1);
+
+        // Nakit geldi → sayaç sıfırlanır, firma kurtulur.
+        s.players.get_mut(&pid(5)).unwrap().cash = Money::from_lira(5_000).unwrap();
+        run_bankruptcy_ticks(&mut s, 50, 1);
+        assert!(!s.intrigue.insolvency_streak.contains_key(&pid(5)));
+
+        // Yeniden parasız kalsa bile sayaç baştan başlar.
+        s.players.get_mut(&pid(5)).unwrap().cash = Money::ZERO;
+        assert_eq!(run_bankruptcy_ticks(&mut s, 60, INSOLVENCY_CONFIRM_TICKS - 1), 0);
+        assert!(s.intrigue.bankrupt.is_empty());
+    }
+
+    #[test]
+    fn repeat_loan_default_bankrupts_immediately() {
+        let mut s = state();
+        insert_broke_producer(&mut s, 5);
+        // Varlıklı ama borcunu iki kez ödeyememiş firma: aciz.
+        s.players.get_mut(&pid(5)).unwrap().cash = Money::from_lira(20_000).unwrap();
+        s.intrigue.loan_defaults.insert(pid(5), DEFAULTS_BEFORE_BANKRUPTCY);
+
+        assert_eq!(run_bankruptcy_ticks(&mut s, 1, 1), 1, "tekrarlı temerrüt iflastır");
+        assert!(s.intrigue.bankrupt.contains(&pid(5)));
+    }
+
+    #[test]
+    fn liquidation_strips_assets_and_clears_intrigue() {
+        let mut s = state();
+        insert_broke_producer(&mut s, 5);
+        s.players.get_mut(&pid(5)).unwrap().cash = Money::from_lira(9_000).unwrap();
+        let fid = moneywar_domain::FactoryId::new(1);
+        s.factories.insert(
+            fid,
+            moneywar_domain::Factory::new(fid, pid(5), CityId::Konya, ProductKind::Un).unwrap(),
+        );
+        s.intrigue.monopolist.insert(BUCKET, pid(5));
+        s.intrigue.announced_monopolies.insert(BUCKET);
+        s.intrigue.grudges.insert((pid(9), pid(5)), 20);
+
+        liquidate(&mut s, pid(5));
+
+        assert!(s.factories.is_empty(), "fabrikalar tasfiye edilmeli");
+        assert_eq!(s.players[&pid(5)].cash, Money::ZERO);
+        assert!(s.intrigue.monopolist.is_empty(), "batan firma tekelini bırakır");
+        assert!(s.intrigue.announced_monopolies.is_empty());
+        assert!(s.intrigue.grudges.is_empty(), "ölüye kin tutulmaz");
     }
 
     #[test]

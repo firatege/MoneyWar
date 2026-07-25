@@ -77,6 +77,17 @@ pub(crate) fn tick_banks(state: &mut GameState, report: &mut TickReport, tick: T
         .map(|l| l.borrower)
         .collect();
 
+    // Bankayı bir kez yakan firmaya ikinci kredi yok. Bu kısıt olmadan
+    // temerrüt sonsuz can veriyordu: borç silinir → sonraki döngüde yeni
+    // kredi → firma asla batmaz.
+    let blacklisted: std::collections::BTreeSet<PlayerId> = state
+        .intrigue
+        .loan_defaults
+        .keys()
+        .copied()
+        .chain(state.intrigue.bankrupt.iter().copied())
+        .collect();
+
     for (bank_id, mut bank_cash) in banks {
         let max_outlay = bank_cash * BANK_MAX_OUTLAY_RATIO_PCT / 100;
         let mut spent = 0i64;
@@ -93,7 +104,7 @@ pub(crate) fn tick_banks(state: &mut GameState, report: &mut TickReport, tick: T
             let Some(borrower_id) = queue.next() else {
                 break;
             };
-            if already_borrowed.contains(&borrower_id) {
+            if already_borrowed.contains(&borrower_id) || blacklisted.contains(&borrower_id) {
                 continue;
             }
 

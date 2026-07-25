@@ -97,6 +97,10 @@ pub fn decide_all_npcs(
             if *id == world_id {
                 return None;
             }
+            // Batmış firma karar vermez — tasfiye edildi, sahadan çekildi.
+            if state.intrigue.bankrupt.contains(id) {
+                return None;
+            }
             if p.is_npc { Some(*id) } else { None }
         })
         .collect();

@@ -189,6 +189,10 @@ fn auto_settle(state: &mut GameState, report: &mut TickReport, tick: Tick, lid: 
             }
         }
         state.loans.remove(&lid);
+        // Temerrüt iz bırakır: banka bir daha bu firmaya kredi açmaz ve
+        // ikinci temerrütte firma aciz sayılıp iflas eder. Eskiden borç
+        // silinip firma yoluna devam ediyordu — bedelsiz kurtarma.
+        *state.intrigue.loan_defaults.entry(borrower).or_insert(0) += 1;
         report.push(LogEntry::loan_defaulted(
             tick,
             borrower,

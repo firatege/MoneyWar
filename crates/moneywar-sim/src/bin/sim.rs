@@ -316,7 +316,15 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
     if let Some(o) = outcomes.iter().find(|o| !o.headlines.is_empty()) {
         println!("\n  MANŞETLER (oyun {})", o.label + 1);
         println!("{:-<82}", "");
-        for line in o.headlines.iter().take(12) {
+        // Sezonun ilk ve son olayları — açılış hamleleri + finalde kim battı.
+        let n = o.headlines.len();
+        for line in o.headlines.iter().take(6) {
+            println!("  {line}");
+        }
+        if n > 12 {
+            println!("  … ({} olay daha) …", n - 12);
+        }
+        for line in o.headlines.iter().skip(n.saturating_sub(6)) {
             println!("  {line}");
         }
     }
