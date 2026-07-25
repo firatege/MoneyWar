@@ -23,7 +23,7 @@ use moneywar_domain::{
 };
 
 use crate::behavior::candidates::ActionCandidate;
-use crate::behavior::pricing::{CrossPolicy, marketable_ask, marketable_bid};
+use crate::behavior::pricing::{CrossPolicy, derived_input_ceiling, marketable_ask, marketable_bid};
 
 /// Yeni fabrika kurma eşiği. Faz 1: 4→8 (monopolleşme + rekabet dinamiği).
 /// 5 şehir × 3 mamul = 15 slot, 3 Sanayici × 8 = 24 hedef > 15 slot →
@@ -196,24 +196,42 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
                 let shortage = Factory::BATCH_SIZE - have;
                 let want = shortage.min(50);
 
-                // effective_baseline: Walras clamp'lı referans — rolling_avg
-                // spiral'ini kırar (her yüksek fill bir sonraki ceiling'i daha
-                // da yükseltmez). initial × [%60, %160] aralığında kalır.
-                let baseline = state
-                    .effective_baseline(city, product)
-                    .unwrap_or_else(|| {
-                        // Ek girdiler mamul olabilir — ürünün kendi baz fiyatı.
-                        Money::from_lira(product.base_price_lira()).unwrap_or(Money::ZERO)
-                    });
-                // Kademeli premium: stok ne kadar azsa o kadar yüksek teklif.
-                // Kitapta hep tavana gitmek yerine organik fiyat keşfi.
+                // Ödeme gücü **türev talepten** gelir: bu girdiyi çevirdiğim
+                // mamulün fiyatı tavanı belirler, girdinin kendi baseline'ı
+                // değil. Girdi baseline'ına bağlıyken fabrika sahibi aynı
+                // hammaddeyi çevirip satan Tüccar/Spekülatör'den daha çekingen
+                // teklif veriyordu ve kendi girdisini kaybediyordu.
+                //
+                // Bir girdi birden çok fabrikamı besliyorsa (aynı şehirde hem
+                // Un hem Ekmek fabrikası Buğday/Un ister) en yüksek tavan
+                // geçerli: girdiyi en değerli kullanan hat fiyatı belirler.
+                let derived = state
+                    .factories
+                    .values()
+                    .filter(|f| f.owner == player.id && f.city == city)
+                    .filter(|f| f.product.recipe().iter().any(|(i, _)| *i == product))
+                    .filter_map(|f| {
+                        derived_input_ceiling(state, city, f.product, product, f.batch_size())
+                    })
+                    .max();
+
+                // Türev tavan hesaplanamazsa (mamul fiyatı bilinmiyor) eski
+                // baseline tabanlı davranışa düş.
+                let fallback = state.effective_baseline(city, product).unwrap_or_else(|| {
+                    // Ek girdiler mamul olabilir — ürünün kendi baz fiyatı.
+                    Money::from_lira(product.base_price_lira()).unwrap_or(Money::ZERO)
+                });
+                let anchor = derived.unwrap_or(fallback);
+
+                // Kademeli agresiflik: stok ne kadar azsa tavana o kadar yakın
+                // teklif. Hep tavana gitmek fiyat keşfini öldürür.
                 let premium_pct: i64 = match shortage {
-                    0..=25  => 105, // az eksik → fazla ödeme
-                    26..=60 => 115, // orta eksik
-                    61..=99 => 125, // çok eksik
-                    _       => 130, // sıfır stok → max (Tüccar sinyali)
+                    0..=25  => 75,  // az eksik → temkinli
+                    26..=60 => 85,  // orta eksik
+                    61..=99 => 95,  // çok eksik
+                    _       => 100, // sıfır stok → tavana kadar
                 };
-                let cash_ceiling = scale_pct(baseline, premium_pct);
+                let cash_ceiling = scale_pct(anchor, premium_pct);
                 let Some(unit_price) = marketable_bid(
                     state,
                     player.id,
@@ -791,16 +809,24 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
     })
 }
 
-/// Tax-aware satın alma qty.
-/// Özel çiftlik kurma adayını listele.
+/// Özel çiftlik kurma adayını listele — dikey entegrasyon hamlesi.
 ///
-/// Koşullar:
-/// 1. Sanayicinin fabrikası var ve ham madde sıkıntısı çekiyor
-///    (son N tickte FactoryIdle oranı yüksek → proxy: ham stok düşük)
-/// 2. O ham madde için zaten özel çiftlik yok
-/// 3. Yeterli nakit (PRIVATE_FARM_BUILD_COST_LIRA + buffer)
+/// Aday, firmanın **en çok aç kaldığı** (şehir, ham madde) çiftidir: o
+/// şehirdeki fabrikalarımın bir batch için istediği ham madde ile elimdeki
+/// stok arasındaki fark. En büyük açık kazanır.
+///
+/// İki şey özellikle önemli:
+/// - **Yalnız ham madde.** Tarla ham madde üretir; tier-2/3 fabrikanın
+///   girdisi mamuldür (Ekmek → Un, Ziyafet → Ekmek). Bunlar elenmezse motor
+///   komutu "PrivateFarm only produces raw materials" diye reddediyordu.
+/// - **Kıtlığa göre sıra.** Eskiden aday `BTreeSet`'ten `find()` ile, yani
+///   ürün sıralamasındaki ilk eleman olarak alınıyordu; firma zaten bol olan
+///   hammaddeye tarla kurup asıl darboğazını beslemeden kalıyordu.
+///
+/// Koşullar: tarla kotası dolmamış + nakit (maliyet × 1.5) + gerçek açık.
 fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     use moneywar_domain::balance::{PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER};
+    use moneywar_domain::{CityId, ProductKind};
 
     let owned_farms = state.private_farms.values()
         .filter(|f| f.owner == player.id)
@@ -818,36 +844,33 @@ fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
         return Vec::new();
     }
 
-    // Fabrikalarımın ham madde ihtiyaçlarını bul
-    let needed_raws: std::collections::BTreeSet<(moneywar_domain::CityId, moneywar_domain::ProductKind)> =
-        state.factories.values()
-            .filter(|f| f.owner == player.id)
-            .filter_map(|f| f.product.raw_input().map(|raw| (f.city, raw)))
-            .collect();
-
-    // Bu ham maddeler için zaten çiftlik var mı?
-    let existing: std::collections::BTreeSet<(moneywar_domain::CityId, moneywar_domain::ProductKind)> =
-        state.private_farms.values()
-            .filter(|f| f.owner == player.id)
-            .map(|f| (f.city, f.product))
-            .collect();
-
-    // Henüz tarla kurulmamış ilk (city, raw) çiftini bul.
-    let candidate = needed_raws.iter()
-        .find(|cp| !existing.contains(*cp))
-        .copied();
-
-    // Debug: neden çalışmıyor?
-    #[cfg(debug_assertions)]
-    if needed_raws.is_empty() {
-        // Fab yok ya da raw_input() None
-    } else if candidate.is_none() {
-        // Tüm raw'lar için tarla var
+    // (şehir, ham) → bir batch'lik açık. Aynı şehirde aynı hammaddeye dayanan
+    // birden çok fabrika varsa açıklar toplanır.
+    let mut shortage: std::collections::BTreeMap<(CityId, ProductKind), i64> =
+        std::collections::BTreeMap::new();
+    for f in state.factories.values().filter(|f| f.owner == player.id) {
+        let Some(raw) = f.product.raw_input() else { continue };
+        if !raw.is_raw() {
+            continue; // tarla mamul üretemez
+        }
+        let need = i64::from(f.product.raw_input_qty(f.batch_size()));
+        let have = i64::from(player.inventory.get(f.city, raw));
+        *shortage.entry((f.city, raw)).or_default() += need - have;
     }
 
-    candidate.map(|(city, product)| {
-        vec![ActionCandidate::BuildPrivateFarm { city, product }]
-    }).unwrap_or_default()
+    // Zaten tarlam olan çiftleri çıkar — ikinci tarla aynı yere kurulmasın.
+    for f in state.private_farms.values().filter(|f| f.owner == player.id) {
+        shortage.remove(&(f.city, f.product));
+    }
+
+    // En büyük açık. Eşitlikte `max_by_key` sonuncuyu seçer; `BTreeMap`
+    // sırası deterministik olduğu için sonuç da deterministik.
+    shortage
+        .into_iter()
+        .filter(|(_, gap)| *gap > 0)
+        .max_by_key(|(_, gap)| *gap)
+        .map(|((city, product), _)| vec![ActionCandidate::BuildPrivateFarm { city, product }])
+        .unwrap_or_default()
 }
 
 /// Yükseltmeye uygun özel tarlalar — aktif tarla + nakit varsa.

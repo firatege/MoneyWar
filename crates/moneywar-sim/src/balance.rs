@@ -99,6 +99,9 @@ pub struct BalanceAccumulator {
     loans_defaulted: u64,
     /// Ürün başına piyasa akışı — arz/talep dengesizliğinin tek kaynağı.
     market: BTreeMap<ProductKind, MarketFlow>,
+    /// Ham madde alımı: rol → alınan birim. "Fabrika neden aç" sorusunun
+    /// ikinci yarısı — ham üretiliyor ama kim kapıyor?
+    raw_buy_by_role: BTreeMap<NpcKind, u64>,
 }
 
 /// Bir ürünün sezon boyunca kitapta görülen arz/talebi ve gerçekleşen hacmi.
@@ -180,6 +183,7 @@ impl BalanceAccumulator {
                     .or_default() += 1;
             }
             LogEvent::OrderMatched {
+                product,
                 buyer,
                 seller,
                 quantity,
@@ -190,6 +194,11 @@ impl BalanceAccumulator {
                     let c = self.entry(state, side);
                     c.fills += 1;
                     c.filled_qty += q;
+                }
+                if product.is_raw()
+                    && let Some(kind) = state.players.get(buyer).and_then(|p| p.npc_kind)
+                {
+                    *self.raw_buy_by_role.entry(kind).or_default() += q;
                 }
             }
             LogEvent::OrderExpired {
@@ -327,8 +336,14 @@ impl BalanceAccumulator {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        let raw_buy_by_role = ROLE_ORDER
+            .iter()
+            .filter_map(|&k| self.raw_buy_by_role.get(&k).map(|v| (k, *v)))
+            .collect();
+
         BalanceReport {
             roles,
+            raw_buy_by_role,
             market,
             price_drift,
             top_rejects,
@@ -398,6 +413,8 @@ pub struct BalanceReport {
     pub roles: Vec<RoleBalance>,
     /// Ürün → piyasa akışı, arz açığı azalan sırada.
     pub market: Vec<(ProductKind, MarketFlow)>,
+    /// Rol → satın alınan ham madde birimi ([`ROLE_ORDER`] sırasında).
+    pub raw_buy_by_role: Vec<(NpcKind, u64)>,
     /// Ürün → sezon sonu/başı baseline oranı, azalan.
     pub price_drift: Vec<(ProductKind, f64)>,
     /// En sık 4 red sebebi sınıfı.
@@ -494,6 +511,7 @@ mod tests {
     fn report_of(roles: Vec<RoleBalance>) -> BalanceReport {
         BalanceReport {
             roles,
+            raw_buy_by_role: Vec::new(),
             market: Vec::new(),
             price_drift: Vec::new(),
             top_rejects: Vec::new(),

@@ -17,6 +17,85 @@ use moneywar_domain::{
     CityId, GameState, MAX_NO_MATCH_STREAK, Money, OrderSide, PlayerId, ProductKind, Tick,
 };
 
+/// Üreticinin bir batch'ten beklediği asgari kâr marjı (yüzde). Girdi
+/// bütçesi = mamul geliri × (100 − bu).
+pub const FACTORY_TARGET_MARGIN_PCT: i64 = 30;
+
+/// Üreticinin bir girdiye ödeyebileceği azami birim fiyat — **türev talep**.
+///
+/// Bir fabrikanın hammaddeye ödeme gücü hammaddenin kendi fiyatından değil,
+/// onu dönüştürdüğü **mamulün** fiyatından gelir. Eski model tavanı girdi
+/// baseline'ına bağlıyordu (`baseline × 1.05..1.30`); sonuçta fabrika sahibi,
+/// aynı hammaddeyi alıp çeviren Tüccar/Spekülatör'den daha çekingen teklif
+/// veriyor ve kendi girdisini kaybediyordu. Ölçüm: hammaddenin %75'i
+/// üretmeyen rollere gidiyor, fabrikalar üretim denemelerinin %88'inde
+/// girdisiz kalıyordu.
+///
+/// Hesap, bir batch üzerinden:
+/// 1. gelir = `batch × output_ratio_pct/100 × mamul fiyatı`
+/// 2. girdi bütçesi = gelir × `(100 − FACTORY_TARGET_MARGIN_PCT)/100`
+/// 3. bütçe, tarifteki girdilere **piyasa değerleri oranında** paylaştırılır
+/// 4. tavan = bu girdinin payı ÷ bu girdiden gereken birim
+///
+/// Çok girdili üründe (Elbise = Kumaş + %40 Boya) pahalı girdi bütçeden daha
+/// büyük pay alır — tek girdiye eşit bölmek ucuz girdinin tavanını saçma
+/// yükseltirdi.
+///
+/// `None` → mamul fiyatı bilinmiyor ya da tarif bu girdiyi içermiyor.
+#[must_use]
+pub fn derived_input_ceiling(
+    state: &GameState,
+    city: CityId,
+    finished: ProductKind,
+    input: ProductKind,
+    batch: u32,
+) -> Option<Money> {
+    let batch = i64::from(batch);
+    let out_units = batch.saturating_mul(i64::from(finished.output_ratio_pct())) / 100;
+    if out_units <= 0 {
+        return None;
+    }
+    let out_price = reference_or_base(state, city, finished)?;
+    let revenue = out_price.saturating_mul(out_units);
+    let budget = revenue.saturating_mul(100 - FACTORY_TARGET_MARGIN_PCT) / 100;
+    if budget <= 0 {
+        return None;
+    }
+
+    // Tarifin toplam piyasa maliyeti ve bu girdinin payı.
+    let mut total_cost: i64 = 0;
+    let mut my_cost: i64 = 0;
+    let mut my_units: i64 = 0;
+    for (part, pct) in finished.recipe() {
+        let units = batch.saturating_mul(i64::from(pct)) / 100;
+        if units <= 0 {
+            continue;
+        }
+        let unit_px = reference_or_base(state, city, part).unwrap_or(1).max(1);
+        let cost = unit_px.saturating_mul(units);
+        total_cost = total_cost.saturating_add(cost);
+        if part == input {
+            my_cost = cost;
+            my_units = units;
+        }
+    }
+    if my_units <= 0 || total_cost <= 0 {
+        return None;
+    }
+    let my_budget = budget.saturating_mul(my_cost) / total_cost;
+    Some(Money::from_cents((my_budget / my_units).max(1)))
+}
+
+/// `(city, product)` için cent cinsinden referans fiyat; baseline yoksa
+/// ürünün kendi baz fiyatına düşer.
+fn reference_or_base(state: &GameState, city: CityId, product: ProductKind) -> Option<i64> {
+    state
+        .effective_baseline(city, product)
+        .or_else(|| Money::from_lira(product.base_price_lira()).ok())
+        .map(|m| m.as_cents())
+        .filter(|c| *c > 0)
+}
+
 /// Bu (tick, city, product, side, player) için ±3% jitter yüzdesi (-3..=+3).
 /// v0.4.1: player_id eklendi — aynı bucket'ta farklı NPC'ler farklı jitter alır,
 /// senkronize emir spam'ı kırılır. Eski versiyon 4 Tüccar aynı fiyatı veriyordu

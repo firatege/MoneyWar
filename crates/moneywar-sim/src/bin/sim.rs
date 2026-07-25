@@ -499,6 +499,37 @@ fn print_balance(outcomes: &[Outcome]) {
         );
     }
 
+    // ── Ham maddeyi kim kapıyor ──────────────────────────────────────────────
+    // Fabrika aç kalıyorsa iki ihtimal var: ham hiç üretilmiyor, ya da
+    // üretiliyor ama Sanayici piyasada kaybediyor. Bu tablo ikincisini ölçer.
+    let mut raw_rows: Vec<(u64, String)> = Vec::new();
+    let mut raw_total = 0.0;
+    for &kind in &moneywar_sim::balance::ROLE_ORDER {
+        let qty: u64 = outcomes
+            .iter()
+            .filter_map(|o| o.balance.raw_buy_by_role.iter().find(|(k, _)| *k == kind))
+            .map(|(_, q)| *q)
+            .sum();
+        if qty > 0 {
+            raw_total += qty as f64 / n_games;
+            raw_rows.push((qty, kind.label().to_owned()));
+        }
+    }
+    if !raw_rows.is_empty() {
+        raw_rows.sort_by(|a, b| b.0.cmp(&a.0));
+        println!("\n  HAM MADDEYİ KİM ALIYOR (oyun başına ortalama)");
+        println!("{:-<95}", "");
+        let line = raw_rows
+            .iter()
+            .map(|(qty, name)| {
+                let per_game = *qty as f64 / n_games;
+                format!("{name} {per_game:.0} (%{:.0})", per_game / raw_total * 100.0)
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        println!("  {line}");
+    }
+
     // ── Piyasa mekaniği sağlığı ──────────────────────────────────────────────
     let sum = |f: &dyn Fn(&BalanceReport) -> u64| -> f64 {
         outcomes.iter().map(|o| f(&o.balance) as f64).sum::<f64>() / n_games
