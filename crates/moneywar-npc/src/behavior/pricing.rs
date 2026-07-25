@@ -571,4 +571,130 @@ mod tests {
             bid.as_cents()
         );
     }
+
+    // ── derived_input_ceiling ────────────────────────────────────────────────
+
+    /// `(şehir, ürün)` baseline'ını lira cinsinden kur.
+    fn set_price(s: &mut GameState, city: CityId, product: ProductKind, lira: i64) {
+        s.price_baseline
+            .insert((city, product), Money::from_lira(lira).unwrap());
+    }
+
+    #[test]
+    fn derived_ceiling_comes_from_output_price_not_input_price() {
+        // Türev talebin özü: tek girdili üründe tavan, girdinin fiyatından
+        // tamamen bağımsızdır — mamulün fiyatı belirler.
+        let city = CityId::Istanbul;
+        let mut cheap = fresh_state();
+        set_price(&mut cheap, city, ProductKind::Un, 20);
+        set_price(&mut cheap, city, ProductKind::Bugday, 5);
+
+        let mut pricey = fresh_state();
+        set_price(&mut pricey, city, ProductKind::Un, 20);
+        set_price(&mut pricey, city, ProductKind::Bugday, 9);
+
+        let a =
+            derived_input_ceiling(&cheap, city, ProductKind::Un, ProductKind::Bugday, 65).unwrap();
+        let b =
+            derived_input_ceiling(&pricey, city, ProductKind::Un, ProductKind::Bugday, 65).unwrap();
+        assert_eq!(a, b, "girdi fiyatı tavanı etkilememeli");
+
+        // 65 Buğday → 58 Un (verim %90). Gelir 58×20₺, bütçe ×%70, /65 birim.
+        let expected = 58 * 2000 * (100 - FACTORY_TARGET_MARGIN_PCT) / 100 / 65;
+        assert_eq!(a.as_cents(), expected);
+    }
+
+    #[test]
+    fn derived_ceiling_rises_with_output_price() {
+        let city = CityId::Istanbul;
+        let mut low = fresh_state();
+        set_price(&mut low, city, ProductKind::Un, 20);
+        set_price(&mut low, city, ProductKind::Bugday, 5);
+
+        let mut high = fresh_state();
+        set_price(&mut high, city, ProductKind::Un, 40);
+        set_price(&mut high, city, ProductKind::Bugday, 5);
+
+        let a = derived_input_ceiling(&low, city, ProductKind::Un, ProductKind::Bugday, 65).unwrap();
+        let b =
+            derived_input_ceiling(&high, city, ProductKind::Un, ProductKind::Bugday, 65).unwrap();
+        assert!(b.as_cents() > a.as_cents() * 19 / 10, "mamul 2× → tavan ~2×");
+    }
+
+    #[test]
+    fn multi_input_budget_never_exceeds_target_margin() {
+        // Ekonomik garanti: tarifin tamamı tavan fiyattan alınsa bile toplam
+        // girdi maliyeti, mamul gelirinden hedef marj düşülmüş bütçeyi aşmaz.
+        let city = CityId::Istanbul;
+        let batch = 39; // Elbise tier-2: 65 × %60
+        let mut s = fresh_state();
+        set_price(&mut s, city, ProductKind::Elbise, 100);
+        set_price(&mut s, city, ProductKind::Kumas, 40);
+        set_price(&mut s, city, ProductKind::Boya, 10);
+
+        let out_units = i64::from(batch * ProductKind::Elbise.output_ratio_pct() / 100);
+        let revenue = out_units * 10_000;
+        let budget = revenue * (100 - FACTORY_TARGET_MARGIN_PCT) / 100;
+
+        let mut spent = 0i64;
+        for (input, pct) in ProductKind::Elbise.recipe() {
+            let units = i64::from(batch * pct / 100);
+            let ceiling =
+                derived_input_ceiling(&s, city, ProductKind::Elbise, input, batch).unwrap();
+            spent += ceiling.as_cents() * units;
+        }
+        assert!(spent <= budget, "girdi bütçesi aşıldı: {spent} > {budget}");
+    }
+
+    #[test]
+    fn multi_input_allocates_budget_by_market_value() {
+        // Bütçe piyasa değerine orantılı dağıtılır: pahalı girdi hem daha
+        // büyük mutlak pay alır, hem de her girdi kendi fiyatının **aynı**
+        // katına çıkar (eşit bölmek ucuz girdinin tavanını saçma yükseltirdi).
+        let city = CityId::Istanbul;
+        let batch = 39;
+        let mut s = fresh_state();
+        set_price(&mut s, city, ProductKind::Elbise, 100);
+        set_price(&mut s, city, ProductKind::Kumas, 40);
+        set_price(&mut s, city, ProductKind::Boya, 10);
+
+        let kumas =
+            derived_input_ceiling(&s, city, ProductKind::Elbise, ProductKind::Kumas, batch)
+                .unwrap()
+                .as_cents();
+        let boya = derived_input_ceiling(&s, city, ProductKind::Elbise, ProductKind::Boya, batch)
+            .unwrap()
+            .as_cents();
+
+        assert!(kumas > boya, "pahalı girdinin birim tavanı yüksek olmalı");
+
+        // Aynı kat: kumaş 4000 kuruş, boya 1000 kuruş → oranlar %1 içinde.
+        let kumas_mult = kumas as f64 / 4000.0;
+        let boya_mult = boya as f64 / 1000.0;
+        assert!(
+            (kumas_mult - boya_mult).abs() < 0.01 * kumas_mult,
+            "orantısız dağıtım: kumaş ×{kumas_mult:.3}, boya ×{boya_mult:.3}"
+        );
+    }
+
+    #[test]
+    fn derived_ceiling_is_none_for_input_outside_recipe() {
+        let city = CityId::Istanbul;
+        let mut s = fresh_state();
+        set_price(&mut s, city, ProductKind::Un, 20);
+        // Un'un tarifi yalnız Buğday; Pamuk bu hattın girdisi değil.
+        assert!(
+            derived_input_ceiling(&s, city, ProductKind::Un, ProductKind::Pamuk, 65).is_none()
+        );
+    }
+
+    #[test]
+    fn derived_ceiling_is_none_for_raw_product_with_no_recipe() {
+        let city = CityId::Istanbul;
+        let s = fresh_state();
+        // Ham maddenin tarifi yok — tavan tanımsız.
+        assert!(
+            derived_input_ceiling(&s, city, ProductKind::Bugday, ProductKind::Pamuk, 65).is_none()
+        );
+    }
 }
