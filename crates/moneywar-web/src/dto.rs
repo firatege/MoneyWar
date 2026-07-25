@@ -158,6 +158,11 @@ pub struct CaravanDto {
     pub idle: bool,
     pub current_city: Option<String>,
     pub cargo_units: u64,
+    /// Yoldaysa rotanın uçları — harita kervanı bu iki şehir arasında çizer.
+    pub from_city: Option<String>,
+    pub to_city: Option<String>,
+    /// Yolculuğun tamamlanma oranı [0,1]. Harita noktayı bu orana koyar.
+    pub progress: Option<f64>,
 }
 
 /// Tek bir okunabilir olay (event feed satırı).
@@ -455,9 +460,23 @@ fn build_caravans(state: &GameState) -> Vec<CaravanDto> {
         .caravans
         .values()
         .map(|c| {
-            let cargo_units = match &c.state {
-                moneywar_domain::CaravanState::EnRoute { cargo, .. } => cargo.total_units(),
-                moneywar_domain::CaravanState::Idle { .. } => 0,
+            let (cargo_units, from_city, to_city, progress) = match &c.state {
+                moneywar_domain::CaravanState::EnRoute { cargo, from, to, arrival_tick } => {
+                    // Yolculuk süresi rotanın sabit mesafesinden gelir; kalan
+                    // tick'ten ilerleme oranını türetiyoruz.
+                    let total = f64::from(from.distance_to(*to)).max(1.0);
+                    let remaining = f64::from(
+                        arrival_tick.value().saturating_sub(state.current_tick.value()),
+                    );
+                    let progress = ((total - remaining) / total).clamp(0.0, 1.0);
+                    (
+                        cargo.total_units(),
+                        Some(city_slug(*from).to_string()),
+                        Some(city_slug(*to).to_string()),
+                        Some(progress),
+                    )
+                }
+                moneywar_domain::CaravanState::Idle { .. } => (0, None, None, None),
             };
             CaravanDto {
                 id: c.id.value(),
@@ -465,6 +484,9 @@ fn build_caravans(state: &GameState) -> Vec<CaravanDto> {
                 idle: c.is_idle(),
                 current_city: c.state.current_city().map(|city| city_slug(city).to_string()),
                 cargo_units,
+                from_city,
+                to_city,
+                progress,
             }
         })
         .collect()

@@ -2,11 +2,8 @@ import { Link, useLocation } from "react-router-dom";
 import { useGameSocket } from "../hooks/useGameSocket";
 import { roleColor } from "../lib/roles";
 import { signedCompact } from "../lib/format";
+import { PRODUCT_LABEL } from "../lib/catalog";
 
-const PRODUCT_LABEL: Record<string, string> = {
-  kumas: "Kumaş", un: "Un", zeytinyagi: "Zeytinyağı",
-  pamuk: "Pamuk", bugday: "Buğday", zeytin: "Zeytin",
-};
 const CITY_SHORT: Record<string, string> = {
   istanbul: "İST", ankara: "ANK", izmir: "İZM", bursa: "BUR", konya: "KON",
 };

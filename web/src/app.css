@@ -38,12 +38,20 @@
     border-bottom: none;
   }
 
-  /* Orta sütun: ızgara üstte (sabit), grafik altı doldurur */
+  /* Orta sütun: harita üstte (ana yüzey), ızgara ortada, detay altı doldurur.
+     Her çocuğa açık kural veriyoruz — konum bazlı seçiciler harita eklenince
+     yanlış paneli hedefliyordu. */
   .app__col--center {
     overflow: hidden;
   }
-  .app__col--center > :first-child {
-    flex-shrink: 0;
+  .app__col--center > .map {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 60%;
+    overflow: hidden;
+  }
+  .app__col--center > .pg {
+    flex: 0 0 auto;
     max-height: 42%;
   }
   .app__col--center > :last-child {
@@ -165,7 +173,7 @@
     overflow-y: visible;
   }
   .pg__table {
-    grid-template-columns: 4.5rem repeat(6, minmax(4.75rem, 1fr));
+    grid-template-columns: 4.5rem repeat(var(--pg-cols, 6), minmax(4.75rem, 1fr));
     min-width: 38rem;
   }
 

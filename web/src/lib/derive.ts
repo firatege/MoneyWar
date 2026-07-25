@@ -3,9 +3,17 @@
 // hedefler — React'e ya da WS'e bağımlılık yok.
 
 import type { FeedItem, Snapshot } from "../types";
+import { isStoryKind } from "../types";
 
 /** Feed tamponu üst sınırı (birikmiş olaylar). */
 export const FEED_CAP = 60;
+/**
+ * Entrika olayları için ayrı kota. Sıradan eşleşmeler dakikada onlarca
+ * satır üretiyor ve tek kotalı listede nadir olan tekel/savaş/iflas
+ * satırlarını birkaç tick içinde dışarı itiyordu — izleyicinin asıl takip
+ * ettiği şey kayboluyordu.
+ */
+export const STORY_FEED_CAP = 40;
 /** Oyuncu başına PnL geçmişi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
 export const HISTORY_CAP = 350;
 /** Bucket başına sparkline geçmişi üst sınırı (tick). */
@@ -47,7 +55,19 @@ export function mergeFeed(old: FeedItem[], snap: Snapshot): FeedItem[] {
     ...e,
     key: `${snap.season}-${snap.tick}-${i}`,
   }));
-  return [...fresh.reverse(), ...old].slice(0, FEED_CAP);
+  const merged = [...fresh.reverse(), ...old];
+  // İki ayrı kota: sıradan olaylar entrikayı listeden atamaz.
+  const keep = new Set<string>();
+  let plain = 0;
+  let story = 0;
+  for (const item of merged) {
+    if (isStoryKind(item.kind)) {
+      if (story++ < STORY_FEED_CAP) keep.add(item.key);
+    } else if (plain++ < FEED_CAP) {
+      keep.add(item.key);
+    }
+  }
+  return merged.filter((item) => keep.has(item.key));
 }
 
 /**

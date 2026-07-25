@@ -5,11 +5,8 @@ import { AnalyticsLayout } from "./AnalyticsLayout";
 import { useGameSocket } from "../hooks/useGameSocket";
 import { compact, lira2 } from "../lib/format";
 import "./analytics.css";
+import { PRODUCT_LABEL } from "../lib/catalog";
 
-const PRODUCT_LABEL: Record<string, string> = {
-  kumas: "Kumaş", un: "Un", zeytinyagi: "Zeytinyağı",
-  pamuk: "Pamuk", bugday: "Buğday", zeytin: "Zeytin",
-};
 const CITY_LABEL: Record<string, string> = {
   istanbul: "İstanbul", ankara: "Ankara", izmir: "İzmir", bursa: "Bursa", konya: "Konya",
 };

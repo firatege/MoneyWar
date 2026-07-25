@@ -5,6 +5,7 @@ import { roleColor } from "../../lib/roles";
 import { TrendChart } from "../trend-chart/TrendChart";
 import { topProducts } from "../../lib/derive";
 import "./player-detail.css";
+import { PRODUCT_LABEL } from "../../lib/catalog";
 
 interface Props {
   playerId: number;
@@ -20,14 +21,6 @@ const CITY_LABEL: Record<string, string> = {
   izmir: "İzmir",
   bursa: "Bursa",
   konya: "Konya",
-};
-const PRODUCT_LABEL: Record<string, string> = {
-  pamuk: "Pamuk",
-  bugday: "Buğday",
-  zeytin: "Zeytin",
-  kumas: "Kumaş",
-  un: "Un",
-  zeytinyagi: "Zeytinyağı",
 };
 
 export function PlayerDetail({ playerId, snapshot, history, tradeStats, onClose }: Props) {

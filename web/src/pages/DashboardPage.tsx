@@ -10,6 +10,7 @@ import { TickerTape } from "../components/ticker-tape/TickerTape";
 import { Leaderboard } from "../components/leaderboard/Leaderboard";
 import { EventFeed } from "../components/event-feed/EventFeed";
 import { PriceGrid } from "../components/price-grid/PriceGrid";
+import { WorldMap } from "../components/map/WorldMap";
 import { MarketOverview } from "../components/market-overview/MarketOverview";
 import { OrderBook } from "../components/order-book/OrderBook";
 import { PlayerDetail } from "../components/player-detail/PlayerDetail";
@@ -56,6 +57,16 @@ export function DashboardPage() {
         </div>
 
         <div className="app__col app__col--center">
+          <WorldMap
+            snapshot={snapshot}
+            feed={feed}
+            selectedCity={selectedCity}
+            onSelectCity={(city) => {
+              setSelectedCity(city);
+              setSelectedPlayer(null);
+            }}
+            onSelectFirm={setSelectedPlayer}
+          />
           <PriceGrid
             snapshot={snapshot}
             bucketHistory={bucketHistory}

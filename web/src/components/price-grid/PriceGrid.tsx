@@ -1,13 +1,13 @@
+import type { CSSProperties } from "react";
 import type { PriceCell, Snapshot } from "../../types";
 import type { BucketHistory } from "../../hooks/useGameSocket";
 import { lira2 } from "../../lib/format";
+import { CITY_SLUGS, PRODUCT_SLUGS } from "../../lib/catalog";
 import { Sparkline } from "../sparkline/Sparkline";
 import "./price-grid.css";
 
-const CITIES = ["istanbul", "ankara", "izmir", "bursa", "konya"];
-const PRODUCTS_RAW = ["pamuk", "bugday", "zeytin"];
-const PRODUCTS_FIN = ["kumas", "un", "zeytinyagi"];
-const ALL_PRODUCTS = [...PRODUCTS_RAW, ...PRODUCTS_FIN];
+const CITIES = CITY_SLUGS;
+const ALL_PRODUCTS = PRODUCT_SLUGS;
 
 interface Props {
   snapshot: Snapshot | null;
@@ -26,10 +26,15 @@ export function PriceGrid({ snapshot, bucketHistory, selected, onSelect }: Props
     <section className="pg panel">
       <div className="panel__head">
         <h2 className="panel__title">FİYAT IZGARASI</h2>
-        <span className="panel__sub">5 şehir · 6 ürün</span>
+        <span className="panel__sub">
+          {CITIES.length} şehir · {ALL_PRODUCTS.length} ürün
+        </span>
       </div>
 
-      <div className="pg__table">
+      <div
+        className="pg__table"
+        style={{ "--pg-cols": ALL_PRODUCTS.length } as CSSProperties}
+      >
         <div className="pg__corner" />
         {ALL_PRODUCTS.map((p) => {
           const sample = cellMap.get(`istanbul/${p}`);

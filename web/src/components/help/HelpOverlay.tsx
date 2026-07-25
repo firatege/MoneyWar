@@ -6,17 +6,20 @@ interface Props {
   onClose: () => void;
 }
 
+/** Üretim zinciri katmanları — girdiler → çıktı. */
 const CHAIN: Array<[string, string]> = [
-  ["Pamuk", "Kumaş"],
-  ["Buğday", "Un"],
-  ["Zeytin", "Zeytinyağı"],
+  ["Pamuk · Buğday · Zeytin · Boya · Üzüm", "hammadde (tarlada)"],
+  ["Pamuk → Kumaş · Buğday → Un · Zeytin → Zeytinyağı · Üzüm → Şarap", "tek girdi"],
+  ["Kumaş + Boya → Elbise · Un + Zeytinyağı → Ekmek", "iki girdi"],
+  ["Ekmek + Şarap + Zeytinyağı → Ziyafet Sofrası", "üç girdi — en kârlısı"],
 ];
 
 const PANELS: Array<[string, string]> = [
   ["SIRALAMA", "firmalar kâra (PnL) göre dizilir — bir firmaya tıkla, detayını ve PnL seyrini gör"],
-  ["FİYAT IZGARASI", "5 şehir × 6 ürün; her hücre o malın fiyat trendi (sparkline) — tıkla, emir defterini aç"],
+  ["HARİTA", "şehirler, oradaki firmalar ve kervanlar — 👑 tekel, kırmızı nabız savaş, 🔒 tedariki kesilmiş fabrika; şehre tıkla, firmalarını gör"],
+  ["FİYAT IZGARASI", "5 şehir × 12 ürün; her hücre o malın fiyat trendi (sparkline) — tıkla, emir defterini aç"],
   ["PİYASA GENELİ", "endeks (tüm fiyatların baz fiyata oranı ×100; 100 üstü = piyasa sıcak) + işlem hacmi"],
-  ["AKIŞ", "canlı eşleşmeler — kim kimden, kaç birim, hangi fiyata aldı"],
+  ["AKIŞ", "entrika akışı: kim hangi pazarı ele geçirdi, kim kime savaş açtı, kim battı — düğmeyle sıradan işlemleri de açabilirsin"],
   ["HABER", "en çok yükselen/düşen mallar ve sıralamada yükselen firmalar"],
 ];
 
@@ -44,9 +47,10 @@ export function HelpOverlay({ onClose }: Props) {
 
         <div className="help__body">
           <p className="help__lead">
-            Sonsuza dek dönen bir <b>ekonomi simülasyonu</b>. 35 yapay firma 5 şehirde
-            hammadde üretir, mamule çevirir, alıp satar ve rekabet eder. Sen canlı
-            izlersin — fiyatlar, sıralama, işlemler ve haberler gerçek zamanlı.
+            Sonsuza dek dönen bir <b>ekonomi simülasyonu</b>. Yapay firmalar 5 şehirde
+            hammadde üretir, işler ve satar — ama asıl mesele rekabet: pazarları
+            tekelleştirir, birbirinin fiyatını kırar, rakibinin tedarikini keser ve
+            batırır. Sen izlersin: <b>kim ne yapıyor</b>, haritada ve akışta.
           </p>
 
           <section className="help__sec">
@@ -55,7 +59,7 @@ export function HelpOverlay({ onClose }: Props) {
               {CHAIN.map(([raw, fin]) => (
                 <div className="help__chain-row" key={raw}>
                   <span className="help__raw">{raw}</span>
-                  <span className="help__arrow">→</span>
+                  <span className="help__arrow">·</span>
                   <span className="help__fin">{fin}</span>
                 </div>
               ))}

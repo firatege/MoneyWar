@@ -7,11 +7,8 @@ import { topProducts } from "../lib/derive";
 import { compact, signedCompact } from "../lib/format";
 import { roleColor } from "../lib/roles";
 import "./analytics.css";
+import { PRODUCT_LABEL } from "../lib/catalog";
 
-const PRODUCT_LABEL: Record<string, string> = {
-  kumas: "Kumaş", un: "Un", zeytinyagi: "Zeytinyağı",
-  pamuk: "Pamuk", bugday: "Buğday", zeytin: "Zeytin",
-};
 const CITY_LABEL: Record<string, string> = {
   istanbul: "İstanbul", ankara: "Ankara", izmir: "İzmir", bursa: "Bursa", konya: "Konya",
 };

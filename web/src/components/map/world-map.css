@@ -1,0 +1,263 @@
+/* Harita — oyunun ana izleme yüzeyi (docs/finish-plan.md Faz 4).
+   Amaç: tek bakışta "kim nerede güçlü, nerede kavga var". */
+
+.map {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.map__frame {
+  position: relative;
+  padding: 0.5rem;
+  /* Çerçeve kalan alanı alır; SVG preserveAspectRatio ile içine sığar.
+     Sabit oran yerine bu: sütun ne kadar yer verirse harita ona uyar,
+     alttaki panelin üstüne hiç taşmaz. */
+  flex: 1 1 auto;
+  min-height: 0;
+  background:
+    radial-gradient(
+      ellipse 70% 60% at 45% 40%,
+      color-mix(in oklch, var(--accent) 7%, transparent),
+      transparent 70%
+    );
+}
+
+.map__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  /* Taşma yok: şehir etiketleri ve rozetleri viewBox içinde kalır,
+     yoksa alttaki panelin üstüne biniyorlar. */
+  overflow: hidden;
+}
+
+/* ── Rotalar ve kervanlar ─────────────────────────────────────────────── */
+
+.map__route {
+  stroke: var(--line-soft);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 7;
+  opacity: 0.55;
+}
+
+.map__caravan {
+  fill: var(--role-toptanci, var(--accent));
+  opacity: 0.9;
+  /* Konum her snapshot'ta güncellenir; geçiş hareketi akıcı gösterir. */
+  transition:
+    cx var(--dur-slow, 600ms) linear,
+    cy var(--dur-slow, 600ms) linear;
+}
+
+/* ── Şehirler ─────────────────────────────────────────────────────────── */
+
+.map__city {
+  cursor: pointer;
+}
+.map__city:focus-visible {
+  outline: none;
+}
+.map__city:focus-visible .map__ring {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.map__disc {
+  fill: color-mix(in oklch, var(--bg-panel, #14161a) 82%, var(--accent) 18%);
+  transition: fill var(--dur) var(--ease);
+}
+.map__ring {
+  fill: none;
+  stroke: var(--line-soft);
+  stroke-width: 1.5;
+  transition:
+    stroke var(--dur) var(--ease),
+    stroke-width var(--dur) var(--ease);
+}
+
+.map__city:hover .map__ring {
+  stroke: var(--accent-dim);
+  stroke-width: 2.5;
+}
+.map__city--selected .map__ring {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+/* Tekelin olduğu şehir altın rengine kayar. */
+.map__city--monopoly .map__disc {
+  fill: color-mix(in oklch, var(--bg-panel, #14161a) 68%, var(--accent) 32%);
+}
+.map__city--monopoly .map__ring {
+  stroke: var(--accent-dim);
+}
+
+/* Savaş varsa kırmızı ve nabız atıyor. */
+.map__city--war .map__disc {
+  fill: color-mix(in oklch, var(--bg-panel, #14161a) 66%, var(--loss) 34%);
+}
+.map__city--war .map__ring {
+  stroke: var(--loss);
+}
+
+.map__pulse {
+  fill: none;
+  stroke: var(--loss);
+  stroke-width: 2;
+  opacity: 0;
+  transform-origin: center;
+  animation: map-pulse 2.2s var(--ease) infinite;
+}
+@keyframes map-pulse {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.72);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+
+.map__label {
+  fill: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+.map__count {
+  fill: var(--text-faint);
+  font-size: 14px;
+  pointer-events: none;
+}
+.map__crown,
+.map__lock {
+  font-size: 15px;
+  pointer-events: none;
+}
+
+.map__flash-text {
+  fill: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  animation: map-flash 2.4s var(--ease) forwards;
+}
+@keyframes map-flash {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ── Şehir paneli ─────────────────────────────────────────────────────── */
+
+.map__panel {
+  border-top: 1px solid var(--line-soft);
+  flex: 0 1 auto;
+  /* En az birkaç firma görünsün — panel tek satıra ezilmesin. */
+  min-height: 6.5rem;
+  max-height: 45%;
+  padding: 0.6rem var(--pad-panel);
+  min-height: 0;
+  overflow-y: auto;
+}
+.map__panel--empty {
+  color: var(--text-ghost);
+  font-size: var(--text-sm);
+}
+.map__panel-head {
+  font-size: var(--text-xs);
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+  margin-bottom: 0.4rem;
+}
+.map__firms {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.map__firm {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.3rem 0.4rem;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease);
+}
+.map__firm:hover {
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+}
+.map__firm:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.map__firm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map__firm-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--text-ghost);
+  flex-shrink: 0;
+}
+.map__tag {
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+}
+.map__tag--war {
+  color: var(--loss);
+  background: color-mix(in oklch, var(--loss) 16%, transparent);
+}
+.map__tag--choke {
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map__pulse,
+  .map__flash-text {
+    animation: none;
+  }
+  .map__pulse {
+    opacity: 0.35;
+  }
+  .map__caravan {
+    transition: none;
+  }
+}

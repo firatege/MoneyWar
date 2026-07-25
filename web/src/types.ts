@@ -51,6 +51,10 @@ export interface CaravanDto {
   idle: boolean;
   current_city: string | null;
   cargo_units: number;
+  /** Yoldaysa rotanın uçları ve ilerleme oranı — harita bunu çizer. */
+  from_city: string | null;
+  to_city: string | null;
+  progress: number | null;
 }
 
 export interface EventDto {

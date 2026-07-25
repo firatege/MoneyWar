@@ -7,11 +7,8 @@ import { compact, signedCompact } from "../lib/format";
 import { roleColor } from "../lib/roles";
 import type { PlayerDto, Snapshot } from "../types";
 import "./pages.css";
+import { PRODUCT_LABEL } from "../lib/catalog";
 
-const PRODUCT_LABEL: Record<string, string> = {
-  pamuk: "Pamuk", bugday: "Buğday", zeytin: "Zeytin",
-  kumas: "Kumaş", un: "Un", zeytinyagi: "Zeytinyağı",
-};
 const CITY_LABEL: Record<string, string> = {
   istanbul: "İst", ankara: "Ank", izmir: "İzm", bursa: "Bur", konya: "Kon",
 };
