@@ -46,6 +46,13 @@ fn security_headers() -> DefaultHeaders {
         .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
         .add(("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
         .add(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
+        // index.html ve API yanıtları HER yüklemede doğrulanmalı.
+        // Cache-Control yokken tarayıcılar sezgisel önbellekleme uygulayıp
+        // sayfayı sunucuya hiç sormadan diskten veriyordu: yeni sürüm çıksa
+        // bile ziyaretçi eski JS paketiyle kalıyordu (v0.6.1'de yaşandı).
+        // ETag zaten var, doğrulama 304 ile ucuz. Hash'li asset'ler bunu
+        // /assets scope'unda immutable ile geçersiz kılar.
+        .add(("Cache-Control", "no-cache, must-revalidate"))
 }
 
 /// Paylaşılan uygulama durumu.
@@ -125,6 +132,19 @@ async fn main() -> std::io::Result<()> {
             .route("/ws", web::get().to(ws_handler));
 
         if static_dir_exists {
+            // İçerik-hash'li asset'ler (assets/index-<hash>.js) sonsuza dek
+            // önbelleklenebilir: içerik değişirse dosya adı da değişir.
+            // Scope içteki middleware olduğu için başlığı önce o koyar;
+            // app seviyesindeki `no-cache` varsayılanı üstüne yazmaz
+            // (DefaultHeaders yalnız eksik başlığı ekler).
+            app = app.service(
+                web::scope("/assets")
+                    .wrap(DefaultHeaders::new().add((
+                        "Cache-Control",
+                        "public, max-age=31536000, immutable",
+                    )))
+                    .service(Files::new("", format!("{static_dir}/assets"))),
+            );
             app = app.service(
                 Files::new("/", static_dir.clone()).index_file("index.html"),
             );
