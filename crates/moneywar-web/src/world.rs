@@ -86,35 +86,35 @@ fn seed_profiles(s: &mut GameState, rng: &mut ChaCha8Rng) {
 fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
     let mut next_id: u64 = 100;
 
-    for _ in 0..comp.tuccar {
+    for idx in 0..comp.tuccar as usize {
         let pers = pick_personality(rng);
-        let mut npc = make_npc(next_id, "Tuccar", Role::Tuccar, 15_000, NpcKind::Tuccar)
+        let mut npc = make_npc(next_id, idx, "Tuccar", Role::Tuccar, 15_000, NpcKind::Tuccar)
             .with_personality(pers);
         distribute_inv(&mut npc, rng, 8_000);
         insert_npc(s, npc, &mut next_id);
     }
 
-    for _ in 0..comp.sanayici {
+    for idx in 0..comp.sanayici as usize {
         let pers = pick_personality(rng);
-        let mut npc = make_npc(next_id, "Sanayici", Role::Sanayici, 50_000, NpcKind::Sanayici)
+        let mut npc = make_npc(next_id, idx, "Sanayici", Role::Sanayici, 50_000, NpcKind::Sanayici)
             .with_personality(pers);
         distribute_raw_inv(&mut npc, rng, 5_000); // sadece ham madde
         insert_npc(s, npc, &mut next_id);
     }
 
-    for _ in 0..comp.spekulator {
-        let mut npc = make_npc(next_id, "Spek", Role::Tuccar, 40_000, NpcKind::Spekulator);
+    for idx in 0..comp.spekulator as usize {
+        let mut npc = make_npc(next_id, idx, "Spek", Role::Tuccar, 40_000, NpcKind::Spekulator);
         distribute_inv(&mut npc, rng, 2_000);
         insert_npc(s, npc, &mut next_id);
     }
 
-    for _ in 0..comp.alici {
-        let npc = make_npc(next_id, "Alici", Role::Tuccar, 150_000, NpcKind::Alici);
+    for idx in 0..comp.alici as usize {
+        let npc = make_npc(next_id, idx, "Alici", Role::Tuccar, 150_000, NpcKind::Alici);
         insert_npc(s, npc, &mut next_id);
     }
 
-    for _ in 0..comp.ciftci {
-        let mut npc = make_npc(next_id, "Ciftci", Role::Tuccar, 8_000, NpcKind::Ciftci);
+    for idx in 0..comp.ciftci as usize {
+        let mut npc = make_npc(next_id, idx, "Ciftci", Role::Tuccar, 8_000, NpcKind::Ciftci);
         let city = CityId::ALL[(next_id as usize) % CityId::ALL.len()];
         let prime = s
             .city_specialty
@@ -125,8 +125,8 @@ fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
         insert_npc(s, npc, &mut next_id);
     }
 
-    for _ in 0..comp.banka {
-        let npc = make_npc(next_id, "Banka", Role::Tuccar, 200_000, NpcKind::Banka);
+    for idx in 0..comp.banka as usize {
+        let npc = make_npc(next_id, idx, "Banka", Role::Tuccar, 200_000, NpcKind::Banka);
         insert_npc(s, npc, &mut next_id);
     }
 }
@@ -153,6 +153,12 @@ const SANAYICI_NAMES: &[&str] = &[
     "Dicle Holding",
     "Anadolu Grubu",
     "Marmara Sanayi",
+    "Ege Holding",
+    "Kuzey Sanayi",
+    "Selçuk Grubu",
+    "Yıldız Holding",
+    "Meriç Sanayi",
+    "Sakarya Grubu",
 ];
 
 /// Çiftçi → tarım işletmesi isimleri (ID 120–128).
@@ -171,35 +177,33 @@ const CIFTCI_NAMES: &[&str] = &[
     "Köy Tarım",
 ];
 
-/// Rol'e göre firma ismi. Alıcı, Spekülatör, Banka isimsiz (role kodu görünür).
-fn npc_name(id: u64, prefix: &str, kind: NpcKind) -> String {
+/// Rol'e göre firma ismi. `idx` o rolün kendi içindeki sırasıdır.
+///
+/// Eskiden indeks `id`'den sabit ofsetlerle türetiliyordu (ör. "Çiftçi'ler
+/// 100+20'den başlar") ve bu ofsetler kadro sayılarını varsayıyordu; Sanayici
+/// 3'ten 10'a çıkınca Çiftçi isimleri kaydı ve "Çiftlik-127" gibi yedeklere
+/// düştü. Artık sıra doğrudan geçiliyor, kadro değişse de isimler yerinde kalır.
+///
+/// Alıcı, Spekülatör, Banka isimsiz (event'lerde rol etiketi gösterilir).
+fn npc_name(id: u64, idx: usize, prefix: &str, kind: NpcKind) -> String {
     match kind {
-        NpcKind::Tuccar => {
-            let idx = id.saturating_sub(100) as usize;
-            TUCCAR_NAMES.get(idx)
-                .map_or_else(|| format!("Lojistik-{id}"), |n| (*n).to_string())
-        }
-        NpcKind::Sanayici => {
-            // Sanayici ID'leri Tüccar'dan sonra başlar (comp.tuccar sonra sanayici)
-            let idx = id.saturating_sub(100 + 4) as usize; // 4 = default tuccar sayısı
-            SANAYICI_NAMES.get(idx)
-                .map_or_else(|| format!("Sanayi-{id}"), |n| (*n).to_string())
-        }
-        NpcKind::Ciftci => {
-            // Çiftçi ID'leri: tuccar(4)+sanayici(3)+spekulator(3)+alici(10) = 20 sonra
-            let idx = id.saturating_sub(100 + 20) as usize;
-            CIFTCI_NAMES.get(idx)
-                .map_or_else(|| format!("Çiftlik-{id}"), |n| (*n).to_string())
-        }
-        // Alıcı, Spekülatör, Banka → prefix fallback (event'lerde rol etiketi gösterilir)
+        NpcKind::Tuccar => TUCCAR_NAMES
+            .get(idx)
+            .map_or_else(|| format!("Lojistik-{id}"), |n| (*n).to_string()),
+        NpcKind::Sanayici => SANAYICI_NAMES
+            .get(idx)
+            .map_or_else(|| format!("Sanayi-{id}"), |n| (*n).to_string()),
+        NpcKind::Ciftci => CIFTCI_NAMES
+            .get(idx)
+            .map_or_else(|| format!("Çiftlik-{id}"), |n| (*n).to_string()),
         _ => format!("{prefix}-{id}"),
     }
 }
 
-fn make_npc(id: u64, prefix: &str, role: Role, cash_lira: i64, kind: NpcKind) -> Player {
+fn make_npc(id: u64, idx: usize, prefix: &str, role: Role, cash_lira: i64, kind: NpcKind) -> Player {
     Player::new(
         PlayerId::new(id),
-        npc_name(id, prefix, kind),
+        npc_name(id, idx, prefix, kind),
         role,
         Money::from_lira(cash_lira).unwrap_or(Money::ZERO),
         true,

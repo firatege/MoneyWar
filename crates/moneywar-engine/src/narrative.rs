@@ -238,13 +238,18 @@ fn collect_tick_sales(
     out
 }
 
-/// Arzı üreten roller: Sanayici (mamul), Çiftçi (ham) ve insan oyuncular.
-/// Aracılar (Tüccar, Spekülatör, Esnaf) ve tüketiciler (Alıcı, Banka) hariç.
+/// Entrikanın öznesi olan **şirketler**: Sanayici ve insan oyuncular.
+///
+/// Çiftçi kasten dışarıda. Her Çiftçi kendi şehrinin tek hammadde üreticisi
+/// olduğu için hammadde pazarını "ele geçirmesi" bir şirket hamlesi değil,
+/// coğrafyanın sonucudur — manşet olarak anlamsız. Çiftçi ekonomiyi
+/// besleyen arka plan tedarikçisidir. Aracılar (Tüccar, Spekülatör) arzı
+/// üretmez, devreder; tüketiciler (Alıcı, Banka) zaten hariç.
 fn is_producer(state: &GameState, player: PlayerId) -> bool {
-    state.players.get(&player).is_some_and(|p| {
-        p.npc_kind
-            .map_or(true, |k| matches!(k, NpcKind::Sanayici | NpcKind::Ciftci))
-    })
+    state
+        .players
+        .get(&player)
+        .is_some_and(|p| p.npc_kind.map_or(true, |k| k == NpcKind::Sanayici))
 }
 
 /// Bu tick kabul edilen SELL emirlerinden pazar → (satıcı → en düşük fiyat cent).
