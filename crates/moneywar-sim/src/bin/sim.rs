@@ -24,6 +24,7 @@ use std::time::Instant;
 
 use moneywar_domain::Money;
 use moneywar_engine::{LogEvent, leaderboard, story_headline};
+use moneywar_sim::balance::{BalanceAccumulator, BalanceReport};
 use moneywar_sim::drama::DramaScorecard;
 use moneywar_sim::metrics::{Metrics, MetricsAccumulator};
 use moneywar_web::driver::SimDriver;
@@ -42,6 +43,7 @@ struct Outcome {
     top: Vec<(String, f64)>,
     metrics: Metrics,
     drama: DramaScorecard,
+    balance: BalanceReport,
     /// İsimlerle çözülmüş manşetler — "kim ne yaptı" satırları.
     headlines: Vec<String>,
     log_path: PathBuf,
@@ -140,6 +142,7 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
     let mut rejected: u64 = 0;
     let mut acc = MetricsAccumulator::default();
     let mut drama = DramaScorecard::default();
+    let mut bal = BalanceAccumulator::default();
 
     for _ in 0..ticks {
         driver.step();
@@ -147,6 +150,7 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
 
         for entry in &driver.last_report.entries {
             drama.record(entry.tick, &entry.event);
+            bal.record(&driver.state, &entry.event);
             match &entry.event {
                 LogEvent::OrderMatched { city, product, buyer, seller, quantity, .. } => {
                     matched_fills += 1;
@@ -173,6 +177,7 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
         }
     }
     let metrics = acc.finalize(&driver.state);
+    let balance = bal.finalize(&driver.state);
     let headlines: Vec<String> = drama
         .headlines
         .iter()
@@ -212,6 +217,7 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
         top,
         metrics,
         drama,
+        balance,
         headlines,
         log_path,
     }
@@ -329,6 +335,8 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
         }
     }
 
+    print_balance(outcomes);
+
     // ── ORTAK ────────────────────────────────────────────────────────────────
     println!("\n  ORTAK");
     println!("{:>5}  {:>6}   {}", "oyun", "Gini", "rol PnL");
@@ -356,6 +364,209 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
     println!("HHI: 0–10000 (>2500 yoğun → 10000 monopol) · Gini: 0 eşit → 1 tek elde · ★ = frontend");
     if let Some(dir) = outcomes.first().and_then(|o| o.log_path.parent()) {
         println!("loglar: {}/game_NN.log", dir.display());
+    }
+}
+
+/// Denge denetimi bölümü — tüm oyunların ortalaması üstünden rol adaleti,
+/// emir akışı sağlığı, fiyat kayması ve red sebepleri.
+///
+/// Tek oyun gürültülüdür (seed'e göre bir rol şanslı olabilir); denge sorusu
+/// ancak oyunlar arası ortalamayla cevaplanır. Bu yüzden rol tablosu
+/// toplulaştırılmış, oyun-spesifik olan yalnız adalet makası sütunudur.
+fn print_balance(outcomes: &[Outcome]) {
+    let n_games = outcomes.len() as f64;
+    if outcomes.is_empty() {
+        return;
+    }
+
+    // ── Rol adaleti (oyunlar arası ortalama) ─────────────────────────────────
+    println!("\n  ROL ADALETİ ({} oyun ortalaması)", outcomes.len());
+    println!(
+        "{:>12}  {:>4}  {:>12}  {:>11}  {:>11}  {:>7}  {:>6}  {:>6}  {:>6}",
+        "rol", "n", "kişi başı ₺", "en kötü ₺", "en iyi ₺", "zarar", "iflas", "fill%", "red%"
+    );
+    println!("{:-<95}", "");
+
+    let mut rows: Vec<(f64, String)> = Vec::new();
+    for &kind in &moneywar_sim::balance::ROLE_ORDER {
+        let per: Vec<_> = outcomes
+            .iter()
+            .filter_map(|o| o.balance.roles.iter().find(|r| r.kind == kind))
+            .collect();
+        if per.is_empty() {
+            continue;
+        }
+        let k = per.len() as f64;
+        let avg = |f: &dyn Fn(&moneywar_sim::balance::RoleBalance) -> f64| -> f64 {
+            per.iter().map(|r| f(r)).sum::<f64>() / k
+        };
+        let per_capita = avg(&|r| r.pnl_per_capita);
+        rows.push((
+            per_capita,
+            format!(
+                "{:>12}  {:>4}  {:>12.0}  {:>11.0}  {:>11.0}  {:>7.1}  {:>6.1}  {:>5.0}%  {:>5.0}%",
+                kind.label(),
+                per[0].count,
+                per_capita,
+                avg(&|r| r.pnl_min),
+                avg(&|r| r.pnl_max),
+                avg(&|r| r.losers as f64),
+                avg(&|r| r.bankrupt as f64),
+                avg(&|r| r.flow.fill_ratio()) * 100.0,
+                avg(&|r| r.flow.reject_ratio()) * 100.0,
+            ),
+        ));
+    }
+    rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, line) in &rows {
+        println!("{line}");
+    }
+
+    let spreads: Vec<f64> = outcomes
+        .iter()
+        .filter_map(|o| o.balance.fairness_spread())
+        .collect();
+    println!("{:-<95}", "");
+    if spreads.is_empty() {
+        println!("  adalet makası ölçülemedi — en fakir kâr rolü zararda kapattı");
+    } else {
+        let mean = spreads.iter().sum::<f64>() / spreads.len() as f64;
+        let worst = spreads.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        println!(
+            "  adalet makası (en zengin kâr rolü ÷ en fakir): ort {mean:.1}× · en kötü {worst:.1}× \
+             · hedef <3× · ölçülebilen {}/{} oyun",
+            spreads.len(),
+            outcomes.len(),
+        );
+    }
+
+    // ── Arz / talep dengesi ──────────────────────────────────────────────────
+    // Fabrika neden atıl, fiyat neden kayıyor sorusunun tek cevap kaynağı:
+    // talep arzın kaç katı ve kitaba giren arzın kaçta kaçı gerçekten satıldı.
+    let mut flows: std::collections::BTreeMap<&'static str, Vec<moneywar_sim::balance::MarketFlow>> =
+        std::collections::BTreeMap::new();
+    for o in outcomes {
+        for (product, flow) in &o.balance.market {
+            flows.entry(product.display_name()).or_default().push(*flow);
+        }
+    }
+    let mut flow_rows: Vec<(f64, String)> = flows
+        .into_iter()
+        .map(|(name, fs)| {
+            let k = fs.len() as f64;
+            let mean = |f: &dyn Fn(&moneywar_sim::balance::MarketFlow) -> f64| -> f64 {
+                fs.iter().map(|x| f(x)).sum::<f64>() / k
+            };
+            let ratio = mean(&|f| f.demand_supply_ratio().min(99.0));
+            let verdict = if ratio > 2.0 {
+                "ARZ AÇIĞI"
+            } else if ratio < 0.5 {
+                "ARZ FAZLASI"
+            } else {
+                ""
+            };
+            (
+                ratio,
+                format!(
+                    "{:>16}  {:>10.0}  {:>10.0}  {:>10.0}  {:>7.1}×  {:>7.0}%  {:>7.0}%  {verdict}",
+                    name,
+                    mean(&|f| f.demand as f64),
+                    mean(&|f| f.supply as f64),
+                    mean(&|f| f.matched as f64),
+                    ratio,
+                    mean(&|f| f.supply_clear_rate()) * 100.0,
+                    mean(&|f| f.priced_rate()) * 100.0,
+                ),
+            )
+        })
+        .collect();
+    flow_rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if !flow_rows.is_empty() {
+        println!("\n  ARZ / TALEP (oyun başına ortalama)");
+        println!(
+            "{:>16}  {:>10}  {:>10}  {:>10}  {:>8}  {:>8}  {:>8}",
+            "ürün", "talep", "arz", "eşleşen", "tal/arz", "arz satıl", "fiyat var"
+        );
+        println!("{:-<95}", "");
+        for (_, line) in &flow_rows {
+            println!("{line}");
+        }
+        println!(
+            "{:-<95}\n  not: talep/arz kitapta görülen miktardır — bir emir TTL'i boyunca her \
+             tick tekrar sayılır.\n  «tal/arz» ve «fiyat var» güvenilir; «arz satıl» gerçek \
+             oranın alt sınırıdır.",
+            ""
+        );
+    }
+
+    // ── Piyasa mekaniği sağlığı ──────────────────────────────────────────────
+    let sum = |f: &dyn Fn(&BalanceReport) -> u64| -> f64 {
+        outcomes.iter().map(|o| f(&o.balance) as f64).sum::<f64>() / n_games
+    };
+    let started = sum(&|b| b.production_started);
+    let completed = sum(&|b| b.production_completed);
+    let idle = sum(&|b| b.factory_idle_ticks);
+    println!("\n  PİYASA MEKANİĞİ (oyun başına ortalama)");
+    println!("{:-<95}", "");
+    // Payda "batch başlatma fırsatı" = başlayan + girdi bulamayan. Üretim
+    // süren tick'ler ikisine de girmez, o yüzden bu ham atıl-tick oranı değil.
+    println!(
+        "  üretim: {started:.0} batch başladı → {completed:.0} tamamlandı · girdi bulamayan tick \
+         {idle:.0}\n  fabrika başlatmak istedi ama girdi yoktu: denemelerin %{:.0}'i",
+        if started + idle > 0.0 { idle / (started + idle) * 100.0 } else { 0.0 }
+    );
+    println!(
+        "  settlement'ta düşen fill: {:.0} · kredi {:.0} alındı / {:.0} default",
+        sum(&|b| b.fill_rejected),
+        sum(&|b| b.loans_taken),
+        sum(&|b| b.loans_defaulted),
+    );
+
+    // ── Red sebepleri (tüm oyunlar toplamı) ──────────────────────────────────
+    let mut reasons: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for o in outcomes {
+        for (reason, count) in &o.balance.top_rejects {
+            *reasons.entry(reason.as_str()).or_default() += count;
+        }
+    }
+    let mut reasons: Vec<_> = reasons.into_iter().collect();
+    reasons.sort_by(|a, b| b.1.cmp(&a.1));
+    if !reasons.is_empty() {
+        println!("\n  RED SEBEPLERİ (tüm oyunlar)");
+        println!("{:-<95}", "");
+        for (reason, count) in reasons.iter().take(4) {
+            println!("  {count:>8}  {reason}");
+        }
+    }
+
+    // ── Fiyat kayması ────────────────────────────────────────────────────────
+    let mut drift: std::collections::BTreeMap<String, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    for o in outcomes {
+        for (product, ratio) in &o.balance.price_drift {
+            drift
+                .entry(product.display_name().to_owned())
+                .or_default()
+                .push(*ratio);
+        }
+    }
+    let mut drift: Vec<(String, f64)> = drift
+        .into_iter()
+        .map(|(name, v)| {
+            let mean = v.iter().sum::<f64>() / v.len() as f64;
+            (name, mean)
+        })
+        .collect();
+    drift.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    if !drift.is_empty() {
+        println!("\n  FİYAT KAYMASI (sezon sonu ÷ sezon başı baseline, ortalama)");
+        println!("{:-<95}", "");
+        let line = drift
+            .iter()
+            .map(|(name, r)| format!("{name} {r:.2}×"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        println!("  {line}");
     }
 }
 
