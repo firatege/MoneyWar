@@ -30,6 +30,104 @@ use moneywar_domain::{
 
 use crate::report::{LogEntry, LogEvent, TickReport};
 
+/// Bir olay anlatı (hikâye) olayı mı? Skorkart, feed ve harita bu listeyi
+/// tek kaynak olarak kullanır — yeni anlatı olayı eklendiğinde burası da
+/// güncellenmeli.
+#[must_use]
+pub const fn is_story_event(event: &LogEvent) -> bool {
+    matches!(
+        event,
+        LogEvent::MonopolyFormed { .. }
+            | LogEvent::MonopolyBroken { .. }
+            | LogEvent::UndercutCampaign { .. }
+            | LogEvent::PriceWarDeclared { .. }
+            | LogEvent::PriceWarWon { .. }
+            | LogEvent::FirmBankrupt { .. }
+            | LogEvent::GrudgeFormed { .. }
+            | LogEvent::SupplyChoke { .. }
+            | LogEvent::CartelFormed { .. }
+            | LogEvent::CartelBetrayed { .. }
+    )
+}
+
+/// Anlatı olayını izleyicinin okuyacağı Türkçe manşete çevir.
+/// Anlatı olayı değilse `None`. Sim özeti, web ticker'ı ve harita aynı
+/// metni buradan alır — "kim ne yapıyor" tek yerde tanımlıdır.
+#[must_use]
+pub fn story_headline(state: &GameState, event: &LogEvent) -> Option<String> {
+    let who = |id: PlayerId| -> String {
+        state
+            .players
+            .get(&id)
+            .map_or_else(|| format!("#{}", id.value()), |p| p.name.clone())
+    };
+    let market =
+        |c: CityId, p: ProductKind| format!("{} {}", c.display_name(), p.display_name());
+
+    let text = match event {
+        LogEvent::MonopolyFormed { city, product, firm, share_percent } => format!(
+            "{} {} pazarını ele geçirdi (%{share_percent})",
+            who(*firm),
+            market(*city, *product),
+        ),
+        LogEvent::MonopolyBroken { city, product, former, breaker } => match breaker {
+            Some(b) => format!(
+                "{}, {} tekelini kırdı — {} düştü",
+                who(*b),
+                market(*city, *product),
+                who(*former),
+            ),
+            None => format!(
+                "{} pazarındaki {} tekeli sona erdi",
+                market(*city, *product),
+                who(*former),
+            ),
+        },
+        LogEvent::UndercutCampaign { city, product, attacker, victim, ticks } => format!(
+            "{}, {} pazarında {} fiyatını {ticks} tick'tir kırıyor",
+            who(*attacker),
+            market(*city, *product),
+            who(*victim),
+        ),
+        LogEvent::PriceWarDeclared { city, product, attacker, target } => format!(
+            "{}, {} pazarında {} firmasına fiyat savaşı açtı",
+            who(*attacker),
+            market(*city, *product),
+            who(*target),
+        ),
+        LogEvent::PriceWarWon { city, product, winner, loser } => format!(
+            "{} savaşı kazandı — {} {} pazarından çekildi",
+            who(*winner),
+            who(*loser),
+            market(*city, *product),
+        ),
+        LogEvent::FirmBankrupt { firm } => format!("{} iflas etti", who(*firm)),
+        LogEvent::GrudgeFormed { holder, against } => {
+            format!("{}, {} firmasına diş biledi", who(*holder), who(*against))
+        }
+        LogEvent::SupplyChoke { city, product, choker, victim } => format!(
+            "{} tedariki kesti — {} fabrikası {} olmadan kaldı",
+            who(*choker),
+            who(*victim),
+            market(*city, *product),
+        ),
+        LogEvent::CartelFormed { city, product, a, b } => format!(
+            "{} ile {}, {} pazarında el sıkıştı",
+            who(*a),
+            who(*b),
+            market(*city, *product),
+        ),
+        LogEvent::CartelBetrayed { city, product, betrayer, victim } => format!(
+            "{} anlaşmayı bozdu — {} {} pazarında sırtından bıçaklandı",
+            who(*betrayer),
+            who(*victim),
+            market(*city, *product),
+        ),
+        _ => return None,
+    };
+    Some(text)
+}
+
 /// Undercut sayılması için saldırgan fiyatı mağdurunkinin en az bu yüzdesi
 /// kadar ALTINDA olmalı (98 → %2'den derin kırma). Yuvarlama gürültüsünü eler.
 const UNDERCUT_MAX_PCT_OF_VICTIM: i64 = 98;

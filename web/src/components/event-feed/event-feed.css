@@ -101,3 +101,92 @@
   color: var(--text-ghost);
   font-size: var(--text-sm);
 }
+
+/* ── Entrika akışı ─────────────────────────────────────────────────────────
+   Anlatı olayları mekanik gürültüden görsel olarak ayrılır: izleyici akışa
+   baktığında önce "kim kime ne yaptı"yı görmeli. */
+
+.feed__toggle {
+  font: inherit;
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+.feed__toggle:hover {
+  color: var(--text);
+  border-color: var(--accent-faint);
+}
+.feed__toggle--on {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+}
+.feed__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.feed__icon {
+  margin-right: 0.35rem;
+}
+
+.feed__row--story {
+  border-left-width: 3px;
+  background: color-mix(in oklch, var(--accent) 4%, transparent);
+}
+.feed__row--story .feed__summary {
+  font-weight: 500;
+}
+/* Ağırlık 3 = sezonu değiştiren olay (tekel, savaş, iflas, ihanet). */
+.feed__row--story[data-weight="3"] .feed__summary {
+  font-size: var(--text-base, 0.95rem);
+}
+
+.feed__row--monopoly_formed,
+.feed__row--cartel {
+  border-left-color: var(--accent);
+}
+.feed__row--monopoly_formed .feed__kind,
+.feed__row--cartel .feed__kind {
+  color: var(--accent);
+}
+
+.feed__row--monopoly_broken,
+.feed__row--price_war_won {
+  border-left-color: var(--gain);
+}
+.feed__row--monopoly_broken .feed__kind,
+.feed__row--price_war_won .feed__kind {
+  color: var(--gain);
+}
+
+.feed__row--price_war,
+.feed__row--bankrupt,
+.feed__row--cartel_betrayed {
+  border-left-color: var(--loss);
+}
+.feed__row--price_war .feed__kind,
+.feed__row--bankrupt .feed__kind,
+.feed__row--cartel_betrayed .feed__kind {
+  color: var(--loss);
+}
+
+.feed__row--undercut,
+.feed__row--supply_choke,
+.feed__row--grudge {
+  border-left-color: var(--loss-dim);
+}
+.feed__row--undercut .feed__kind,
+.feed__row--supply_choke .feed__kind,
+.feed__row--grudge .feed__kind {
+  color: var(--loss-dim);
+}

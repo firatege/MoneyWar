@@ -26,6 +26,51 @@ pub struct Snapshot {
     pub private_farms: Vec<PrivateFarmDto>,
     pub relations: Vec<RelationDto>,
     pub recent_events: Vec<EventDto>,
+    /// Haritanın entrika katmanı: aktif tekeller, savaşlar, tedarik boğmaları.
+    pub intrigue: IntrigueDto,
+}
+
+/// Harita ve panellerin çizdiği entrika durumu (docs/finish-plan.md Faz 3).
+/// İzleyicinin "kim neyi tutuyor, kim kiminle savaşıyor" sorusunun cevabı.
+#[derive(Debug, Clone, Serialize)]
+pub struct IntrigueDto {
+    pub monopolies: Vec<MonopolyDto>,
+    pub price_wars: Vec<PriceWarDto>,
+    pub supply_chokes: Vec<SupplyChokeDto>,
+}
+
+/// Bir pazarı elinde tutan firma — haritada taç.
+#[derive(Debug, Clone, Serialize)]
+pub struct MonopolyDto {
+    pub city: String,
+    pub product: String,
+    pub firm_id: u64,
+    pub firm_name: String,
+    /// Manşete çıkmış saltanat mı (çekişmeli pazar), yoksa tek üretici mi?
+    pub announced: bool,
+}
+
+/// Süregelen fiyat savaşı — haritada iki firma arasında çatışma.
+#[derive(Debug, Clone, Serialize)]
+pub struct PriceWarDto {
+    pub city: String,
+    pub product: String,
+    pub attacker_id: u64,
+    pub attacker_name: String,
+    pub target_id: u64,
+    pub target_name: String,
+    pub since_tick: u32,
+}
+
+/// Süregelen tedarik boğma — kimin fabrikası kimin yüzünden aç.
+#[derive(Debug, Clone, Serialize)]
+pub struct SupplyChokeDto {
+    pub city: String,
+    pub product: String,
+    pub choker_id: u64,
+    pub choker_name: String,
+    pub victim_id: u64,
+    pub victim_name: String,
 }
 
 /// Leaderboard satırı — skor + oyuncu kimliği birleşmiş.
@@ -199,7 +244,58 @@ pub fn build_snapshot(
         private_farms: build_private_farms(state),
         relations: build_relations(state),
         recent_events: build_feed(state, report),
+        intrigue: build_intrigue(state),
     }
+}
+
+/// `state.intrigue`'i frontend'in çizebileceği isimli listelere çevir.
+fn build_intrigue(state: &GameState) -> IntrigueDto {
+    let name = |id: PlayerId| -> String {
+        state
+            .players
+            .get(&id)
+            .map_or_else(|| format!("#{}", id.value()), |p| p.name.clone())
+    };
+    let monopolies = state
+        .intrigue
+        .monopolist
+        .iter()
+        .map(|((city, product), firm)| MonopolyDto {
+            city: city_slug(*city).to_string(),
+            product: product_slug(*product).to_string(),
+            firm_id: firm.value(),
+            firm_name: name(*firm),
+            announced: state.intrigue.announced_monopolies.contains(&(*city, *product)),
+        })
+        .collect();
+    let price_wars = state
+        .intrigue
+        .price_wars
+        .iter()
+        .map(|((attacker, target, city, product), track)| PriceWarDto {
+            city: city_slug(*city).to_string(),
+            product: product_slug(*product).to_string(),
+            attacker_id: attacker.value(),
+            attacker_name: name(*attacker),
+            target_id: target.value(),
+            target_name: name(*target),
+            since_tick: track.declared_at.value(),
+        })
+        .collect();
+    let supply_chokes = state
+        .intrigue
+        .active_chokes
+        .iter()
+        .map(|(choker, victim, city, product)| SupplyChokeDto {
+            city: city_slug(*city).to_string(),
+            product: product_slug(*product).to_string(),
+            choker_id: choker.value(),
+            choker_name: name(*choker),
+            victim_id: victim.value(),
+            victim_name: name(*victim),
+        })
+        .collect();
+    IntrigueDto { monopolies, price_wars, supply_chokes }
 }
 
 /// Bu tick'in olaylarından yüksek-sinyalli feed satırlarını süz.
@@ -225,6 +321,10 @@ const FEED_LIMIT: usize = 40;
 fn is_feed_worthy(event: &LogEvent) -> bool {
     // Sadece anlamlı, takip edilebilir olaylar. OrderExpired/FactoryIdle
     // gürültüsü feed'i boğuyordu — çıkarıldı.
+    // Anlatı olayları her zaman feed'e girer — izleyicinin takip ettiği akış.
+    if moneywar_engine::is_story_event(event) {
+        return true;
+    }
     matches!(
         event,
         LogEvent::OrderMatched { .. }
@@ -499,6 +599,23 @@ fn side_label(side: OrderSide) -> &'static str {
 }
 
 
+/// Anlatı olayının frontend etiketi — ikon ve renk seçimi buna bakar.
+const fn story_kind(event: &LogEvent) -> &'static str {
+    match event {
+        LogEvent::MonopolyFormed { .. } => "monopoly_formed",
+        LogEvent::MonopolyBroken { .. } => "monopoly_broken",
+        LogEvent::UndercutCampaign { .. } => "undercut",
+        LogEvent::PriceWarDeclared { .. } => "price_war",
+        LogEvent::PriceWarWon { .. } => "price_war_won",
+        LogEvent::FirmBankrupt { .. } => "bankrupt",
+        LogEvent::GrudgeFormed { .. } => "grudge",
+        LogEvent::SupplyChoke { .. } => "supply_choke",
+        LogEvent::CartelFormed { .. } => "cartel",
+        LogEvent::CartelBetrayed { .. } => "cartel_betrayed",
+        _ => "other",
+    }
+}
+
 /// `LogEntry` → okunabilir feed satırı. Yüksek-sinyalli olaylar özel
 /// formatlanır, kalanlar `Debug` etiket + jenerik özet alır.
 fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
@@ -605,7 +722,12 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
             format!("{} kredi aldı · {}₺", name_of(state, *borrower), lira(*principal)),
         ),
         LogEvent::EventScheduled { .. } => ("news", "Piyasa olayı planlandı".to_string()),
-        other => ("other", format!("{other:?}")),
+        other => match moneywar_engine::story_headline(state, other) {
+            // Anlatı olayı: metin motordaki tek kaynaktan, etiket türüne özel
+            // (frontend bunlara göre ikon/renk seçer).
+            Some(headline) => (story_kind(other), headline),
+            None => ("other", format!("{other:?}")),
+        },
     };
     let (city, product, qty, price_lira, buyer_id, seller_id) = event_bucket(&entry.event);
     EventDto {
@@ -641,6 +763,20 @@ fn event_bucket(
             None, None, None,
         ),
         LogEvent::OrderExpired { city, product, .. } => (
+            Some(city_slug(*city).to_string()),
+            Some(product_slug(*product).to_string()),
+            None, None, None, None,
+        ),
+        // Anlatı olayları: bucket'ı doldur ki harita olaya tıklayınca
+        // doğru şehre odaklanabilsin.
+        LogEvent::MonopolyFormed { city, product, .. }
+        | LogEvent::MonopolyBroken { city, product, .. }
+        | LogEvent::UndercutCampaign { city, product, .. }
+        | LogEvent::PriceWarDeclared { city, product, .. }
+        | LogEvent::PriceWarWon { city, product, .. }
+        | LogEvent::SupplyChoke { city, product, .. }
+        | LogEvent::CartelFormed { city, product, .. }
+        | LogEvent::CartelBetrayed { city, product, .. } => (
             Some(city_slug(*city).to_string()),
             Some(product_slug(*product).to_string()),
             None, None, None, None,

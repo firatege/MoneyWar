@@ -61,6 +61,7 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
     private_farms: [],
     relations: [],
     recent_events: [],
+    intrigue: { monopolies: [], price_wars: [], supply_chokes: [] },
     ...over,
   };
 }

@@ -82,6 +82,43 @@ export interface RelationDto {
   trust_score: number;
 }
 
+/** Bir pazarı elinde tutan firma. `announced` = çekişmeli pazarı ele geçirdi. */
+export interface MonopolyDto {
+  city: string;
+  product: string;
+  firm_id: number;
+  firm_name: string;
+  announced: boolean;
+}
+
+/** Süregelen fiyat savaşı — saldırgan bir firmayı hedef almış durumda. */
+export interface PriceWarDto {
+  city: string;
+  product: string;
+  attacker_id: number;
+  attacker_name: string;
+  target_id: number;
+  target_name: string;
+  since_tick: number;
+}
+
+/** Süregelen tedarik boğma — kimin fabrikası kimin yüzünden aç. */
+export interface SupplyChokeDto {
+  city: string;
+  product: string;
+  choker_id: number;
+  choker_name: string;
+  victim_id: number;
+  victim_name: string;
+}
+
+/** Haritanın entrika katmanı. */
+export interface IntrigueDto {
+  monopolies: MonopolyDto[];
+  price_wars: PriceWarDto[];
+  supply_chokes: SupplyChokeDto[];
+}
+
 export interface Snapshot {
   season: number;
   tick: number;
@@ -94,6 +131,27 @@ export interface Snapshot {
   private_farms: PrivateFarmDto[];
   relations: RelationDto[];
   recent_events: EventDto[];
+  intrigue: IntrigueDto;
+}
+
+/** Anlatı olaylarının `kind` etiketleri — feed ve harita ikon/renk seçer. */
+export const STORY_KINDS = [
+  "monopoly_formed",
+  "monopoly_broken",
+  "undercut",
+  "price_war",
+  "price_war_won",
+  "bankrupt",
+  "grudge",
+  "supply_choke",
+  "cartel",
+  "cartel_betrayed",
+] as const;
+
+export type StoryKind = (typeof STORY_KINDS)[number];
+
+export function isStoryKind(kind: string): kind is StoryKind {
+  return (STORY_KINDS as readonly string[]).includes(kind);
 }
 
 export interface PricePoint {

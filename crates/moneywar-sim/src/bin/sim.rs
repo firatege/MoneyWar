@@ -23,7 +23,7 @@ use std::thread;
 use std::time::Instant;
 
 use moneywar_domain::Money;
-use moneywar_engine::{LogEvent, leaderboard};
+use moneywar_engine::{LogEvent, leaderboard, story_headline};
 use moneywar_sim::drama::DramaScorecard;
 use moneywar_sim::metrics::{Metrics, MetricsAccumulator};
 use moneywar_web::driver::SimDriver;
@@ -176,7 +176,10 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
     let headlines: Vec<String> = drama
         .headlines
         .iter()
-        .map(|(tick, ev)| format!("t{:<4} {}", tick.value(), headline(&driver.state, ev)))
+        .filter_map(|(tick, ev)| {
+            story_headline(&driver.state, ev)
+                .map(|line| format!("t{:<4} {line}", tick.value()))
+        })
         .collect();
 
     let log_path = out_dir.join(format!("game_{:02}.log", i + 1));
@@ -211,72 +214,6 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
         drama,
         headlines,
         log_path,
-    }
-}
-
-/// Bir anlatı olayını okunur Türkçe manşete çevir — izleyicinin gördüğü
-/// "kim ne yapıyor" satırının sim karşılığı (Faz 3'te web ticker'ı bunu
-/// paylaşılan crate'ten alacak).
-fn headline(state: &moneywar_domain::GameState, ev: &LogEvent) -> String {
-    let who = |id: &moneywar_domain::PlayerId| -> String {
-        state
-            .players
-            .get(id)
-            .map_or_else(|| format!("#{}", id.value()), |p| p.name.clone())
-    };
-    let market = |c: &moneywar_domain::CityId, p: &moneywar_domain::ProductKind| {
-        format!("{} {}", c.display_name(), p.display_name())
-    };
-    match ev {
-        LogEvent::MonopolyFormed { city, product, firm, share_percent } => format!(
-            "👑 {} pazarını ele geçirdi: {} (%{share_percent})",
-            market(city, product),
-            who(firm),
-        ),
-        LogEvent::MonopolyBroken { city, product, former, breaker } => format!(
-            "⚡ {} tekeli kırıldı: {} düştü{}",
-            market(city, product),
-            who(former),
-            breaker.map_or(String::new(), |b| format!(", kıran {}", who(&b))),
-        ),
-        LogEvent::UndercutCampaign { city, product, attacker, victim, ticks } => format!(
-            "✂️  {} {} fiyatını kırıyor ({}, {ticks} tick)",
-            who(attacker),
-            who(victim),
-            market(city, product),
-        ),
-        LogEvent::PriceWarDeclared { city, product, attacker, target } => format!(
-            "⚔️  {} → {} fiyat savaşı açtı ({})",
-            who(attacker),
-            who(target),
-            market(city, product),
-        ),
-        LogEvent::PriceWarWon { city, product, winner, loser } => format!(
-            "🏳️  {} savaşı kazandı, {} çekildi ({})",
-            who(winner),
-            who(loser),
-            market(city, product),
-        ),
-        LogEvent::FirmBankrupt { firm } => format!("💀 {} iflas etti", who(firm)),
-        LogEvent::SupplyChoke { city, product, choker, victim } => format!(
-            "🔒 {} tedariki kesti: {} {} olmadan kaldı",
-            who(choker),
-            who(victim),
-            market(city, product),
-        ),
-        LogEvent::CartelFormed { city, product, a, b } => format!(
-            "🤝 {} ile {} {} pazarında anlaştı",
-            who(a),
-            who(b),
-            market(city, product),
-        ),
-        LogEvent::CartelBetrayed { city, product, betrayer, victim } => format!(
-            "🗡️  {} ittifakı bozdu, {} sırtından bıçaklandı ({})",
-            who(betrayer),
-            who(victim),
-            market(city, product),
-        ),
-        other => format!("{other:?}"),
     }
 }
 
