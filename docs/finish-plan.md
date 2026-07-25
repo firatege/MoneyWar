@@ -94,12 +94,41 @@ Yeni ölçüt: sezon başına hikâyelik olay sayısı.
 
 | Faz | İçerik | Durum |
 |-----|--------|-------|
-| 0 | Drama skorkartı + felaket frenleri | başladı |
-| 1 | Tekel + fiyat kırma motoru | bekliyor |
-| 2 | Üretim zinciri + SupplyChoke | bekliyor |
-| 3 | Anlatı akışı (chatter → web) | bekliyor |
-| 4 | Harita frontend'i | bekliyor |
-| 5 | Kartel + ihanet | bekliyor |
+| 0 | Drama skorkartı + felaket frenleri | ✅ 459e7a4 |
+| 1 | Tekel + fiyat kırma motoru | ✅ 459e7a4 |
+| 2 | Üretim zinciri + SupplyChoke | ✅ 3cde156 |
+| 3 | Anlatı akışı → web feed + IntrigueDto | ✅ cae9915 |
+| 4 | Harita frontend'i | ✅ 549f4ec |
+| 5 | Kartel + ihanet | açık (kesilebilir) |
+
+### Faz 3 notu — chatter
+
+Plan `chatter.rs`'i (CLI'daki 600 satır kişilikli replik bankası) paylaşılan
+crate'e taşımayı öngörüyordu. Bunun yerine `engine::story_headline()` yazıldı:
+anlatı olayının Türkçe manşeti tek kaynakta, sim + web + harita aynı metni
+okuyor. Chatter farklı bir olay kümesi için renk metni; kuzey yıldızı olan
+"kim ne yapıyor" netliğine manşet formatı daha doğrudan hizmet ediyor.
+Chatter CLI'da duruyor, istenirse ayrıca bağlanabilir.
+
+### Sezon başına ölçülen (350 tick, 3 koşum)
+
+- ~52-73 isimli hikâye olayı; tekel 11-30 kuruluş / 9-23 kırılma
+- 22-43 undercut kampanyası, 4-14 fiyat savaşı, 5-12 tedarik boğması
+- Felaket frenleri temiz (piyasa canlı, iflas 0)
+- 7 üretilen ürünün hepsi gerçekten üretiliyor (Ziyafet dahil)
+
+### Açık uçlar
+
+- **İflas hiç olmuyor** (0/sezon). Banka kurtarması ve iflas eşiği
+  (nakit < 1₺ + envanter boş + varlık yok) çok katı. Drama için firmaların
+  gerçekten batabilmesi gerek — Faz 5 öncesi bakılmalı.
+- **Fiyat savaşları çoğu kez sönüyor** (4-14 ilan, 0-2 zafer). Saldırgan
+  baskıyı sürdüremiyor; `PRICE_WAR_FIZZLE_TICKS` ve savaş fiyat tabanı
+  ayarlanabilir.
+- **Mamul pazarlarında tekel çekişmesiz**: Sanayici sayısı 15 mamul
+  bucket'a göre az, çoğu pazarda tek üretici var. Kompozisyon veya
+  fabrika maliyeti ayarı gerekebilir.
+- Tüccar PnL'i diğer rollerin ~5 katı (dondurulmuş rol, tuning yok).
 
 ## Riskler
 
