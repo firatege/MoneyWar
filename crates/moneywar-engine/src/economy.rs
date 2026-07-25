@@ -91,11 +91,29 @@ const TAX_PCT: i64 = 2;
 /// dağıtılır. Sanayici fab'larından bağımsız (havadan basılır), closed-loop
 /// dışı semi-open kanal.
 const ALICI_SALARY_PERIOD: u32 = 3;
-/// Alıcı başına her periyotta verilen sabit maaş (lira). Sezon 90 tick / 3
-/// = 30 cycle × 2000 = 60K/Alıcı/sezon. Mevcut wage (27K/Alıcı, Sanayici
-/// fab kaynaklı) ile birlikte 87K/Alıcı toplam gelir → harcama 165K'nın
-/// %53'ü, cliff sezon ikinci yarıda yumuşar.
-const ALICI_SALARY_LIRA: i64 = 2000;
+/// Alıcı başına her periyotta verilen sabit maaş (lira) — ekonominin talep
+/// motoru ve tek para basma kanalı.
+///
+/// **Sezon uzunluğuna dikkat.** Bu değer tick başına normalize olduğu için
+/// sezon uzadıkça toplam basım doğrusal artar. 350 tick'lik sezonda:
+/// `350/3 × 1600 × 10 Alıcı ≈ 1.9M₺/sezon` sıfırdan yaratılıyor. Eski
+/// kalibrasyon yorumu 90 tick'lik sezona göre yazılmıştı ve 60K/Alıcı
+/// diyordu; gerçekte 2000₺ ile 232K/Alıcı basılıyordu — kâr rollerinin
+/// toplam PnL'inin yaklaşık yarısı bu kanaldan geliyordu.
+///
+/// 2000 → 1600 (2026-07-25 denge denetimi). Ölçüm, 10 oyun × 350 tick,
+/// iki ayrı seed ailesinde tutarlı:
+/// - Tüccar / Sanayici kişi başı PnL oranı 4.3× → 3.0×
+/// - toplam eşleşme hacmi 2.59M → 2.65M (arttı)
+/// - üretim 1632 → 1594 batch (~%2 düşüş)
+/// - bedeli: Tüccar iflası sezon başına 1.4 → 2.1 (4 Tüccar'dan). Felaket
+///   freni 8'e izin veriyor, gözlenen en fazla 4 — sınır içinde, ve aracı
+///   sınıfın gerçek risk taşıması oyunun temasıyla uyumlu.
+///
+/// Daha düşük değerler (1200) makası biraz daha kapatıyor ama üretimi ve
+/// hacmi düşürüyor; 1800 ise makası 2000'den de kötüleştiriyor (metrik
+/// gürültülü, monoton değil).
+const ALICI_SALARY_LIRA: i64 = 1600;
 
 /// `advance_tick` içinde çağrılır — periyodik ekonomi akışlarını uygular.
 pub(crate) fn tick_economy(
