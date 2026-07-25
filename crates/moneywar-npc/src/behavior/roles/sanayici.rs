@@ -25,12 +25,17 @@ use moneywar_domain::{
 use crate::behavior::candidates::ActionCandidate;
 use crate::behavior::pricing::{CrossPolicy, derived_input_ceiling, marketable_ask, marketable_bid};
 
-/// Yeni fabrika kurma eşiği. Faz 1: 4→8 (monopolleşme + rekabet dinamiği).
-/// 5 şehir × 3 mamul = 15 slot, 3 Sanayici × 8 = 24 hedef > 15 slot →
-/// sanayiciler slotlar için rekabet eder; biri sıyrılırsa monopol oluşabilir.
-/// Maliyet kontrolü: build_cost tablosu 8 fab'a kadar genişletildi (max 90K),
-/// 50K başlangıç nakdi ilk 4-5 fabrikayı karşılar, sonrası kârdan finanse edilir.
-const TARGET_FACTORIES: usize = usize::MAX; // sınırsız — kaç kurarsa kursun
+/// Fabrika sayısı üst sınırı — **yok**. Firma nakit yettiği sürece kurar.
+///
+/// Tek fren ekonomik: her fabrika için `build_cost` (kademeli artan) + fabrika
+/// başına 12K işletme rezervi, üstüne periyodik maintenance gideri. Sabit bir
+/// tavan yerine bu tercih edildi ki tekelleşme emergent kalsın.
+///
+/// Denendi ve geri alındı (2026-07-25): "aç fabrikan varken yenisini kurma"
+/// freni Sanayici'nin kişi başı PnL'ini 57K → 30K'ya düşürdü. Darboğaz fabrika
+/// sayısı değil, hammaddeyi piyasada kaybetmekti; çözüm türev talep tavanı
+/// oldu (bkz. `pricing::derived_input_ceiling`).
+const TARGET_FACTORIES: usize = usize::MAX;
 
 /// Tekelci sömürü primi (puan). Dedektör tekeli onayladığında fiyat tabanına
 /// eklenir — tekel kârlıdır, ama şişen fiyat rakipleri pazara çeker.

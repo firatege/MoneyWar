@@ -39,12 +39,19 @@
 // Zaman
 // =============================================================================
 
-/// Her fabrika tick başına bu kadar ham madde → bitmiş ürün (§10).
-/// 10 → 100: tüccar oyunu hissi için tüm hacim 10× ölçeklendi.
-/// Üretim batch boyutu. 100 sezon başına ~30 batch potansiyel sağlar.
-/// 50'ye düşürmek Çiftçi'yi kazandırdı (+6.7K) ama Sanayici'yi -32K'ya
-/// sürükledi (kâr marjı erimişti). 100 koru.
-pub const FACTORY_BATCH_SIZE: u32 = 65; // 50→65: sanayici ROI dengesi
+/// Bir batch'te tüketilen **ana girdi** miktarı — seviye 1, katman 1 fabrika
+/// için taban değer (§10).
+///
+/// Gerçek batch boyutu bundan türer: `Factory::batch_size()` seviye çarpanını
+/// (1× / 1.5× / 2×) ve [`ProductKind::batch_scale_pct`] katman ölçeğini
+/// (tier 0-1 %100, tier 2 %60, tier 3 %40) uygular. Ek girdiler tarifteki
+/// yüzdeye göre ayrıca tüketilir.
+///
+/// Tuning geçmişi: 10 → 100 (hacim 10× ölçeklendi), 100 → 50 (Çiftçi
+/// kazandı ama Sanayici marjı eridi), 50 → 65 (Sanayici ROI dengesi).
+///
+/// [`ProductKind::batch_scale_pct`]: crate::ProductKind::batch_scale_pct
+pub const FACTORY_BATCH_SIZE: u32 = 65;
 
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
 /// Eski yolculuk: 2 → 3 (Sanayici aşırı kârlı diye yavaşlatıldı), şimdi

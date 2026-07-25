@@ -520,60 +520,6 @@ fn bucket_buy_budget(player: &Player) -> Money {
     Money::from_cents((player.cash.as_cents() / 6).max(0))
 }
 
-/// Dinamik kervan hedefi — kaç kervan olmalı?
-///
-/// Temel 2 + duruma göre değişir:
-/// - Sezon erken (< %40): agresif büyü → +1 (rota kur)
-/// - Nakit bol (> 60K): para atıl, filoya yatır → +1
-/// - Tüm kervanlar yolda (dispatch rate %100): kapasite tıkandı → +1
-/// - Sezon geç (> %70): artık yatırım yapma → -1 (geri al)
-/// - Nakit sıkışık (< 10K): kervan alamaz zaten → 1
-///
-/// Maks 4 (eski tavan korunur ama şimdi hak edilmesi lazım).
-fn caravan_target(player: &Player, state: &GameState, owned_caravans: usize) -> usize {
-    let cash_lira = player.cash.as_cents() / 100;
-    let total_ticks = state.config.season_ticks.max(1);
-    let elapsed_pct = state.current_tick.value() * 100 / total_ticks;
-
-    // Nakit sıkışıksa 1'den fazlasını alma.
-    if cash_lira < 10_000 {
-        return 1;
-    }
-
-    let mut target: i32 = 2; // temel
-
-    // Sezon erken + nakit bol → genişle
-    if elapsed_pct < 40 {
-        target += 1;
-    }
-
-    // Nakit fazlası (para atıl kalıyor)
-    if cash_lira > 60_000 {
-        target += 1;
-    }
-
-    // Tüm kervanlar aktif dispatch'te → kapasite doldu, bir tane daha al
-    if owned_caravans > 0 {
-        let active = state
-            .caravans
-            .values()
-            .filter(|c| c.owner == player.id && !c.is_idle())
-            .count();
-        if active == owned_caravans {
-            target += 1;
-        }
-    }
-
-    // Sezon geç → artık kervan almaya değmez
-    if elapsed_pct > 70 {
-        target -= 1;
-    }
-
-    // Maks = maliyet tablosunun uzunluğu (tablo doğal tavanı belirler).
-    let max = moneywar_domain::balance::CARAVAN_COSTS_TUCCAR_LIRA.len();
-    target.clamp(1, max as i32) as usize
-}
-
 fn affordable_qty(cash: Money, unit_price: Money, want: u32) -> u32 {
     let unit_with_tax = unit_price
         .as_cents()
