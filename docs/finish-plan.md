@@ -99,7 +99,7 @@ Yeni ölçüt: sezon başına hikâyelik olay sayısı.
 | 2 | Üretim zinciri + SupplyChoke | ✅ 3cde156 |
 | 3 | Anlatı akışı → web feed + IntrigueDto | ✅ cae9915 |
 | 4 | Harita frontend'i | ✅ 549f4ec |
-| 5 | Kartel + ihanet | açık (kesilebilir) |
+| 5 | Kartel + ihanet | **açık** — sıradaki iş |
 
 ### Faz 3 notu — chatter
 
@@ -119,15 +119,14 @@ Chatter CLI'da duruyor, istenirse ayrıca bağlanabilir.
 
 ### Açık uçlar
 
-- **İflas hiç olmuyor** (0/sezon). Banka kurtarması ve iflas eşiği
-  (nakit < 1₺ + envanter boş + varlık yok) çok katı. Drama için firmaların
-  gerçekten batabilmesi gerek — Faz 5 öncesi bakılmalı.
-- **Fiyat savaşları çoğu kez sönüyor** (4-14 ilan, 0-2 zafer). Saldırgan
-  baskıyı sürdüremiyor; `PRICE_WAR_FIZZLE_TICKS` ve savaş fiyat tabanı
-  ayarlanabilir.
-- **Mamul pazarlarında tekel çekişmesiz**: Sanayici sayısı 15 mamul
-  bucket'a göre az, çoğu pazarda tek üretici var. Kompozisyon veya
-  fabrika maliyeti ayarı gerekebilir.
+- ~~İflas hiç olmuyor~~ → çözüldü (09b0713): temerrüt iz bırakıyor,
+  banka ikinci kredi vermiyor, tasfiye var.
+- ~~Fiyat savaşları sönüyor~~ → çözüldü (09b0713): hedef çekildiğinde
+  saldırgan "atıl" sayılmıyor artık, savaşlar zaferle bitiyor.
+- ~~Mamul pazarları çekişmesiz~~ → çözüldü (dcce93e): Sanayici 3 → 10.
+- **Yeni açık uç:** Sanayici 10'a çıkınca iflas 1-5'ten 0-1'e düştü.
+  Pazar paylaşılınca kimse ölecek kadar sıkışmıyor olabilir — "kimse
+  batmıyor" sorununa kısmen geri dönmüş olabiliriz, ölçülmeli.
 - Tüccar PnL'i diğer rollerin ~5 katı (dondurulmuş rol, tuning yok).
 
 ## Riskler
@@ -140,7 +139,7 @@ Chatter CLI'da duruyor, istenirse ayrıca bağlanabilir.
 
 ---
 
-## Sıradaki iş — "şirket" tanımını Sanayici'ye daraltmak (2026-07-25 talebi)
+## ✅ Tamamlandı — "şirket" tanımı Sanayici'ye daraltıldı (dcce93e, v0.7.0)
 
 Kullanıcı: *"döngü tüccarlarla sanayiciler arasında dönmeli; leaderboard'da
 sadece Sanayiciler kalsın, şirketler onlar, diğerleri arka planda. Entrikalar
