@@ -129,6 +129,27 @@ impl ProductKind {
         }
     }
 
+    /// Katmana göre batch ölçeği (yüzde) — üretim piramidinin eğimi.
+    ///
+    /// Batch boyutu her katmanda aynı olursa piramit ters durur: bir tier-1
+    /// fabrika 2 tickte 58 Un üretirken tier-2 Ekmek fabrikası 65 Un tüketir,
+    /// yani üst katman alt katmandan **daha hızlı** yer. Ölçüm: Ziyafet
+    /// fabrikaları sezonda 4 birim üretebiliyordu, üretim denemelerinin
+    /// %83'ü girdisiz kalıyordu ve açlık tier-2/3'te yoğunlaşıyordu
+    /// (Ekmek bulamayan Ziyafet, Un bulamayan Ekmek).
+    ///
+    /// Üst katman daha küçük partiler hâlinde üretilir: bir Un fabrikası
+    /// birden çok Ekmek fabrikasını, bir Ekmek fabrikası birden çok Ziyafet
+    /// fabrikasını besleyebilsin. Lüks mal zaten unla aynı hacimde üretilmez.
+    #[must_use]
+    pub const fn batch_scale_pct(self) -> u32 {
+        match self.tier() {
+            0 | 1 => 100,
+            2 => 60,
+            _ => 40,
+        }
+    }
+
     /// Ana girdinin yanında gereken **ek girdiler**: (ürün, batch'in yüzdesi).
     /// Boş ise tek girdili klasik üretim. Bir tanesi bile eksikse fabrika
     /// girdi açlığına düşer — çok girdili ürünün kırılganlığı buradan gelir.
@@ -198,34 +219,6 @@ impl ProductKind {
             Self::Ziyafet => Some(Self::Ekmek),
             _ => None,
         }
-    }
-
-    /// Bir batch mamul üretmek için gereken ham madde miktarı çarpanı.
-    /// BATCH_SIZE × bu çarpan = tüketilen ham madde.
-    /// Un 1:1, Kumaş 0.8:1 (dokuma verimi), Zeytinyağı 3:1 (gerçekçi sıkım).
-    #[must_use]
-    pub const fn raw_input_ratio_num(self) -> u32 {
-        match self {
-            Self::Un => 1,
-            Self::Kumas => 4,       // 4/5 = 0.8: 40 Pamuk → 50 Kumaş
-            Self::Zeytinyagi => 3,  // 3/1 = 3.0: 150 Zeytin → 50 Zeytinyağı
-            _ => 1,
-        }
-    }
-
-    /// Çarpan paydası (raw_input_ratio_num / raw_input_ratio_den).
-    #[must_use]
-    pub const fn raw_input_ratio_den(self) -> u32 {
-        match self {
-            Self::Kumas => 5,  // 4/5 = 0.8
-            _ => 1,
-        }
-    }
-
-    /// BATCH_SIZE için gereken ham madde miktarı.
-    #[must_use]
-    pub fn raw_input_qty(self, batch_size: u32) -> u32 {
-        batch_size * self.raw_input_ratio_num() / self.raw_input_ratio_den()
     }
 
     /// Bozulma kuralı. Dayanıklı ürünler için `None`.

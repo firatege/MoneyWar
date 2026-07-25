@@ -80,14 +80,20 @@ impl Factory {
         }
     }
 
-    /// Bu seviyedeki batch boyutu. Seviye 1=50, 2=75, 3=100.
+    /// Bu fabrikanın batch boyutu — seviye × ürün katmanı.
+    ///
+    /// Seviye çarpanı: 1=×1, 2=×1.5, 3+=×2. Katman ölçeği
+    /// ([`ProductKind::batch_scale_pct`]) üst katmanları küçültür ki üretim
+    /// piramidi doğru yönde dursun (bkz. o fonksiyonun dokümanı).
     #[must_use]
     pub const fn batch_size(&self) -> u32 {
-        match self.level {
+        let by_level = match self.level {
             1 => Self::BATCH_SIZE,
             2 => Self::BATCH_SIZE * 3 / 2,  // +%50
             _ => Self::BATCH_SIZE * 2,       // 3+ → 2×
-        }
+        };
+        let scaled = by_level * self.product.batch_scale_pct() / 100;
+        if scaled == 0 { 1 } else { scaled }
     }
 
     /// Bu seviyedeki üretim tick sayısı. Seviye 1=2, 2=2, 3=1 (daha hızlı).

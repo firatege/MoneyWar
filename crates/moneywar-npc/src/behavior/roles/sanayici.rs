@@ -853,7 +853,8 @@ fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
         if !raw.is_raw() {
             continue; // tarla mamul üretemez
         }
-        let need = i64::from(f.product.raw_input_qty(f.batch_size()));
+        // Motor ana girdiyi batch boyutuyla 1:1 tüketir (bkz. production.rs).
+        let need = i64::from(f.batch_size());
         let have = i64::from(player.inventory.get(f.city, raw));
         *shortage.entry((f.city, raw)).or_default() += need - have;
     }
