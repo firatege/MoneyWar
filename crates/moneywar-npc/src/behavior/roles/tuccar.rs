@@ -199,10 +199,23 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             });
         }
 
-        // SAT — stoğu olan **her** off-cheap şehirde SAT.
-        // v0.5.1: SELL fiyatı = max(best_bid × %100, buy_cost × 1.10).
-        // BID'a tam hizada (anlık match) ama maliyet tabanının altına asla.
-        // Eski %95 markdown Tüccar'ı zarara satırdı; şimdi nötr/kâr.
+        // SAT — yalnız arbitrajın **gerçekten** olduğu şehirlerde.
+        //
+        // Eski kural "cheap_city dışında stoğu olan her şehir" idi ve eşik
+        // yalnız `to_target > cheap_price` (bir kuruş fark yeterdi). Ucuz
+        // şehir her tick yeniden hesaplandığı için bu, malı aldığı şehirde
+        // birkaç tick sonra geri satmaya izin veriyordu. Ölçüm: Tüccar
+        // aldığının %56'sını aynı pazarda geri satıyor, mal ne dönüşüyor ne
+        // taşınıyor; kervan hacmi 0 olan oyunlarda bile PnL değişmiyordu —
+        // kâr lojistikten değil aracılıktan geliyordu (bu Spekülatör'ün işi).
+        //
+        // Artık satış, alışı tetikleyen eşiğin aynısını geçmek zorunda:
+        // hedef fiyat ucuz şehrin en az `ARBITRAGE_SPREAD_PCT` üstünde olacak.
+        // Spread yoksa mal bekler ya da kervanla taşınır.
+        let min_sell_cents = cheap_price
+            .as_cents()
+            .saturating_mul(100 + ARBITRAGE_SPREAD_PCT)
+            / 100;
         for to_city in CityId::ALL {
             if to_city == cheap_city {
                 continue;
@@ -219,7 +232,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                         .map(|m| m.as_cents())
                 })
                 .unwrap_or(0);
-            if to_target <= cheap_price.as_cents() {
+            if to_target < min_sell_cents {
                 continue;
             }
             // Min kâr taban: maliyet × 1.03 (sadece işlem vergisi karşılığı).

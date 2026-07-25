@@ -382,8 +382,8 @@ fn print_balance(outcomes: &[Outcome]) {
     // ── Rol adaleti (oyunlar arası ortalama) ─────────────────────────────────
     println!("\n  ROL ADALETİ ({} oyun ortalaması)", outcomes.len());
     println!(
-        "{:>12}  {:>4}  {:>12}  {:>11}  {:>11}  {:>7}  {:>6}  {:>6}  {:>6}",
-        "rol", "n", "kişi başı ₺", "en kötü ₺", "en iyi ₺", "zarar", "iflas", "fill%", "red%"
+        "{:>12}  {:>4}  {:>12}  {:>11}  {:>11}  {:>7}  {:>6}  {:>9}  {:>6}",
+        "rol", "n", "kişi başı ₺", "en kötü ₺", "en iyi ₺", "zarar", "iflas", "fill/emir", "red%"
     );
     println!("{:-<95}", "");
 
@@ -404,7 +404,7 @@ fn print_balance(outcomes: &[Outcome]) {
         rows.push((
             per_capita,
             format!(
-                "{:>12}  {:>4}  {:>12.0}  {:>11.0}  {:>11.0}  {:>7.1}  {:>6.1}  {:>5.0}%  {:>5.0}%",
+                "{:>12}  {:>4}  {:>12.0}  {:>11.0}  {:>11.0}  {:>7.1}  {:>6.1}  {:>9.2}  {:>5.0}%",
                 kind.label(),
                 per[0].count,
                 per_capita,
@@ -412,7 +412,7 @@ fn print_balance(outcomes: &[Outcome]) {
                 avg(&|r| r.pnl_max),
                 avg(&|r| r.losers as f64),
                 avg(&|r| r.bankrupt as f64),
-                avg(&|r| r.flow.fill_ratio()) * 100.0,
+                avg(&|r| r.flow.fills_per_order()),
                 avg(&|r| r.flow.reject_ratio()) * 100.0,
             ),
         ));
@@ -528,6 +528,28 @@ fn print_balance(outcomes: &[Outcome]) {
             .collect::<Vec<_>>()
             .join(" · ");
         println!("  {line}");
+    }
+
+    // ── Çevirme oranı ────────────────────────────────────────────────────────
+    // Aldığının ne kadarını aynı pazarda geri sattı. Üretici için düşük olmalı
+    // (aldığı hammaddeyi tüketir), aracı için yüksek. Tüccar'ın kârı taşımadan
+    // mı geliyor sorusunun doğrudan cevabı.
+    let mut churn_rows: Vec<String> = Vec::new();
+    for &kind in &moneywar_sim::balance::ROLE_ORDER {
+        let vals: Vec<f64> = outcomes
+            .iter()
+            .filter_map(|o| o.balance.churn_by_role.iter().find(|(k, _)| *k == kind))
+            .map(|(_, r)| *r)
+            .collect();
+        if !vals.is_empty() {
+            let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+            churn_rows.push(format!("{} %{:.0}", kind.label(), mean * 100.0));
+        }
+    }
+    if !churn_rows.is_empty() {
+        println!("\n  ÇEVİRME ORANI (aldığının ne kadarını aynı pazarda geri sattı)");
+        println!("{:-<95}", "");
+        println!("  {}", churn_rows.join(" · "));
     }
 
     // ── Piyasa mekaniği sağlığı ──────────────────────────────────────────────

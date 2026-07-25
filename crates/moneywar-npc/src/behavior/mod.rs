@@ -52,6 +52,25 @@ use candidates::ActionCandidate;
 /// Tüm NPC'ler için entry point. `decide_all_npcs(Difficulty::Behavioral)` buradan
 /// dispatch eder.
 #[must_use]
+/// Bu aday, oyuncunun kendi relist cooldown'undaki bir pazara emir mi?
+///
+/// Yalnız `SubmitOrder` adayları cooldown'a tâbidir; fabrika/kervan/kontrat
+/// aksiyonları etkilenmez.
+fn is_on_relist_cooldown(
+    state: &GameState,
+    pid: PlayerId,
+    cand: &ActionCandidate,
+    tick: Tick,
+) -> bool {
+    let ActionCandidate::SubmitOrder { city, product, .. } = cand else {
+        return false;
+    };
+    state
+        .relist_cooldown
+        .get(&(pid, *city, *product))
+        .is_some_and(|allowed| tick.is_before(*allowed))
+}
+
 pub fn decide_behavior(
     state: &GameState,
     pid: PlayerId,
@@ -74,6 +93,19 @@ pub fn decide_behavior(
 
     // Rol-spesifik aday listesi.
     let candidates = enumerate_for_kind(state, player, brain);
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    // Relist cooldown'daki pazarların emirlerini baştan ele. Motor bunları
+    // zaten reddediyordu; NPC körlemesine deneyip hem komutunu hem top-K
+    // slotunu harcıyordu. Ölçüm: 10 oyunda 369K red, tamamı bu sebepten —
+    // tüm reddedilen komutların %99.8'i. Kendi emrinin cooldown'da olduğunu
+    // bilmek gizli bilgi değil, ajanın kendi durumu.
+    let candidates: Vec<ActionCandidate> = candidates
+        .into_iter()
+        .filter(|cand| !is_on_relist_cooldown(state, pid, cand, tick))
+        .collect();
     if candidates.is_empty() {
         return Vec::new();
     }

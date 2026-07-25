@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use moneywar_domain::{Command, GameState, NpcKind, PlayerId, ProductKind};
+use moneywar_domain::{CityId, Command, GameState, NpcKind, PlayerId, ProductKind};
 use moneywar_engine::{LogEvent, leaderboard};
 
 /// Kâr amacı güden roller — adalet makası yalnız bunlar arasında anlamlıdır.
@@ -59,9 +59,13 @@ pub struct FlowCounters {
 }
 
 impl FlowCounters {
-    /// Kabul edilen emrin kaçta kaçı en az bir fill gördü (kaba doluluk oranı).
+    /// Emir başına düşen fill sayısı — doluluk yoğunluğu.
+    ///
+    /// Bir emir kısmi eşleşmelerle birden çok fill üretebildiği için **1'i
+    /// aşabilir**; yüzde değildir. Yüksek değer emirlerin karşılık bulduğunu,
+    /// sıfıra yakın değer kitapta öylece beklediğini gösterir.
     #[must_use]
-    pub fn fill_ratio(&self) -> f64 {
+    pub fn fills_per_order(&self) -> f64 {
         if self.submitted == 0 {
             0.0
         } else {
@@ -102,6 +106,9 @@ pub struct BalanceAccumulator {
     /// Ham madde alımı: rol → alınan birim. "Fabrika neden aç" sorusunun
     /// ikinci yarısı — ham üretiliyor ama kim kapıyor?
     raw_buy_by_role: BTreeMap<NpcKind, u64>,
+    /// Rol → (şehir, ürün) → (alınan, satılan). Aynı pazarda hem alıp hem
+    /// satmak = çevirme (flip): mal ne dönüştürülüyor ne taşınıyor.
+    churn: BTreeMap<NpcKind, BTreeMap<(CityId, ProductKind), (u64, u64)>>,
 }
 
 /// Bir ürünün sezon boyunca kitapta görülen arz/talebi ve gerçekleşen hacmi.
@@ -183,6 +190,7 @@ impl BalanceAccumulator {
                     .or_default() += 1;
             }
             LogEvent::OrderMatched {
+                city,
                 product,
                 buyer,
                 seller,
@@ -195,10 +203,27 @@ impl BalanceAccumulator {
                     c.fills += 1;
                     c.filled_qty += q;
                 }
+                let kind_of = |pid: &PlayerId| state.players.get(pid).and_then(|p| p.npc_kind);
                 if product.is_raw()
-                    && let Some(kind) = state.players.get(buyer).and_then(|p| p.npc_kind)
+                    && let Some(kind) = kind_of(buyer)
                 {
                     *self.raw_buy_by_role.entry(kind).or_default() += q;
+                }
+                if let Some(kind) = kind_of(buyer) {
+                    self.churn
+                        .entry(kind)
+                        .or_default()
+                        .entry((*city, *product))
+                        .or_default()
+                        .0 += q;
+                }
+                if let Some(kind) = kind_of(seller) {
+                    self.churn
+                        .entry(kind)
+                        .or_default()
+                        .entry((*city, *product))
+                        .or_default()
+                        .1 += q;
                 }
             }
             LogEvent::OrderExpired {
@@ -341,9 +366,27 @@ impl BalanceAccumulator {
             .filter_map(|&k| self.raw_buy_by_role.get(&k).map(|v| (k, *v)))
             .collect();
 
+        // Çevirme oranı: aynı pazarda hem alınıp hem satılan miktar
+        // (`min(alınan, satılan)`) / toplam alınan. Üretici için düşük olmalı
+        // — aldığı hammaddeyi tüketir, sattığı mamulü üretir. Aracı için
+        // yüksek: mal ne dönüşür ne taşınır, sadece el değiştirir.
+        let churn_by_role = ROLE_ORDER
+            .iter()
+            .filter_map(|&kind| {
+                let buckets = self.churn.get(&kind)?;
+                let bought: u64 = buckets.values().map(|(b, _)| *b).sum();
+                let flipped: u64 = buckets.values().map(|(b, s)| *b.min(s)).sum();
+                if bought == 0 {
+                    return None;
+                }
+                Some((kind, flipped as f64 / bought as f64))
+            })
+            .collect();
+
         BalanceReport {
             roles,
             raw_buy_by_role,
+            churn_by_role,
             market,
             price_drift,
             top_rejects,
@@ -415,6 +458,9 @@ pub struct BalanceReport {
     pub market: Vec<(ProductKind, MarketFlow)>,
     /// Rol → satın alınan ham madde birimi ([`ROLE_ORDER`] sırasında).
     pub raw_buy_by_role: Vec<(NpcKind, u64)>,
+    /// Rol → çevirme oranı: aldığının ne kadarını **aynı pazarda** geri sattı.
+    /// 0 = hep dönüştürüyor/taşıyor, 1 = saf aracılık.
+    pub churn_by_role: Vec<(NpcKind, f64)>,
     /// Ürün → sezon sonu/başı baseline oranı, azalan.
     pub price_drift: Vec<(ProductKind, f64)>,
     /// En sık 4 red sebebi sınıfı.
@@ -479,8 +525,14 @@ mod tests {
     }
 
     #[test]
-    fn fill_ratio_is_zero_without_submissions() {
-        assert_eq!(FlowCounters::default().fill_ratio(), 0.0);
+    fn fills_per_order_is_zero_without_submissions() {
+        assert_eq!(FlowCounters::default().fills_per_order(), 0.0);
+    }
+
+    #[test]
+    fn fills_per_order_can_exceed_one_on_partial_fills() {
+        let c = FlowCounters { submitted: 2, fills: 5, ..FlowCounters::default() };
+        assert!((c.fills_per_order() - 2.5).abs() < 1e-9);
     }
 
     #[test]
@@ -512,6 +564,7 @@ mod tests {
         BalanceReport {
             roles,
             raw_buy_by_role: Vec::new(),
+            churn_by_role: Vec::new(),
             market: Vec::new(),
             price_drift: Vec::new(),
             top_rejects: Vec::new(),
