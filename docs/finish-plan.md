@@ -137,3 +137,33 @@ Chatter CLI'da duruyor, istenirse ayrıca bağlanabilir.
 - **ORTA — determinizm:** yeni karar katmanları hash tabanlı, RNG'siz.
 - **ORTA — kapsam:** Faz 5 kesilebilir; Faz 1-4 = "oyun bitti" çizgisi.
 - **DÜŞÜK — harita performansı:** 5 şehir ~30 firma, SVG rahat taşır.
+
+---
+
+## Sıradaki iş — "şirket" tanımını Sanayici'ye daraltmak (2026-07-25 talebi)
+
+Kullanıcı: *"döngü tüccarlarla sanayiciler arasında dönmeli; leaderboard'da
+sadece Sanayiciler kalsın, şirketler onlar, diğerleri arka planda. Entrikalar
+da bu şirketler üzerinden olsun — çiftçinin ürün pazarını domine etmesi saçma."*
+
+Gerekçe doğru: dedektör hâkimiyeti Sanayici **ve** Çiftçi'ye sayıyor, kadroda
+3 Sanayici'ye karşı 9 Çiftçi var ve her Çiftçi kendi şehrinin tek hammadde
+üreticisi olduğu için tekeller doğal olarak tarım tarafında oluşuyor. Manşetler
+"Yeşil Tarım Ankara Pamuk pazarını ele geçirdi" gibi çıkıyor — bu bir şirket
+hamlesi değil, coğrafya.
+
+Üç değişiklik birbirine bağlı, biri eksik yapılırsa akış boşalır:
+
+1. `engine/narrative.rs::is_producer` → yalnız `NpcKind::Sanayici` + insan.
+   Çiftçi arka plan tedarikçisi olur, entrika öznesi olmaz.
+2. `web/dto.rs::build_leaderboard` → yalnız Sanayici + insan. Tüccar/Çiftçi/
+   Alıcı/Spekülatör/Banka ekonomiyi döndürmeye devam eder ama sıralamada
+   görünmez. Haritadaki firma listesi de aynı süzgeci kullanmalı.
+3. **Zorunlu yan etki:** `NpcComposition` Sanayici 3 → ~10-12. 7 mamul × 5
+   şehir = 35 pazar var; 3 Sanayici ile çoğu pazarda tek üretici oluyor ve
+   "çekişmeli pazarı ele geçirme" manşeti hiç çıkmaz. Bu zaten aşağıdaki
+   açık uçlarda duruyordu.
+
+Sanayici sayısı artınca fabrika maliyeti, hammadde talebi ve Alıcı tüketimi
+kayacak — ölçüp ayarlamalı bir iş. `cargo run -p moneywar-sim -- --games 5
+--parallel` DRAMA tablosu ve felaket frenleri kılavuz olarak kullanılmalı.
