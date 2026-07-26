@@ -17,9 +17,10 @@ use moneywar_domain::{
     CityId, GameState, MAX_NO_MATCH_STREAK, Money, OrderSide, PlayerId, ProductKind, Tick,
 };
 
-/// Üreticinin bir batch'ten beklediği asgari kâr marjı (yüzde). Girdi
-/// bütçesi = mamul geliri × (100 − bu).
-pub const FACTORY_TARGET_MARGIN_PCT: i64 = 30;
+/// Üreticinin bir batch'ten beklediği asgari kâr marjı (yüzde).
+/// Tek kaynak `balance`'ta — fiyat tabanı da aynı sabitten türüyor.
+pub const FACTORY_TARGET_MARGIN_PCT: i64 =
+    moneywar_domain::balance::FACTORY_TARGET_MARGIN_PCT;
 
 /// Üreticinin bir girdiye ödeyebileceği azami birim fiyat — **türev talep**.
 ///

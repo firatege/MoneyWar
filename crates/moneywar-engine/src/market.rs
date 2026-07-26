@@ -31,10 +31,6 @@
 //!      `OrderExpired` event'iyle düşer; TTL'si kalan emir kitapta yeni qty
 //!      ile kalır (persistent order book).
 
-/// Mamul baseline'ının tarif maliyetinin üstünde tutulacağı asgari pay.
-/// Üretici bu marjın altına düşen bir ürünü yapamaz hale gelir.
-const MIN_PRODUCTION_MARGIN_PCT: i64 = 20;
-
 use moneywar_domain::{
     CityId, GameState, MarketOrder, Money, PlayerId, ProductKind, Tick,
     balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT},
@@ -269,7 +265,9 @@ fn clear_bucket(
                 if let Some(cost) = state.recipe_unit_cost(city, product) {
                     let floor = cost
                         .as_cents()
-                        .saturating_mul(100 + MIN_PRODUCTION_MARGIN_PCT)
+                        .saturating_mul(
+                            100 + moneywar_domain::balance::min_production_margin_pct(),
+                        )
                         / 100;
                     if let Some(baseline) = state.price_baseline.get_mut(&key) {
                         if baseline.as_cents() < floor {

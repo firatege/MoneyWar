@@ -93,6 +93,34 @@ pub const EMPLOYEES_PER_FACTORY_L3: u32 = 6;
 /// 60₺ eski toplam yükü gerçekten korur.
 pub const WAGE_PER_EMPLOYEE_LIRA: i64 = 60;
 
+/// Üreticinin bir batch'ten beklediği asgari kâr marjı (yüzde). Girdi
+/// bütçesi = mamul geliri × `(100 − bu)`.
+///
+/// [`MIN_PRODUCTION_MARGIN_PCT`] ile birlikte çalışır ve ikisi tutarlı
+/// olmak zorundadır (bkz. o sabitin dokümanı).
+pub const FACTORY_TARGET_MARGIN_PCT: i64 = 30;
+
+/// Mamul baseline'ının tarif maliyetinin üstünde tutulacağı asgari pay.
+///
+/// **Hedef marjdan türer, bağımsız seçilemez.** Üreticinin girdi bütçesi
+/// `fiyat × (100 − FACTORY_TARGET_MARGIN_PCT)/100`; bu bütçenin maliyeti
+/// karşılaması için fiyatın en az `maliyet / (1 − hedef_marj)` olması gerekir.
+///
+/// Bu ilişki kurulmadan önce taban %20, hedef marj %30 idi ve bileşke
+/// `1.20 × 0.70 = 0.84` veriyordu: üretici kendi girdisinin ancak %84'ünü
+/// karşılayabiliyor, yani **matematiksel olarak her zaman düşük teklif
+/// vermek zorunda** kalıyordu. Ölçüm: Ziyafet fabrikası Şarap'a 94₺ verirken
+/// tüketici 106₺ veriyor ve malın %83'ünü alıyordu.
+///
+/// `EXTRA` payı üreticiye rakibini geçebilecek küçük bir pay bırakır;
+/// tam eşitlikte tavan piyasa fiyatına oturur, öne geçemez.
+#[must_use]
+pub const fn min_production_margin_pct() -> i64 {
+    const EXTRA: i64 = 5;
+    // fiyat = maliyet / (1 − t)  →  marj = t / (1 − t)
+    FACTORY_TARGET_MARGIN_PCT * 100 / (100 - FACTORY_TARGET_MARGIN_PCT) + EXTRA
+}
+
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
 /// Eski yolculuk: 2 → 3 (Sanayici aşırı kârlı diye yavaşlatıldı), şimdi
 /// 3 → 2 (NPC Sanayici sezon boyu hammadde bulamayıp 321/sezon `FactoryIdle`
