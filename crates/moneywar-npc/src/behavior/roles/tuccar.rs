@@ -21,6 +21,21 @@ use moneywar_domain::{
 use crate::behavior::candidates::ActionCandidate;
 use crate::behavior::pricing::apply_jitter;
 
+/// Aracının hedef kâr marjı (yüzde) — satış fiyatının alış maliyetine göre
+/// tavanı.
+///
+/// Tüccar satışta `best_bid`'i, yani alıcının ödemeye razı olduğu **en
+/// yüksek** fiyatı hedefliyordu; dolayısıyla artığın tamamını alıyordu.
+/// Ölçüm: 1.35M₺ alıp 2.78M₺ satıyor, yani hiçbir dönüşüm yapmadan parasını
+/// ikiye katlıyor (%106 markup). Aynı ölçümde gerçek market maker olan
+/// Spekülatör %5.9'da kalıyor.
+///
+/// Rekabetçi bir piyasada rakip aracılar birbirini kırar ve fiyat maliyet +
+/// makul marja iner. Dört Tüccar birbirini kırmadığı için bu tavan o
+/// rekabetin yerine geçiyor: taşıma, zaman riski ve sermaye maliyeti bu
+/// marjın içinde.
+const TRADER_TARGET_MARGIN_PCT: i64 = 30;
+
 /// Arbitraj eşiği — bu yüzdeden az spread varsa arbitraj kârsız.
 /// Faz F tuning: 20 → 15. `Demand_for` matrisi mamul baseline farkını
 /// %25-28 yaratıyor; ham specialty farkı %14-75 (çoğunlukla yeterli).
@@ -235,11 +250,15 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 continue;
             }
             // Min kâr taban: maliyet × 1.03 (sadece işlem vergisi karşılığı).
-            // Eski 1.10 ile Tüccar çok geniş spread bırakıyordu → eşleşme zordu.
             let cost_floor = cheap_price.as_cents().saturating_mul(103) / 100;
-            // BID hizasında match için sell = best_bid (eşit). Kâr taban
-            // garantisi: ne olursa olsun cost_floor altına inme.
-            let sell_base = Money::from_cents(to_target.max(cost_floor));
+            // Marj tavanı: maliyet × (1 + hedef marj). Alıcı daha fazlasını
+            // ödemeye razı olsa bile aracı bunun üstüne çıkmaz — rekabetin
+            // yerine geçen kural (bkz. TRADER_TARGET_MARGIN_PCT).
+            let margin_cap = cheap_price
+                .as_cents()
+                .saturating_mul(100 + TRADER_TARGET_MARGIN_PCT)
+                / 100;
+            let sell_base = Money::from_cents(to_target.clamp(cost_floor, margin_cap.max(cost_floor)));
             let sell_price = apply_jitter(
                 sell_base,
                 state.current_tick,

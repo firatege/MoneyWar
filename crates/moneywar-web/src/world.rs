@@ -90,7 +90,17 @@ fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
         let pers = pick_personality(rng);
         let mut npc = make_npc(next_id, idx, "Tuccar", Role::Tuccar, 15_000, NpcKind::Tuccar)
             .with_personality(pers);
-        distribute_inv(&mut npc, rng, 8_000);
+        // Tüccar başlangıç malı 8.000 → 4.000 (2026-07-26 denge turu).
+        //
+        // Bu bedava envanter Tüccar'ın en büyük kazanılmamış avantajıydı:
+        // sınıf toplamı ~960K₺ değerinde mal, sezon boyunca piyasa fiyatından
+        // eritiliyordu. Ölçüm (10 oyun × 350 tick, iki seed ailesi):
+        //   8.000 → adalet makası 4.7× · Tüccar 470K · Sanayici 102K
+        //   6.000 → adalet makası 3.4× · Tüccar 371K · Sanayici 110K
+        //   4.000 → adalet makası 2.0× · Tüccar 237K · Sanayici 122K
+        // Tüccar'ın kâr kaynağı artık taşıma ve arbitraj; başlangıç stoğunu
+        // eritmek değil.
+        distribute_inv(&mut npc, rng, 4_000);
         insert_npc(s, npc, &mut next_id);
     }
 
