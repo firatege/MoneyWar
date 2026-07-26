@@ -144,8 +144,10 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
     let mut drama = DramaScorecard::default();
     let mut bal = BalanceAccumulator::default();
 
+    bal.sample_money(&driver.state);
     for _ in 0..ticks {
         driver.step();
+        bal.sample_money(&driver.state);
         log.push_str(&format_tick_block(&driver.state, &driver.last_report, driver.season));
 
         for entry in &driver.last_report.entries {
@@ -551,6 +553,35 @@ fn print_balance(outcomes: &[Outcome]) {
         println!("{:-<95}", "");
         println!("  {}", churn_rows.join(" · "));
     }
+
+    // ── Para arzı ────────────────────────────────────────────────────────────
+    // Emek piyasası / banka çalışmasının referansı: kapalı döngüye geçince
+    // para arzı sabit kalmalı, deflasyona girmemeli.
+    let lira = |cents: f64| cents / 100.0;
+    let m = |f: &dyn Fn(&moneywar_sim::balance::MoneyFlow) -> i64| -> f64 {
+        outcomes.iter().map(|o| f(&o.balance.money) as f64).sum::<f64>() / n_games
+    };
+    println!("\n  PARA ARZI (oyun başına ortalama)");
+    println!("{:-<95}", "");
+    println!(
+        "  başlangıç {:.0}₺ → bitiş {:.0}₺ ({:+.1}%) · en düşük {:.0}₺ · en yüksek {:.0}₺",
+        lira(m(&|f| f.supply_start)),
+        lira(m(&|f| f.supply_end)),
+        outcomes.iter().map(|o| o.balance.money.supply_change_pct()).sum::<f64>() / n_games,
+        lira(m(&|f| f.supply_min)),
+        lira(m(&|f| f.supply_max)),
+    );
+    println!(
+        "  dağıtılan maaş+ücret {:.0}₺ · açılan kredi anaparası {:.0}₺ · silinen borç {:.0}₺",
+        lira(m(&|f| f.salary_paid)),
+        lira(m(&|f| f.loan_principal)),
+        lira(m(&|f| f.loan_written_off)),
+    );
+    println!(
+        "  dolaşımdan çıkan: sermaye harcaması {:.0}₺ (fab+yükseltme+kervan+tarla) · depolama {:.0}₺",
+        lira(m(&|f| f.capex)),
+        lira(m(&|f| f.opex)),
+    );
 
     // ── Piyasa mekaniği sağlığı ──────────────────────────────────────────────
     let sum = |f: &dyn Fn(&BalanceReport) -> u64| -> f64 {

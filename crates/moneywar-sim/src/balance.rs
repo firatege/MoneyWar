@@ -109,6 +109,64 @@ pub struct BalanceAccumulator {
     /// Rol → (şehir, ürün) → (alınan, satılan). Aynı pazarda hem alıp hem
     /// satmak = çevirme (flip): mal ne dönüştürülüyor ne taşınıyor.
     churn: BTreeMap<NpcKind, BTreeMap<(CityId, ProductKind), (u64, u64)>>,
+
+    // ── Para akışı (emek piyasası / banka çalışması için zemin) ───────────────
+    /// Maaş + ücret olarak dağıtılan toplam (cent). Şu an iki kanal karışık:
+    /// Sanayici→Alıcı fabrika ücreti (transfer) ve Alıcı sabit maaşı (basım).
+    salary_paid_cents: i64,
+    /// Açılan kredilerin toplam anaparası (cent).
+    loan_principal_cents: i64,
+    /// Temerrütte silinen borç (cent) — sistemden kaybolan para.
+    loan_written_off_cents: i64,
+    /// Sermaye harcaması (cent): fabrika kurulum + yükseltme, kervan, tarla.
+    /// Para kimseye ödenmez, varlığa dönüşür — dolaşımdan çıkar.
+    capex_cents: i64,
+    /// İşletme gideri (cent): depolama. Bakım motorda loglanmıyor.
+    opex_cents: i64,
+    /// Tick örnekleriyle toplam nakit arzı (cent). Deflasyon/enflasyon eğrisi.
+    money_samples: Vec<i64>,
+}
+
+/// Sezon boyunca para arzı ve onu değiştiren kalemler (hepsi cent).
+///
+/// Emek piyasası ve banka çalışmasının zemini: kapalı döngüye geçince para
+/// arzının sabit kalıp kalmadığı, deflasyona girip girmediği buradan görülür.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MoneyFlow {
+    pub supply_start: i64,
+    pub supply_end: i64,
+    pub supply_min: i64,
+    pub supply_max: i64,
+    /// Maaş + ücret olarak dağıtılan toplam.
+    pub salary_paid: i64,
+    /// Açılan kredilerin anaparası.
+    pub loan_principal: i64,
+    /// Temerrütte silinen borç.
+    pub loan_written_off: i64,
+    /// Sermaye harcaması: fabrika + yükseltme + kervan + tarla.
+    pub capex: i64,
+    /// İşletme gideri (depolama).
+    pub opex: i64,
+}
+
+impl MoneyFlow {
+    /// Sezon boyunca para arzının yüzde değişimi. Negatif = ekonomi kurudu.
+    #[must_use]
+    pub fn supply_change_pct(&self) -> f64 {
+        if self.supply_start == 0 {
+            return 0.0;
+        }
+        (self.supply_end - self.supply_start) as f64 / self.supply_start as f64 * 100.0
+    }
+}
+
+/// Ekonomideki toplam nakit — tüm oyuncuların kasası (cent).
+///
+/// Stok, fabrika ve escrow hariç; yalnız likit para. Para arzının sezon
+/// boyunca büyüyüp küçülmesini izlemek için.
+#[must_use]
+pub fn money_supply_cents(state: &GameState) -> i64 {
+    state.players.values().map(|p| p.cash.as_cents()).sum()
 }
 
 /// Bir ürünün sezon boyunca kitapta görülen arz/talebi ve gerçekleşen hacmi.
@@ -256,10 +314,36 @@ impl BalanceAccumulator {
             LogEvent::FactoryIdle { .. } => self.factory_idle_ticks += 1,
             LogEvent::ProductionStarted { .. } => self.production_started += 1,
             LogEvent::ProductionCompleted { .. } => self.production_completed += 1,
-            LogEvent::LoanTaken { .. } => self.loans_taken += 1,
-            LogEvent::LoanDefaulted { .. } => self.loans_defaulted += 1,
+            LogEvent::EconomySalary { amount, .. } => {
+                self.salary_paid_cents = self.salary_paid_cents.saturating_add(amount.as_cents());
+            }
+            LogEvent::FactoryBuilt { cost, .. }
+            | LogEvent::FactoryUpgraded { cost, .. }
+            | LogEvent::CaravanBought { cost, .. }
+            | LogEvent::PrivateFarmBuilt { cost, .. } => {
+                self.capex_cents = self.capex_cents.saturating_add(cost.as_cents());
+            }
+            LogEvent::StorageCost { amount, .. } => {
+                self.opex_cents = self.opex_cents.saturating_add(amount.as_cents());
+            }
+            LogEvent::LoanTaken { principal, .. } => {
+                self.loans_taken += 1;
+                self.loan_principal_cents =
+                    self.loan_principal_cents.saturating_add(principal.as_cents());
+            }
+            LogEvent::LoanDefaulted { unpaid_balance, .. } => {
+                self.loans_defaulted += 1;
+                self.loan_written_off_cents = self
+                    .loan_written_off_cents
+                    .saturating_add(unpaid_balance.as_cents());
+            }
             _ => {}
         }
+    }
+
+    /// Bu tick'in toplam nakit arzını kaydet — sezon boyu eğri için.
+    pub fn sample_money(&mut self, state: &GameState) {
+        self.money_samples.push(money_supply_cents(state));
     }
 
     /// Oyuncunun rolüne ait sayaç girdisi; rolsüz oyuncu (insan) yok sayılır.
@@ -383,10 +467,23 @@ impl BalanceAccumulator {
             })
             .collect();
 
+        let money = MoneyFlow {
+            supply_start: self.money_samples.first().copied().unwrap_or(0),
+            supply_end: self.money_samples.last().copied().unwrap_or(0),
+            supply_min: self.money_samples.iter().copied().min().unwrap_or(0),
+            supply_max: self.money_samples.iter().copied().max().unwrap_or(0),
+            salary_paid: self.salary_paid_cents,
+            loan_principal: self.loan_principal_cents,
+            loan_written_off: self.loan_written_off_cents,
+            capex: self.capex_cents,
+            opex: self.opex_cents,
+        };
+
         BalanceReport {
             roles,
             raw_buy_by_role,
             churn_by_role,
+            money,
             market,
             price_drift,
             top_rejects,
@@ -461,6 +558,8 @@ pub struct BalanceReport {
     /// Rol → çevirme oranı: aldığının ne kadarını **aynı pazarda** geri sattı.
     /// 0 = hep dönüştürüyor/taşıyor, 1 = saf aracılık.
     pub churn_by_role: Vec<(NpcKind, f64)>,
+    /// Para arzı ve akış kalemleri.
+    pub money: MoneyFlow,
     /// Ürün → sezon sonu/başı baseline oranı, azalan.
     pub price_drift: Vec<(ProductKind, f64)>,
     /// En sık 4 red sebebi sınıfı.
@@ -565,6 +664,7 @@ mod tests {
             roles,
             raw_buy_by_role: Vec::new(),
             churn_by_role: Vec::new(),
+            money: MoneyFlow::default(),
             market: Vec::new(),
             price_drift: Vec::new(),
             top_rejects: Vec::new(),
