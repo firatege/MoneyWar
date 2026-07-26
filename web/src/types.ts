@@ -43,6 +43,30 @@ export interface FactoryDto {
   product: string;
   pending_units: number;
   idle: boolean;
+  /** Fabrika seviyesi (1-3) — batch boyutunu ve hızını belirler. */
+  level: number;
+  /** Çalışan sayısı ve tam kadro. Üretim bu oranla ölçeklenir. */
+  employees: number;
+  required_employees: number;
+}
+
+/** Ekonominin tek bakışta sağlığı. */
+export interface EconomyDto {
+  wealth_gini: number;
+  money_supply_lira: number;
+  employed: number;
+  labor_pool: number;
+  factories_active: number;
+  factories_idle: number;
+}
+
+/** Bir rolün toplu durumu — sıralama tablosunun göstermediği dağılım. */
+export interface RoleSummaryDto {
+  kind: string;
+  label: string;
+  count: number;
+  total_pnl_lira: number;
+  per_capita_pnl_lira: number;
 }
 
 export interface CaravanDto {
@@ -136,6 +160,8 @@ export interface Snapshot {
   relations: RelationDto[];
   recent_events: EventDto[];
   intrigue: IntrigueDto;
+  economy: EconomyDto;
+  roles: RoleSummaryDto[];
 }
 
 /** Anlatı olaylarının `kind` etiketleri — feed ve harita ikon/renk seçer. */

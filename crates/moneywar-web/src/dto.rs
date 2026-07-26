@@ -393,15 +393,14 @@ fn build_leaderboard(state: &GameState, brains: &BrainPool) -> Vec<PlayerDto> {
         .into_iter()
         .filter_map(|score| {
             let player = state.players.get(&score.player_id)?;
-            // Sıralama "şirketler" tablosudur: Sanayici + insan oyuncular.
-            // Tüccar, Çiftçi, Alıcı, Spekülatör ve Banka ekonomiyi döndürmeye
-            // devam eder ama arka plandadır — sıralamada görünmezler.
-            if player
-                .npc_kind
-                .is_some_and(|k| k != moneywar_domain::NpcKind::Sanayici)
-            {
-                return None;
-            }
+            // Burası ham sıralamadır — **filtreleme arayüzün işi**.
+            //
+            // Eskiden Sanayici dışındaki herkes burada eleniyordu ("sıralama
+            // şirketler tablosudur"). Sonuç: izleyici on satırlık, hepsi aynı
+            // rozetli bir tablo görüyordu ve ekonominin gerçek dağılımını —
+            // ölçümde en çok kazanan rolün Çiftçi, Sanayici'nin ekside
+            // olduğunu — hiç göremiyordu. Şirket vurgusu duruyor, ama artık
+            // sunum katmanında bir filtre olarak; veri tam geliyor.
             let brain = brains.get(score.player_id);
             let goal = brain.map(|b| b.goal_label().to_owned());
             let traits = brain.map(|b| BrainTraitsDto {

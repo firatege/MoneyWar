@@ -180,6 +180,16 @@
     grid-auto-rows: auto;
     row-gap: 0.6rem;
   }
+  /* Marka satırındaki düğmeler dar ekranda tek satıra sığmayıp sayfayı
+     yatay kaydırıyordu (390px viewport'ta 433px genişlik). Sarmalarına
+     izin ver ve grid kutularının içerik genişliğine büyümesini engelle. */
+  .hdr__brand {
+    flex-wrap: wrap;
+    row-gap: 0.4rem;
+  }
+  .hdr > * {
+    min-width: 0;
+  }
   .hdr__season {
     justify-self: end;
   }

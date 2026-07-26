@@ -1,99 +1,130 @@
-// Ana dashboard sayfası — mevcut App içeriği buraya taşındı.
-// Gelecek sayfalar: /analytics, /firms/:id, /market/:product
-
-import { useState } from "react";
-import "../app.css";
-
+import { useEffect, useState } from "react";
 import { useGameSocket } from "../hooks/useGameSocket";
 import { SeasonHeader } from "../components/season-header/SeasonHeader";
-import { TickerTape } from "../components/ticker-tape/TickerTape";
-import { Leaderboard } from "../components/leaderboard/Leaderboard";
-import { EventFeed } from "../components/event-feed/EventFeed";
-import { PriceGrid } from "../components/price-grid/PriceGrid";
-import { WorldMap } from "../components/map/WorldMap";
-import { MarketOverview } from "../components/market-overview/MarketOverview";
-import { OrderBook } from "../components/order-book/OrderBook";
-import { PlayerDetail } from "../components/player-detail/PlayerDetail";
+import { Rankings } from "../components/rankings/Rankings";
+import { NetworkMap } from "../components/network-map/NetworkMap";
+import { LayeredFeed } from "../components/event-feed/LayeredFeed";
+import { ChartStrip } from "../components/chart-strip/ChartStrip";
+import { CityPanel } from "./CityPanel";
+import { FirmPanel } from "./FirmPanel";
+import { FactoryPanel } from "./FactoryPanel";
 import { Footer } from "../components/footer/Footer";
 import { HelpOverlay } from "../components/help/HelpOverlay";
+import "../app.css";
 
-const DEFAULT_CITY = "istanbul";
-const DEFAULT_PRODUCT = "pamuk";
 const INTRO_SEEN_KEY = "mw_intro_seen";
 
+/**
+ * Ana izleyici ekranı.
+ *
+ * Üç kademeli inceleme: şehir → firma → fabrika. Orta sütun kademeye göre
+ * içerik değiştirir; harita ilk kademede kalır.
+ */
+export type Focus =
+  | { kind: "none" }
+  | { kind: "city"; slug: string }
+  | { kind: "firm"; id: number }
+  | { kind: "factory"; id: number };
+
 export function DashboardPage() {
-  const { snapshot, prev, feed, status, history, bucketHistory, market, tradeStats, stableNews, seasons, resetSeason } =
-    useGameSocket();
-  const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY);
-  const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
-  const [selectedPlayer, setSelectedPlayer] = useState<number | null>(null);
-  const [showHelp, setShowHelp] = useState(() => localStorage.getItem(INTRO_SEEN_KEY) == null);
+  const { snapshot, prev, feed, status, market, seasons, resetSeason } = useGameSocket();
+  const [focus, setFocus] = useState<Focus>({ kind: "none" });
+  const [showHelp, setShowHelp] = useState(false);
+
+  // İlk ziyarette tanıtımı otomatik aç.
+  useEffect(() => {
+    if (localStorage.getItem(INTRO_SEEN_KEY) == null) setShowHelp(true);
+  }, []);
 
   const closeHelp = () => {
     setShowHelp(false);
     localStorage.setItem(INTRO_SEEN_KEY, "1");
   };
 
-  const handleCellSelect = (city: string, product: string) => {
-    setSelectedCity(city);
-    setSelectedProduct(product);
-    setSelectedPlayer(null);
-  };
+  // Escape haritaya döner — detaya girip sıkışmak olmasın.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !showHelp) setFocus({ kind: "none" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showHelp]);
+
+  const tick = snapshot?.tick ?? 0;
+  const selectedCity = focus.kind === "city" ? focus.slug : null;
 
   return (
     <div className="app">
       {showHelp && <HelpOverlay onClose={closeHelp} />}
-      <SeasonHeader snapshot={snapshot} status={status} onHelp={() => setShowHelp(true)} seasons={seasons} onReset={resetSeason} />
-      <TickerTape news={stableNews} />
+      <SeasonHeader
+        snapshot={snapshot}
+        status={status}
+        onHelp={() => setShowHelp(true)}
+        seasons={seasons}
+        onReset={resetSeason}
+      />
+
       <main className="app__grid">
+        {/* Sol — kim kazanıyor */}
         <div className="app__col app__col--left">
-          <Leaderboard
+          <Rankings
             snapshot={snapshot}
             prev={prev}
-            selectedId={selectedPlayer}
-            onSelect={setSelectedPlayer}
+            selectedId={focus.kind === "firm" ? focus.id : null}
+            onSelect={(id) => setFocus({ kind: "firm", id })}
           />
-          <EventFeed feed={feed} />
         </div>
 
+        {/* Orta — harita ve üstüne binen detay kademeleri */}
         <div className="app__col app__col--center">
-          <WorldMap
-            snapshot={snapshot}
-            feed={feed}
-            selectedCity={selectedCity}
-            onSelectCity={(city) => {
-              setSelectedCity(city);
-              setSelectedPlayer(null);
-            }}
-            onSelectFirm={setSelectedPlayer}
-          />
-          <PriceGrid
-            snapshot={snapshot}
-            bucketHistory={bucketHistory}
-            selected={{ city: selectedCity, product: selectedProduct }}
-            onSelect={handleCellSelect}
-          />
-          {selectedPlayer != null ? (
-            <PlayerDetail
-              playerId={selectedPlayer}
+          {(focus.kind === "none" || focus.kind === "city") && (
+            <NetworkMap
               snapshot={snapshot}
-              history={history[selectedPlayer] ?? []}
-              tradeStats={tradeStats}
-              onClose={() => setSelectedPlayer(null)}
+              selected={selectedCity}
+              onSelect={(slug) =>
+                setFocus(selectedCity === slug ? { kind: "none" } : { kind: "city", slug })
+              }
             />
-          ) : (
-            <MarketOverview market={market} snapshot={snapshot} />
+          )}
+
+          {focus.kind === "city" && (
+            <CityPanel
+              slug={focus.slug}
+              tick={tick}
+              onClose={() => setFocus({ kind: "none" })}
+              onSelectFirm={(id) => setFocus({ kind: "firm", id })}
+            />
+          )}
+          {focus.kind === "firm" && (
+            <FirmPanel
+              id={focus.id}
+              tick={tick}
+              onClose={() => setFocus({ kind: "none" })}
+              onSelectFactory={(id) => setFocus({ kind: "factory", id })}
+              onSelectFirm={(id) => setFocus({ kind: "firm", id })}
+            />
+          )}
+          {focus.kind === "factory" && (
+            <FactoryPanel
+              id={focus.id}
+              tick={tick}
+              onClose={() => setFocus({ kind: "none" })}
+              onSelectFirm={(id) => setFocus({ kind: "firm", id })}
+            />
           )}
         </div>
 
+        {/* Sağ — ne oluyor */}
         <div className="app__col app__col--right">
-          <OrderBook
-            snapshot={snapshot}
-            city={selectedCity}
-            product={selectedProduct}
+          <LayeredFeed
+            feed={feed}
+            tick={tick}
+            onSelectFirm={(id) => setFocus({ kind: "firm", id })}
           />
         </div>
       </main>
+
+      <ChartStrip snapshot={snapshot} market={market} />
       <Footer onHelp={() => setShowHelp(true)} />
     </div>
   );

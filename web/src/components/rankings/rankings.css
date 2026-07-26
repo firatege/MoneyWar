@@ -1,0 +1,243 @@
+/* Sol sütun — rol dağılımı + firma sıralaması. */
+
+.rank {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── Rol dağılımı ─────────────────────────────────────────────────────── */
+
+.rank__roles {
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.7rem;
+  list-style: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.rank__role {
+  display: grid;
+  grid-template-columns: 5.5rem 1.8rem 1fr 3.6rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.18rem 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.rank__role-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank__role-n {
+  color: var(--text-ghost);
+  text-align: right;
+}
+
+.rank__bar {
+  position: relative;
+  display: block;
+  height: 8px;
+  min-width: 3rem;
+  background: var(--surface-2);
+}
+
+.rank__bar-zero {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 50%;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.rank__bar-fill {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  background: var(--gain-dim);
+  transition: width var(--dur) var(--ease);
+}
+
+.rank__bar-fill--neg {
+  background: var(--loss-dim);
+}
+
+.rank__role-val {
+  text-align: right;
+  color: var(--gain);
+  font-variant-numeric: tabular-nums;
+}
+
+.rank__role-val.is-neg {
+  color: var(--loss);
+}
+
+/* ── Sıralama başlığı + filtre ────────────────────────────────────────── */
+
+.rank__head2 {
+  border-top: none;
+}
+
+.rank__filters {
+  display: flex;
+  gap: 1px;
+}
+
+.rank__filter {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid transparent;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.rank__filter:hover {
+  color: var(--text);
+  background: var(--surface-hi);
+}
+
+.rank__filter.is-on {
+  color: var(--bg);
+  background: var(--accent-dim);
+}
+
+.rank__filter:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Liste ────────────────────────────────────────────────────────────── */
+
+.rank__cols,
+.rank__row {
+  display: grid;
+  grid-template-columns: 2.4rem 2.4rem minmax(0, 1fr) 3.4rem 3.6rem;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rank__cols {
+  padding: 0.3rem 0.75rem;
+  border-bottom: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-ghost);
+  letter-spacing: 0.08em;
+}
+
+.rank__r {
+  text-align: right;
+}
+
+.rank__list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.rank__row {
+  width: 100%;
+  padding: 0.28rem 0.75rem;
+  border: none;
+  border-left: 2px solid transparent;
+  background: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.rank__row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.rank__row.is-sel {
+  background: var(--surface-hi);
+  border-left-color: var(--accent);
+  color: var(--text);
+}
+
+.rank__row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.rank__pos {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  color: var(--text-ghost);
+  font-variant-numeric: tabular-nums;
+}
+
+.rank__delta {
+  font-size: 0.55rem;
+}
+
+.rank__delta.is-up {
+  color: var(--gain);
+}
+
+.rank__delta.is-down {
+  color: var(--loss);
+}
+
+.rank__badge {
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+}
+
+.rank__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank__cash,
+.rank__pnl {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rank__cash {
+  color: var(--text-faint);
+}
+
+.rank__pnl {
+  color: var(--gain);
+}
+
+.rank__pnl.is-neg {
+  color: var(--loss);
+}
+
+.rank__empty {
+  padding: 1rem 0.75rem;
+  color: var(--text-ghost);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rank__bar-fill,
+  .rank__row,
+  .rank__filter {
+    transition: none;
+  }
+}

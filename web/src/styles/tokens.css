@@ -33,14 +33,29 @@
   --loss: oklch(62% 0.1 28);
   --loss-dim: oklch(50% 0.08 28);
 
-  /* --- Rol rozet renkleri (NpcKind) — düşük chroma, mat --- */
-  --role-tuccar: oklch(70% 0.06 80);
-  --role-sanayici: oklch(66% 0.06 235);
-  --role-alici: oklch(66% 0.06 305);
-  --role-ciftci: oklch(68% 0.06 140);
-  --role-spekulator: oklch(64% 0.08 350);
-  --role-banka: oklch(64% 0.015 250);
-  --role-toptanci: oklch(66% 0.05 200);
+  /* --- Rol renkleri (NpcKind) — kategorik palet, sabit sıra ---
+
+     Bu değerler göze göre değil ölçülerek seçildi. Önceki palet (chroma
+     0.06, hepsi aynı açıklıkta) dataviz doğrulamasından kalıyordu: Sanayici
+     mavisi ile Alıcı moru normal görüşte bile ΔE 7.0 ayrılıyordu — sert
+     eşik 15. Yani renk kimlik taşımıyor, sadece dekorasyon yapıyordu.
+
+     Yeni palet beş denetimi de geçiyor (koyu tema, yüzey #0c0d0f):
+     açıklık bandı, chroma tabanı, CVD ayrımı (en kötü komşu ΔE 9.6),
+     normal görüş tabanı (ΔE 21.2), yüzeye karşı kontrast.
+
+     Sıra sabittir ve asla döngüye sokulmaz: rol filtrelense bile kalan
+     roller renk değiştirmez. Doğrulama:
+       node scripts/validate_palette.js \
+         "#27762f,#bd821a,#1868a0,#d96572,#735097,#00a0bb" \
+         --mode dark --surface "#0c0d0f"                                   */
+  --role-ciftci: oklch(50% 0.13 145);
+  --role-tuccar: oklch(65% 0.13 75);
+  --role-sanayici: oklch(50% 0.115 245);
+  --role-spekulator: oklch(65% 0.145 15);
+  --role-alici: oklch(50% 0.115 305);
+  --role-banka: oklch(65% 0.115 215);
+  --role-toptanci: oklch(58% 0.12 185);
 
   /* --- Tipografi --- */
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;

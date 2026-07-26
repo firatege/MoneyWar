@@ -190,3 +190,182 @@
 .feed__row--grudge .feed__kind {
   color: var(--loss-dim);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Katmanlı akış (LayeredFeed)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.feed__layers {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.feed__layer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Çekişme katmanı kalan alanı alır; dönüm noktaları ve fon sabit yükseklikte. */
+.feed__layer--grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.feed__layer-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.45rem var(--pad-panel) 0.3rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-ghost);
+}
+
+.feed__layer-note {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--text-ghost);
+}
+
+.feed__layer-empty {
+  margin: 0;
+  padding: 0.2rem var(--pad-panel) 0.7rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-ghost);
+}
+
+.feed__list--inner {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Dönüm noktası kartları ───────────────────────────────────────────── */
+
+.feed__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0 0 0.4rem;
+  list-style: none;
+  max-height: 15rem;
+  overflow-y: auto;
+}
+
+.feed__card {
+  padding: 0.5rem var(--pad-panel) 0.55rem;
+  background: var(--surface-2);
+  border-left: 2px solid var(--accent);
+  animation: feed-in var(--dur) var(--ease);
+}
+
+.feed__card--bankrupt {
+  border-left-color: var(--loss);
+}
+.feed__card--monopoly_formed,
+.feed__card--cartel {
+  border-left-color: var(--role-spekulator);
+}
+.feed__card--monopoly_broken,
+.feed__card--price_war_won {
+  border-left-color: var(--gain);
+}
+.feed__card--cartel_betrayed {
+  border-left-color: var(--role-alici);
+}
+
+.feed__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.feed__card-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
+.feed__card-text {
+  margin: 0.3rem 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.feed__card-link {
+  margin-top: 0.35rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.feed__card-link:hover {
+  text-decoration: underline;
+}
+
+.feed__card-link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Fon sayaçları ────────────────────────────────────────────────────── */
+
+.feed__noise {
+  border-bottom: none;
+}
+
+.feed__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin: 0;
+  padding: 0 var(--pad-panel) 0.7rem;
+  list-style: none;
+}
+
+.feed__count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.2rem 0.45rem;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.feed__count-n {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.feed__count-label {
+  color: var(--text-ghost);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed__card,
+  .feed__row {
+    animation: none;
+  }
+}

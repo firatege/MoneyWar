@@ -62,6 +62,15 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
     relations: [],
     recent_events: [],
     intrigue: { monopolies: [], price_wars: [], supply_chokes: [] },
+    economy: {
+      wealth_gini: 0,
+      money_supply_lira: 0,
+      employed: 0,
+      labor_pool: 0,
+      factories_active: 0,
+      factories_idle: 0,
+    },
+    roles: [],
     ...over,
   };
 }
