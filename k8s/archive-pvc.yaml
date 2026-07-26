@@ -1,0 +1,25 @@
+# Sezon arşivi için kalıcı disk.
+#
+# Uygulama kapanan her sezonun denge denetimini /app/debug/seasons altına
+# JSON + MD olarak yazar (~10 KB/sezon). Sezon 17.5 dakika olduğuna göre
+# günde ~1 MB, yılda ~365 MB — 1Gi fazlasıyla yeter.
+#
+# Bu disk olmadan arşiv `emptyDir`'de kalır ve pod her yeniden başladığında
+# (yani her deploy'da) silinir. Sezonlar arası karşılaştırma — "ne zaman
+# bozuldu, hangi sezondan sonra kötüleşti" — ancak kalıcı diskle mümkün.
+#
+# Ham tick log'u (economy.log) bilinçli olarak kalıcı değil: sezonda ~48 MB,
+# günde ~4 GB tutuyor ve "bir sorun var mı" sorusunu cevaplamıyor. O log
+# bellekteki halka tamponda yaşar, `GET /api/log` ile son birkaç dakika okunur.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: moneywar-archive-pvc
+  namespace: feb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: best-storage
+  resources:
+    requests:
+      storage: 1Gi
