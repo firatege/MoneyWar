@@ -288,13 +288,12 @@ mod tests {
                 unit_price,
                 ..
             } = c
+                && product.is_raw()
             {
-                if product.is_raw() {
-                    assert!(
-                        unit_price.as_cents() < raw_baseline.as_cents(),
-                        "Esnaf raw BUY < baseline (%95 markdown)"
-                    );
-                }
+                assert!(
+                    unit_price.as_cents() < raw_baseline.as_cents(),
+                    "Esnaf raw BUY < baseline (%95 markdown)"
+                );
             }
         }
     }
@@ -317,15 +316,14 @@ mod tests {
                 unit_price,
                 ..
             } = c
+                && product.is_finished()
             {
-                if product.is_finished() {
-                    let cents = unit_price.as_cents();
-                    assert!(
-                        (lower..=upper).contains(&cents),
-                        "Esnaf mamul BUY {cents} ∉ [{lower}, {upper}] (baseline ± jitter)"
-                    );
-                    found = true;
-                }
+                let cents = unit_price.as_cents();
+                assert!(
+                    (lower..=upper).contains(&cents),
+                    "Esnaf mamul BUY {cents} ∉ [{lower}, {upper}] (baseline ± jitter)"
+                );
+                found = true;
             }
         }
         assert!(found, "Esnaf mamul BUY adayları olmalı");

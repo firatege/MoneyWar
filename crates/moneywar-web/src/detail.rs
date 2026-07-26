@@ -116,8 +116,11 @@ pub struct CityDetail {
 
     /// Şehirdeki oyuncular — fabrika, tarla, stok, işlem.
     pub actors: Vec<CityActorDto>,
-    /// Şehirde üretilen ürünler ve fabrika sayıları.
+    /// Şehirde üretilen ürünler ve fabrika sayıları (toplu).
     pub production: Vec<CityProductDto>,
+    /// Şehirdeki fabrikalar tek tek — sahibi, kadrosu, durumu.
+    /// Toplu görünüm "ne üretiliyor"u söyler; bu liste "kim üretiyor"u.
+    pub factories: Vec<CityFactoryDto>,
     /// Şehirde tutulan toplam stok.
     pub stock: Vec<ProductStockDto>,
     /// Hacimce en büyük ürünler.
@@ -147,6 +150,22 @@ pub struct CityProductDto {
     pub product_label: String,
     pub factories: u32,
     pub idle: u32,
+    pub produced_units: u64,
+}
+
+/// Şehirdeki tek bir fabrika — fabrika sayfasına geçiş noktası.
+#[derive(Debug, Clone, Serialize)]
+pub struct CityFactoryDto {
+    pub id: u64,
+    pub owner: ActorRef,
+    pub product: String,
+    pub product_label: String,
+    pub level: u8,
+    pub employees: u32,
+    pub required_employees: u32,
+    pub idle: bool,
+    pub pending_units: u64,
+    /// Defter penceresinde ürettiği toplam birim.
     pub produced_units: u64,
 }
 
@@ -226,8 +245,10 @@ pub fn city_detail(state: &GameState, ledger: &Ledger, city: CityId) -> CityDeta
         *sold.entry(t.seller).or_default() += u64::from(t.quantity);
     }
     let mut produced: BTreeMap<ProductKind, u64> = BTreeMap::new();
+    let mut produced_by_factory: BTreeMap<FactoryId, u64> = BTreeMap::new();
     for p in ledger.productions().filter(|p| p.city == city) {
         *produced.entry(p.product).or_default() += u64::from(p.units);
+        *produced_by_factory.entry(p.factory).or_default() += u64::from(p.units);
     }
 
     // ── Aktörler ─────────────────────────────────────────────────────────────
@@ -294,6 +315,29 @@ pub fn city_detail(state: &GameState, ledger: &Ledger, city: CityId) -> CityDeta
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    // Çalışanlar önce, atıllar sonra; her grup üretime göre azalan.
+    let mut factory_rows: Vec<CityFactoryDto> = factories
+        .iter()
+        .map(|f| CityFactoryDto {
+            id: f.id.value(),
+            owner: actor_ref(state, f.owner),
+            product: product_slug(f.product).to_string(),
+            product_label: f.product.display_name().to_string(),
+            level: f.level,
+            employees: f.employees,
+            required_employees: f.required_employees(),
+            idle: f.is_atil(state.current_tick, idle_threshold),
+            pending_units: f.pending_units(),
+            produced_units: produced_by_factory.get(&f.id).copied().unwrap_or(0),
+        })
+        .collect();
+    factory_rows.sort_by(|a, b| {
+        a.idle
+            .cmp(&b.idle)
+            .then_with(|| b.produced_units.cmp(&a.produced_units))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
     CityDetail {
         city: city_slug(city).to_string(),
         label: city.display_name().to_string(),
@@ -308,6 +352,7 @@ pub fn city_detail(state: &GameState, ledger: &Ledger, city: CityId) -> CityDeta
         stock_gini: gini_u32(stock_by_owner.values().map(|(u, _)| *u)),
         actors,
         production,
+        factories: factory_rows,
         stock,
         volume: product_volumes(trades.iter().copied()),
         top_pairs: pair_flows(state, trades.iter().copied()),

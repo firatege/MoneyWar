@@ -67,7 +67,7 @@ mod tests {
         // v8.22: Easy artık top_k yüksek (likidite bol), silence yok.
         // Cömertlik state.market_softener_pct ile ayrı → Difficulty
         // sadece akış kontrol parametresi.
-        assert!(BehaviorDifficulty::EASY.top_k >= 8);
+        const { assert!(BehaviorDifficulty::EASY.top_k >= 8) };
         assert_eq!(BehaviorDifficulty::EASY.silence_per_10, 0);
     }
 

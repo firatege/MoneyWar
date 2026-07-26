@@ -748,10 +748,8 @@ mod tests {
     #[test]
     fn skill_noise_winner_lower_than_loser() {
         let base = 0.10;
-        let mut winner = AgentBrain::default();
-        winner.pnl_trend = 0.9; // kazanıyor
-        let mut loser = AgentBrain::default();
-        loser.pnl_trend = 0.1; // kaybediyor
+        let winner = AgentBrain { pnl_trend: 0.9, ..Default::default() }; // kazanıyor
+        let loser = AgentBrain { pnl_trend: 0.1, ..Default::default() }; // kaybediyor
 
         assert!(winner.skill_noise(base) < loser.skill_noise(base));
     }

@@ -97,6 +97,7 @@ export function DashboardPage() {
               bucketHistory={bucketHistory}
               onClose={() => setFocus({ kind: "none" })}
               onSelectFirm={(id) => setFocus({ kind: "firm", id })}
+              onSelectFactory={(id) => setFocus({ kind: "factory", id })}
             />
           )}
           {focus.kind === "firm" && (

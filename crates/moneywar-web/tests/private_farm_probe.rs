@@ -19,6 +19,9 @@ fn why_are_private_farms_never_built() {
     let npc_gate = Money::from_cents(build_cost.as_cents() * 3 / 2);
 
     let mut built = 0u32;
+    let mut build_ticks: Vec<u32> = Vec::new();
+    // Kaç Sanayici kapıyı (>=5 fabrika) geçiyor, tick'e göre.
+    let mut gate_pass_by_phase: std::collections::BTreeMap<u32, u64> = Default::default();
     let mut rejected = 0u32;
     let mut reject_reasons: std::collections::BTreeMap<String, u32> = Default::default();
 
@@ -38,7 +41,10 @@ fn why_are_private_farms_never_built() {
 
         for entry in &d.last_report.entries {
             match &entry.event {
-                LogEvent::PrivateFarmBuilt { .. } => built += 1,
+                LogEvent::PrivateFarmBuilt { .. } => {
+                    built += 1;
+                    build_ticks.push(d.state.current_tick.value());
+                }
                 LogEvent::CommandRejected { command, reason } => {
                     if matches!(command, moneywar_domain::Command::BuildPrivateFarm { .. }) {
                         rejected += 1;
@@ -76,6 +82,11 @@ fn why_are_private_farms_never_built() {
             let owned = d.state.factories.values().filter(|f| f.owner == p.id).count();
             *fab_hist.entry(owned).or_default() += 1;
             max_fabs = max_fabs.max(owned);
+            if owned >= 5 {
+                *gate_pass_by_phase
+                    .entry(d.state.current_tick.value() / 50 * 50)
+                    .or_default() += 1;
+            }
         }
     }
 
@@ -112,5 +123,11 @@ fn why_are_private_farms_never_built() {
         println!("   {n:>2} fabrika  {:>5.1}%  {bar}", pct(*count));
     }
     println!("en çok fabrikası olan:    {max_fabs}");
+    println!();
+    println!("tarla kurulma tick'leri:  {build_ticks:?}");
+    println!("kapıyı (>=5 fab) geçen Sanayici sayısı, 50'lik dilimlerde:");
+    for (phase, n) in &gate_pass_by_phase {
+        println!("   t{phase:>3}-{:>3}  {n}", phase + 49);
+    }
     println!("───────────────────────────────────────────────────────────\n");
 }

@@ -75,6 +75,19 @@ export interface ProductStockDto {
   holders: number;
 }
 
+export interface CityFactoryDto {
+  id: number;
+  owner: ActorRef;
+  product: string;
+  product_label: string;
+  level: number;
+  employees: number;
+  required_employees: number;
+  idle: boolean;
+  pending_units: number;
+  produced_units: number;
+}
+
 export interface CityDetail {
   city: string;
   label: string;
@@ -89,6 +102,7 @@ export interface CityDetail {
   stock_gini: number;
   actors: CityActorDto[];
   production: CityProductDto[];
+  factories: CityFactoryDto[];
   stock: ProductStockDto[];
   volume: ProductVolumeDto[];
   top_pairs: PairFlowDto[];

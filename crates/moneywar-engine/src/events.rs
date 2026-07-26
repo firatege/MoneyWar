@@ -428,11 +428,11 @@ mod tests {
             let mut rng = rng_for(s.room_id, Tick::new(t));
             advance_events(&mut s, &mut rng, &mut r, Tick::new(t));
             s.current_tick = Tick::new(t);
-            if let Some(inbox) = s.news_inbox.get(&PlayerId::new(1)) {
-                if !inbox.is_empty() {
-                    assert_eq!(inbox[0].tier, NewsTier::Bronze);
-                    return;
-                }
+            if let Some(inbox) = s.news_inbox.get(&PlayerId::new(1))
+                && !inbox.is_empty()
+            {
+                assert_eq!(inbox[0].tier, NewsTier::Bronze);
+                return;
             }
         }
         panic!("expected Bronze news for Tuccar within 200 ticks");

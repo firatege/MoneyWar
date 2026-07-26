@@ -23,6 +23,7 @@ interface Props {
   bucketHistory: BucketHistory;
   onClose: () => void;
   onSelectFirm: (id: number) => void;
+  onSelectFactory: (id: number) => void;
 }
 
 export function CityPanel({
@@ -32,6 +33,7 @@ export function CityPanel({
   bucketHistory,
   onClose,
   onSelectFirm,
+  onSelectFactory,
 }: Props) {
   const { data, error, loading } = useDetail<CityDetail>(`/api/city/${slug}`, tick);
 
@@ -162,6 +164,43 @@ export function CityPanel({
                         {p.factories - p.idle}/{p.factories}
                         <span className="dt__muted"> · {p.produced_units}br</span>
                       </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Block>
+
+            {/* Fabrikalar tek tek — "ne üretiliyor" toplamı kimin ürettiğini
+                söylemiyordu; stoğun yanında bunu da görmek istendi. */}
+            <Block
+              title="Şehirdeki fabrikalar"
+              note={`${data.factory_count - data.idle_factory_count} çalışıyor · ${data.idle_factory_count} atıl`}
+              wide
+            >
+              {data.factories.length === 0 ? (
+                <p className="dt__state">bu şehirde fabrika yok</p>
+              ) : (
+                <ul className="dt__cards">
+                  {data.factories.map((f) => (
+                    <li key={f.id}>
+                      <button
+                        type="button"
+                        className={`dt__card${f.idle ? " dt__card--idle" : ""}`}
+                        onClick={() => onSelectFactory(f.id)}
+                      >
+                        <span className="dt__card-top">
+                          <span className="dt__card-name">{f.product_label}</span>
+                          <span className="dt__card-tag">sv{f.level}</span>
+                        </span>
+                        <p className="dt__card-line" style={{ color: roleInk(f.owner.role) }}>
+                          {f.owner.name}
+                        </p>
+                        <p className="dt__card-line">
+                          kadro {f.employees}/{f.required_employees} ·{" "}
+                          {f.idle ? <span className="is-warn">atıl</span> : "çalışıyor"}
+                        </p>
+                        <p className="dt__card-line">üretti {f.produced_units} br</p>
+                      </button>
                     </li>
                   ))}
                 </ul>
