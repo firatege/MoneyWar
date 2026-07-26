@@ -191,12 +191,33 @@ pub struct Player {
     /// Sezon başında seed RNG ile atanır, sezon boyu sabit.
     #[serde(default)]
     pub personality: Option<Personality>,
-    /// Sezon başında verilen başlangıç sermayesi. Skor `PnL` hesabında
-    /// referans olarak kullanılır: `pnl_score = current_total - starting_cash`.
-    /// Pasif oyuncu (hiçbir şey yapmayan) PnL=0 olur, aktif kâr edenler
-    /// pozitif skor alır.
+    /// Sezon başında verilen başlangıç nakdi. `PnL` referansının bir parçası.
     #[serde(default)]
     pub starting_cash: Money,
+    /// Sezon başında verilen **malın** değeri. `PnL` referansının diğer
+    /// parçası: `pnl = mevcut_varlık − (starting_cash + starting_stock_value)`.
+    ///
+    /// Bu alan olmadan başlangıç stoğu saf kâr sayılıyordu: sezona 8.000
+    /// birim malla başlayan Tüccar o malı satınca tamamını "kazanç" yazıyor,
+    /// hiç mal verilmeyen Çiftçi ise sıfırdan başlıyordu. Ölçümde rol
+    /// makasının büyük kısmı bu ölçüm hatasından geliyordu, ekonomiden değil.
+    ///
+    /// Dünya kurulumunda envanter dağıtıldıktan sonra yazılır; eski
+    /// kayıtlarda yoksa sıfır (eski davranış).
+    #[serde(default)]
+    pub starting_stock_value: Money,
+}
+
+impl Player {
+    /// `PnL` referansı — sezon başındaki toplam varlık (nakit + mal).
+    #[must_use]
+    pub fn starting_wealth(&self) -> Money {
+        Money::from_cents(
+            self.starting_cash
+                .as_cents()
+                .saturating_add(self.starting_stock_value.as_cents()),
+        )
+    }
 }
 
 impl Player {
@@ -222,6 +243,7 @@ impl Player {
             name,
             role,
             cash: starting_cash,
+            starting_stock_value: Money::ZERO,
             inventory: Inventory::new(),
             is_npc,
             npc_kind: None,

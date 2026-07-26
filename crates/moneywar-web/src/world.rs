@@ -90,17 +90,12 @@ fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
         let pers = pick_personality(rng);
         let mut npc = make_npc(next_id, idx, "Tuccar", Role::Tuccar, 15_000, NpcKind::Tuccar)
             .with_personality(pers);
-        // Tüccar başlangıç malı 8.000 → 4.000 (2026-07-26 denge turu).
-        //
-        // Bu bedava envanter Tüccar'ın en büyük kazanılmamış avantajıydı:
-        // sınıf toplamı ~960K₺ değerinde mal, sezon boyunca piyasa fiyatından
-        // eritiliyordu. Ölçüm (10 oyun × 350 tick, iki seed ailesi):
-        //   8.000 → adalet makası 4.7× · Tüccar 470K · Sanayici 102K
-        //   6.000 → adalet makası 3.4× · Tüccar 371K · Sanayici 110K
-        //   4.000 → adalet makası 2.0× · Tüccar 237K · Sanayici 122K
-        // Tüccar'ın kâr kaynağı artık taşıma ve arbitraj; başlangıç stoğunu
-        // eritmek değil.
-        distribute_inv(&mut npc, rng, 4_000);
+        // Başlangıç malı 8.000'de kaldı. Bir ara 4.000'e indirilmişti çünkü
+        // Tüccar'ın PnL üstünlüğünün kaynağı sanılmıştı; asıl sebep skorlama
+        // hatasıymış — başlangıç stoğu PnL referansına dahil değildi, yani
+        // satılınca saf kâr yazılıyordu. Referans düzeltilince dünya
+        // kurulumuna dokunmaya gerek kalmadı.
+        distribute_inv(&mut npc, rng, 8_000);
         insert_npc(s, npc, &mut next_id);
     }
 
@@ -222,7 +217,25 @@ fn make_npc(id: u64, idx: usize, prefix: &str, role: Role, cash_lira: i64, kind:
     .with_kind(kind)
 }
 
-fn insert_npc(s: &mut GameState, npc: Player, next_id: &mut u64) {
+/// NPC'yi dünyaya ekler ve **başlangıç mal değerini** damgalar.
+///
+/// `PnL` referansı nakit + mal olduğu için stok değeri burada, sezon başı
+/// baseline fiyatlarından hesaplanıp yazılır. Yazılmazsa başlangıç stoğu
+/// saf kâr sayılır (bkz. `Player::starting_stock_value`).
+fn insert_npc(s: &mut GameState, mut npc: Player, next_id: &mut u64) {
+    let stock_cents: i64 = npc
+        .inventory
+        .entries()
+        .map(|(city, product, qty)| {
+            let unit = s
+                .price_baseline
+                .get(&(city, product))
+                .map_or(0i64, |m| m.as_cents());
+            unit.saturating_mul(i64::from(qty))
+        })
+        .sum();
+    npc.starting_stock_value = moneywar_domain::Money::from_cents(stock_cents);
+
     s.news_subscriptions.insert(npc.id, NewsTier::Free);
     s.players.insert(npc.id, npc);
     *next_id += 1;

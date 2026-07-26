@@ -74,7 +74,12 @@ pub fn score_player(state: &GameState, player_id: PlayerId) -> PlayerScore {
         .saturating_add(factory_value.as_cents())
         .saturating_add(escrow_value.as_cents())
         .saturating_add(caravan_value.as_cents());
-    let pnl_cents = current_total_cents.saturating_sub(player.starting_cash.as_cents());
+    // Referans: sezon başındaki **toplam varlık** (nakit + mal). Yalnız
+    // nakdi düşmek, başlangıç stoğunu saf kâr sayıyordu — 8.000 birimle
+    // başlayan Tüccar o malı satınca hepsini kazanç yazıyor, mal verilmeyen
+    // Çiftçi sıfırdan başlıyordu. Rol makasının büyük kısmı bu ölçüm
+    // hatasından geliyordu.
+    let pnl_cents = current_total_cents.saturating_sub(player.starting_wealth().as_cents());
 
     PlayerScore {
         player_id,
@@ -117,8 +122,13 @@ fn compute_stock_value(state: &GameState, player_id: PlayerId) -> Money {
     };
     let mut total: i64 = 0;
     for (city, product, qty) in player.inventory.entries() {
+        // Fiyat geçmişi yoksa **o pazarın baseline'ına** düş; düz bir sabit
+        // değil. Baseline şehir/ürün özelinde ve dünya kurulumu başlangıç
+        // stoğunu da bu fiyattan damgalıyor — ikisi ayrışırsa hiçbir şey
+        // yapmayan oyuncu sezon başında yapay kâr/zarar görüyordu.
         let avg = state
             .rolling_avg_price(city, product, PRICE_WINDOW)
+            .or_else(|| state.effective_baseline(city, product))
             .unwrap_or_else(|| fallback_price(product));
         let line = avg.as_cents().saturating_mul(i64::from(qty));
         total = total.saturating_add(line);
@@ -433,5 +443,53 @@ mod tests {
         let s = state();
         let sc = score_player(&s, PlayerId::new(999));
         assert_eq!(sc.total, Money::ZERO);
+    }
+
+    #[test]
+    fn starting_stock_is_not_counted_as_profit() {
+        // PnL referansı sezon başı **toplam varlık** olmalı. Yalnız nakdi
+        // düşmek, başlangıç stoğunu saf kâr sayıyordu: 8.000 birimle
+        // başlayan Tüccar o malı satınca hepsini kazanç yazıyor, mal
+        // verilmeyen Çiftçi sıfırdan başlıyordu.
+        let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        s.price_baseline.insert(
+            (CityId::Istanbul, ProductKind::Kumas),
+            Money::from_lira(40).unwrap(),
+        );
+        let mut p = Player::new(
+            PlayerId::new(1),
+            "T".to_string(),
+            Role::Tuccar,
+            Money::from_lira(1_000).unwrap(),
+            true,
+        )
+        .unwrap();
+        p.inventory
+            .add(CityId::Istanbul, ProductKind::Kumas, 100)
+            .unwrap();
+        p.starting_stock_value = Money::from_lira(4_000).unwrap(); // 100 × 40₺
+        s.players.insert(p.id, p);
+
+        // Hiçbir şey yapmadan skorlanınca PnL sıfır olmalı — mal duruyor.
+        let score = score_player(&s, PlayerId::new(1));
+        assert_eq!(
+            score.total,
+            Money::ZERO,
+            "başlangıç malını elinde tutan oyuncu kâr etmiş sayılmamalı"
+        );
+    }
+
+    #[test]
+    fn starting_wealth_sums_cash_and_stock() {
+        let mut p = Player::new(
+            PlayerId::new(1),
+            "T".to_string(),
+            Role::Tuccar,
+            Money::from_lira(1_000).unwrap(),
+            true,
+        )
+        .unwrap();
+        p.starting_stock_value = Money::from_lira(4_000).unwrap();
+        assert_eq!(p.starting_wealth(), Money::from_lira(5_000).unwrap());
     }
 }
