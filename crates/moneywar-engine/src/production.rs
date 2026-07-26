@@ -66,6 +66,8 @@ pub(crate) fn process_build_factory(
         }));
     }
     player_mut.debit(cost)?;
+    // Yatırım parayı yok etmez, hane halkına gelir olur (inşaat/makine).
+    crate::economy::distribute_capex_to_households(state, report, tick, cost);
 
     // Factory::new ürün bitmiş mi doğrular.
     let factory_id = FactoryId::new(state.counters.next_factory_id);
@@ -101,8 +103,8 @@ pub(crate) fn advance_private_farms(state: &mut GameState, _tick: Tick) {
 /// `UpgradeFarm` komutunu uygula — çiftlik seviye atlar, üretim artar.
 pub(crate) fn process_upgrade_farm(
     state: &mut GameState,
-    _report: &mut TickReport,
-    _tick: Tick,
+    report: &mut TickReport,
+    tick: Tick,
     owner: PlayerId,
     farm_id: PrivateFarmId,
 ) -> Result<(), EngineError> {
@@ -123,6 +125,8 @@ pub(crate) fn process_upgrade_farm(
         return Err(EngineError::Domain(DomainError::InsufficientFunds { have: player.cash, want: cost }));
     }
     player.debit(cost)?;
+    // Yatırım parayı yok etmez, hane halkına gelir olur (inşaat/makine).
+    crate::economy::distribute_capex_to_households(state, report, tick, cost);
     state.private_farms.get_mut(&farm_id).unwrap().level += 1;
     Ok(())
 }
@@ -170,6 +174,8 @@ pub(crate) fn process_build_private_farm(
         }));
     }
     player_mut.debit(cost)?;
+    // Yatırım parayı yok etmez, hane halkına gelir olur (inşaat/makine).
+    crate::economy::distribute_capex_to_households(state, report, tick, cost);
 
     let fid = PrivateFarmId::new(state.counters.next_private_farm_id);
     state.counters.next_private_farm_id = state.counters.next_private_farm_id.saturating_add(1);
@@ -287,6 +293,8 @@ pub(crate) fn process_upgrade_factory(
         }));
     }
     player_mut.debit(cost)?;
+    // Yatırım parayı yok etmez, hane halkına gelir olur (inşaat/makine).
+    crate::economy::distribute_capex_to_households(state, report, tick, cost);
 
     let factory_mut = state.factories.get_mut(&factory_id).expect("validated above");
     factory_mut.level += 1;
@@ -561,6 +569,114 @@ mod tests {
     fn fid(n: u64) -> moneywar_domain::FactoryId { moneywar_domain::FactoryId::new(n) }
 
     // ── Emek havuzu ──────────────────────────────────────────────────────────
+
+
+    // ── Sermaye harcaması para yok etmez ─────────────────────────────────────
+
+    /// Hane halkı (Alıcı) ekle — capex'in gideceği taraf.
+    fn add_household(s: &mut GameState, id: u64) {
+        let mut p = moneywar_domain::Player::new(
+            PlayerId::new(id),
+            "H".to_string(),
+            moneywar_domain::Role::Tuccar,
+            moneywar_domain::Money::ZERO,
+            true,
+        )
+        .unwrap();
+        p.npc_kind = Some(moneywar_domain::NpcKind::Alici);
+        s.players.insert(p.id, p);
+    }
+
+    fn total_cash(s: &GameState) -> i64 {
+        s.players.values().map(|p| p.cash.as_cents()).sum()
+    }
+
+    #[test]
+    fn building_a_factory_moves_money_instead_of_destroying_it() {
+        // Yatırım gerçek hayatta parayı yok etmez, inşaatçıya öder. Motor
+        // eskiden sadece nakitten düşüyordu; ölçüm sonucu para arzı sezonda
+        // %28.5 kuruyor ve kaybın 2.04M'i bu kanaldan geliyordu.
+        let mut s = staff_state();
+        add_household(&mut s, 90);
+        add_household(&mut s, 91);
+        let mut r = TickReport::new(Tick::new(1));
+        let before = total_cash(&s);
+
+        process_build_factory(
+            &mut s,
+            &mut r,
+            Tick::new(1),
+            pid(1),
+            moneywar_domain::CityId::Ankara,
+            moneywar_domain::ProductKind::Un,
+        )
+        .unwrap();
+
+        assert_eq!(total_cash(&s), before, "fabrika kurmak parayı yok etmemeli");
+    }
+
+    #[test]
+    fn capex_income_reaches_households() {
+        let mut s = staff_state();
+        add_household(&mut s, 90);
+        let mut r = TickReport::new(Tick::new(1));
+
+        process_build_factory(
+            &mut s,
+            &mut r,
+            Tick::new(1),
+            pid(1),
+            moneywar_domain::CityId::Ankara,
+            moneywar_domain::ProductKind::Un,
+        )
+        .unwrap();
+
+        // İlk fabrika bedava olabilir; ikincisi ücretli.
+        process_build_factory(
+            &mut s,
+            &mut r,
+            Tick::new(1),
+            pid(1),
+            moneywar_domain::CityId::Izmir,
+            moneywar_domain::ProductKind::Kumas,
+        )
+        .unwrap();
+
+        assert!(
+            s.players[&PlayerId::new(90)].cash.as_cents() > 0,
+            "sermaye harcaması hane halkına gelir olmalı"
+        );
+    }
+
+    #[test]
+    fn capex_without_households_still_debits_the_investor() {
+        // Hane halkı yoksa (sade test dünyaları) para yine dolaşımdan çıkar;
+        // yatırımcı her hâlükârda öder — bedava fabrika olmaz.
+        let mut s = staff_state();
+        let mut r = TickReport::new(Tick::new(1));
+        let before = s.players[&PlayerId::new(1)].cash;
+
+        process_build_factory(
+            &mut s,
+            &mut r,
+            Tick::new(1),
+            pid(1),
+            moneywar_domain::CityId::Ankara,
+            moneywar_domain::ProductKind::Un,
+        )
+        .unwrap();
+        process_build_factory(
+            &mut s,
+            &mut r,
+            Tick::new(1),
+            pid(1),
+            moneywar_domain::CityId::Izmir,
+            moneywar_domain::ProductKind::Kumas,
+        )
+        .unwrap();
+
+        assert!(s.players[&PlayerId::new(1)].cash < before);
+    }
 
     #[test]
     fn hiring_is_capped_by_the_world_labor_pool() {

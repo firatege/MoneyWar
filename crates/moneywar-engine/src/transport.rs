@@ -47,6 +47,8 @@ pub(crate) fn process_buy_caravan(
         }));
     }
     player_mut.debit(cost)?;
+    // Yatırım parayı yok etmez, hane halkına gelir olur (kervan/araç yapımı).
+    crate::economy::distribute_capex_to_households(state, report, tick, cost);
 
     let caravan_id = CaravanId::new(state.counters.next_caravan_id);
     state.counters.next_caravan_id = state.counters.next_caravan_id.saturating_add(1);

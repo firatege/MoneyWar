@@ -83,34 +83,6 @@ const TAX_PERIOD: u32 = 10;
 #[allow(dead_code)]
 const TAX_PCT: i64 = 2;
 
-/// Alıcı sabit maaş periyodu — her N tick'te Alıcı NPC'lerine sabit gelir
-/// dağıtılır. Sanayici fab'larından bağımsız (havadan basılır), closed-loop
-/// dışı semi-open kanal.
-const ALICI_SALARY_PERIOD: u32 = 3;
-/// Alıcı başına her periyotta verilen sabit maaş (lira) — ekonominin talep
-/// motoru ve tek para basma kanalı.
-///
-/// **Sezon uzunluğuna dikkat.** Bu değer tick başına normalize olduğu için
-/// sezon uzadıkça toplam basım doğrusal artar. 350 tick'lik sezonda:
-/// `350/3 × 1600 × 10 Alıcı ≈ 1.9M₺/sezon` sıfırdan yaratılıyor. Eski
-/// kalibrasyon yorumu 90 tick'lik sezona göre yazılmıştı ve 60K/Alıcı
-/// diyordu; gerçekte 2000₺ ile 232K/Alıcı basılıyordu — kâr rollerinin
-/// toplam `PnL`'inin yaklaşık yarısı bu kanaldan geliyordu.
-///
-/// 2000 → 1600 (2026-07-25 denge denetimi). Ölçüm, 10 oyun × 350 tick,
-/// iki ayrı seed ailesinde tutarlı:
-/// - Tüccar / Sanayici kişi başı `PnL` oranı 4.3× → 3.0×
-/// - toplam eşleşme hacmi 2.59M → 2.65M (arttı)
-/// - üretim 1632 → 1594 batch (~%2 düşüş)
-/// - bedeli: Tüccar iflası sezon başına 1.4 → 2.1 (4 Tüccar'dan). Felaket
-///   freni 8'e izin veriyor, gözlenen en fazla 4 — sınır içinde, ve aracı
-///   sınıfın gerçek risk taşıması oyunun temasıyla uyumlu.
-///
-/// Daha düşük değerler (1200) makası biraz daha kapatıyor ama üretimi ve
-/// hacmi düşürüyor; 1800 ise makası 2000'den de kötüleştiriyor (metrik
-/// gürültülü, monoton değil).
-const ALICI_SALARY_LIRA: i64 = 1600;
-
 /// `advance_tick` içinde çağrılır — periyodik ekonomi akışlarını uygular.
 pub(crate) fn tick_economy(
     state: &mut GameState,
@@ -131,12 +103,11 @@ pub(crate) fn tick_economy(
         charge_storage_costs(state, report, tick);
     }
 
-    // Alıcı sabit maaş — havadan basılan ek gelir. Sanayici-bound wage tek
-    // başına Alıcı tüketim hızını karşılamıyordu (cliff t40+). Sabit akış
-    // sezon ikinci yarısında talep canlı tutar.
-    if t > 0 && t % ALICI_SALARY_PERIOD == 0 {
-        pay_alici_salary(state, report, tick);
-    }
+    // Basılan sabit maaş **kaldırıldı**. Hane halkı geliri artık iki gerçek
+    // kanaldan geliyor: fabrika ücretleri (çalışan başına) ve sermaye
+    // harcamasının inşaat/makine ödemesi. Ölçüm: basım sezonda 1.86M₺ idi,
+    // capex kanalı 2.04M₺ taşıyor — yerini fazlasıyla dolduruyor ve bu para
+    // yoktan yaratılmıyor, firmanın cebinden çıkıyor.
 
     // Maintenance — fab işletme gideri (Anno mekaniği): Sanayici'den çek, sistem dışı
     if t > 0 && t % MAINTENANCE_PERIOD == 0 {
@@ -293,26 +264,53 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
     }
 }
 
-/// Alıcı NPC'lerine sabit periyodik maaş — havadan basılır (semi-open).
-/// `pay_factory_wages` Sanayici cebinden çıkar (closed loop). Bu ek kanal
-/// Alıcı'ya sezon başından sonuna sürekli akış sağlar → t40 cliff yumuşar.
-fn pay_alici_salary(state: &mut GameState, report: &mut TickReport, tick: Tick) {
-    let alici_ids: Vec<PlayerId> = state
+/// Sermaye harcamasını hane halkına gelir olarak dağıt.
+///
+/// Fabrika kurmak, yükseltmek, kervan ya da tarla almak gerçek hayatta parayı
+/// **yok etmez** — inşaat işçisine, makine üreticisine ödeme yapar ve o para
+/// gelir olarak dolaşıma döner. Motor eskiden yatırımı sadece nakitten
+/// düşüyordu; ölçüm sonucu para arzı sezon boyunca %28.5 kuruyordu ve
+/// kaybın 2.04M'i bu kanaldandı.
+///
+/// Alıcı NPC'leri hane halkını temsil ettiği için pay onlara eşit bölünür.
+/// Bölümden artan kuruş ilk alıcıya yazılır — para korunumu bozulmasın.
+/// Hane halkı yoksa (test dünyaları) para yine yok olur, çağıran zaten
+/// nakitten düşmüştür.
+pub(crate) fn distribute_capex_to_households(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    amount: Money,
+) {
+    if !amount.is_positive() {
+        return;
+    }
+    let households: Vec<PlayerId> = state
         .players
         .iter()
         .filter(|(_, p)| p.npc_kind == Some(NpcKind::Alici))
         .map(|(id, _)| *id)
         .collect();
-    if alici_ids.is_empty() {
+    if households.is_empty() {
         return;
     }
-    let Ok(amount) = Money::from_lira(ALICI_SALARY_LIRA) else {
-        return;
-    };
-    for pid in alici_ids {
+    let n = i64::from(u32::try_from(households.len()).unwrap_or(1));
+    let share = amount.as_cents() / n;
+    let mut remainder = amount.as_cents() - share * n;
+
+    for pid in households {
+        let mut cents = share;
+        if remainder > 0 {
+            cents += 1;
+            remainder -= 1;
+        }
+        if cents <= 0 {
+            continue;
+        }
+        let money = Money::from_cents(cents);
         if let Some(p) = state.players.get_mut(&pid) {
-            let _ = p.credit(amount);
-            report.push(LogEntry::economy_salary(tick, pid, amount));
+            let _ = p.credit(money);
+            report.push(LogEntry::economy_salary(tick, pid, money));
         }
     }
 }
