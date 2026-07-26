@@ -1,7 +1,10 @@
 import { useDetail } from "../hooks/useDetail";
 import type { CityDetail } from "../types-detail";
+import type { BucketHistory } from "../lib/derive";
+import type { Snapshot } from "../types";
 import { compact, lira2, tickLabel } from "../lib/format";
-import { roleColor } from "../lib/roles";
+import { roleInk } from "../lib/roles";
+import { Sparkline } from "../components/sparkline/Sparkline";
 import { Block, DetailShell, RankList, Stat } from "./DetailShell";
 
 /**
@@ -16,12 +19,37 @@ import { Block, DetailShell, RankList, Stat } from "./DetailShell";
 interface Props {
   slug: string;
   tick: number;
+  snapshot: Snapshot | null;
+  bucketHistory: BucketHistory;
   onClose: () => void;
   onSelectFirm: (id: number) => void;
 }
 
-export function CityPanel({ slug, tick, onClose, onSelectFirm }: Props) {
+export function CityPanel({
+  slug,
+  tick,
+  snapshot,
+  bucketHistory,
+  onClose,
+  onSelectFirm,
+}: Props) {
   const { data, error, loading } = useDetail<CityDetail>(`/api/city/${slug}`, tick);
+
+  // Bu şehrin fiyatları — hepsi tek bir eksene binmesin diye küçük çoklu.
+  // Ürünlerin fiyat seviyeleri çok farklı (Zeytin ~16₺, Ziyafet ~300₺);
+  // ortak eksende ucuz olanlar dibe yapışıp okunmaz oluyor. Her ürün kendi
+  // ölçeğinde, güncel fiyatı yanında yazılı.
+  const priceRows = (snapshot?.prices ?? [])
+    .filter((c) => c.city === slug && c.last_lira != null)
+    .map((c) => ({
+      product: c.product,
+      label: c.product_label,
+      isRaw: c.is_raw,
+      last: c.last_lira as number,
+      baseline: c.baseline_lira,
+      series: bucketHistory[`${c.city}/${c.product}`] ?? [],
+    }))
+    .filter((r) => r.series.length >= 2);
 
   const staffPct =
     data && data.required_employees > 0
@@ -78,9 +106,9 @@ export function CityPanel({ slug, tick, onClose, onSelectFirm }: Props) {
                   key: `${p.seller.id}-${p.buyer.id}`,
                   label: (
                     <>
-                      <span style={{ color: roleColor(p.seller.role) }}>{p.seller.name}</span>
+                      <span style={{ color: roleInk(p.seller.role) }}>{p.seller.name}</span>
                       <span className="dt__rank-arrow"> → </span>
-                      <span style={{ color: roleColor(p.buyer.role) }}>{p.buyer.name}</span>
+                      <span style={{ color: roleInk(p.buyer.role) }}>{p.buyer.name}</span>
                     </>
                   ),
                   value: p.value_lira,
@@ -140,6 +168,38 @@ export function CityPanel({ slug, tick, onClose, onSelectFirm }: Props) {
               )}
             </Block>
 
+            {/* Fiyat seyri — eskiden yalnız /analytics altındaydı. */}
+            <Block title="Fiyat seyri" note="her ürün kendi ölçeğinde" wide>
+              {priceRows.length === 0 ? (
+                <p className="dt__state">henüz fiyat oluşmadı</p>
+              ) : (
+                <>
+                  <ul className="dt__smalls">
+                    {priceRows.map((r) => (
+                      <li key={r.product} className="dt__small">
+                        <span className="dt__small-head">
+                          <span className="dt__small-name">{r.label}</span>
+                          <span
+                            className={`dt__small-val${
+                              r.last >= r.baseline ? " is-up" : " is-down"
+                            }`}
+                          >
+                            {lira2(r.last)}₺
+                          </span>
+                        </span>
+                        <span className="dt__small-chart">
+                          <Sparkline values={r.series} baseline={r.baseline} />
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="dt__legend">
+                    <span>renk baz fiyata göre yön · yeşil üstünde, kırmızı altında</span>
+                  </p>
+                </>
+              )}
+            </Block>
+
             <Block title="Şehirde tutulan stok" note="değere göre">
               <RankList
                 emptyText="stok yok"
@@ -188,7 +248,7 @@ export function CityPanel({ slug, tick, onClose, onSelectFirm }: Props) {
                             {a.actor.name}
                           </button>
                         </td>
-                        <td style={{ color: roleColor(a.actor.role) }}>{a.actor.role ?? "—"}</td>
+                        <td style={{ color: roleInk(a.actor.role) }}>{a.actor.role ?? "—"}</td>
                         <td className="num">{a.factories}</td>
                         <td className="num">{a.farms}</td>
                         <td className="num">{a.stock_units}</td>
@@ -222,10 +282,10 @@ export function CityPanel({ slug, tick, onClose, onSelectFirm }: Props) {
                         <td>{t.product_label}</td>
                         <td className="num">{t.quantity}</td>
                         <td className="num">{lira2(t.price_lira)}₺</td>
-                        <td className="name" style={{ color: roleColor(t.seller.role) }}>
+                        <td className="name" style={{ color: roleInk(t.seller.role) }}>
                           {t.seller.name}
                         </td>
-                        <td className="name" style={{ color: roleColor(t.buyer.role) }}>
+                        <td className="name" style={{ color: roleInk(t.buyer.role) }}>
                           {t.buyer.name}
                         </td>
                       </tr>

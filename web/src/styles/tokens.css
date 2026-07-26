@@ -16,11 +16,20 @@
   --line-soft: oklch(26% 0.004 250 / 0.4);
   --line-strong: oklch(38% 0.006 250 / 0.8);
 
-  /* --- Metin --- */
+  /* --- Metin ---
+
+     Basamaklar göze göre değil ölçülerek seçildi. Eski `--text-faint` (%50)
+     zemine karşı 3.35:1, `--text-ghost` (%38) ise 2.01:1 idi; ikisi de
+     küçük metin için gereken 4.5:1'in altındaydı ve ekranın büyük kısmı
+     (sıra numaraları, birim etiketleri, sütun başlıkları) bu iki tonu
+     kullandığı için "yazılar seçilmiyor" haline geliyordu.
+
+     Yeni basamaklar 58%'den başlıyor — hepsi 4.5:1 üstü. Dekoratif ayraç
+     ve çizgiler için metin tonu değil `--line-*` kullanılır. */
   --text: oklch(88% 0.004 250);
-  --text-dim: oklch(68% 0.005 250);
-  --text-faint: oklch(50% 0.005 250);
-  --text-ghost: oklch(38% 0.004 250);
+  --text-dim: oklch(72% 0.005 250);
+  --text-faint: oklch(64% 0.005 250);
+  --text-ghost: oklch(58% 0.004 250);
 
   /* --- Aksan (mat bronz/altın — nötr, parıltısız) --- */
   --accent: oklch(72% 0.06 75);
@@ -56,6 +65,24 @@
   --role-alici: oklch(50% 0.115 305);
   --role-banka: oklch(65% 0.115 215);
   --role-toptanci: oklch(58% 0.12 185);
+
+  /* --- Rol mürekkebi: aynı kimlik, **yazı** için ---
+
+     Yukarıdaki palet *işaret* için doğrulandı (çubuk, nokta, halka): oradaki
+     eşik yüzeye karşı 3:1. Yazı için eşik 4.5:1 ve düşük açıklıklı üç ton
+     bunu geçmiyordu — ölçümde Çiftçi 3.55, Sanayici 3.38, Alıcı 3.18. Küçük
+     puntoda "beyaz yazılar seçilmiyor" şikayetinin kaynağı buydu.
+
+     Kural: **yazı metin token'ı ya da bu mürekkebi giyer, kimliği yanındaki
+     renkli işaret taşır.** Mürekkep tonları aynı hue'da, sadece daha açık;
+     hepsi zemine karşı 8:1 üstü. */
+  --ink-ciftci: oklch(74% 0.11 145);
+  --ink-tuccar: oklch(74% 0.11 75);
+  --ink-sanayici: oklch(74% 0.09 245);
+  --ink-spekulator: oklch(74% 0.11 15);
+  --ink-alici: oklch(74% 0.09 305);
+  --ink-banka: oklch(74% 0.08 215);
+  --ink-toptanci: oklch(74% 0.09 185);
 
   /* --- Tipografi --- */
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;

@@ -1,7 +1,7 @@
 import { useDetail } from "../hooks/useDetail";
 import type { FactoryDetail } from "../types-detail";
 import { compact, lira2, tickLabel } from "../lib/format";
-import { roleColor } from "../lib/roles";
+import { roleInk } from "../lib/roles";
 import { Block, DetailShell, Stat } from "./DetailShell";
 
 /**
@@ -39,7 +39,7 @@ export function FactoryPanel({ id, tick, onClose, onSelectFirm }: Props) {
             <button
               type="button"
               className="dt__linkbtn"
-              style={{ color: roleColor(data.owner.role) }}
+              style={{ color: roleInk(data.owner.role) }}
               onClick={() => onSelectFirm(data.owner.id)}
             >
               {data.owner.name} →
@@ -232,7 +232,7 @@ export function FactoryPanel({ id, tick, onClose, onSelectFirm }: Props) {
                             <button
                               type="button"
                               className="dt__linkbtn"
-                              style={{ color: roleColor(t.buyer.role) }}
+                              style={{ color: roleInk(t.buyer.role) }}
                               onClick={() => onSelectFirm(t.buyer.id)}
                             >
                               {t.buyer.name}

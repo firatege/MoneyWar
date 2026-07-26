@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { PlayerDto, Snapshot } from "../../types";
 import { compact, signedCompact } from "../../lib/format";
-import { roleCode, roleColor } from "../../lib/roles";
+import { roleCode, roleColor, roleInk } from "../../lib/roles";
 import "./rankings.css";
 
 /**
@@ -65,7 +65,14 @@ export function Rankings({ snapshot, prev, selectedId, onSelect }: Props) {
           const neg = r.per_capita_pnl_lira < 0;
           return (
             <li key={r.kind} className="rank__role">
-              <span className="rank__role-name" style={{ color: roleColor(r.label) }}>
+              {/* Kimlik renkli işarette, okunabilirlik yazıda. Rol rengini
+                  doğrudan yazıya vermek küçük puntoda 3.2:1'e düşüyordu. */}
+              <span className="rank__role-name">
+                <i
+                  className="rank__swatch"
+                  style={{ background: roleColor(r.label) }}
+                  aria-hidden="true"
+                />
                 {r.label}
               </span>
               <span className="rank__role-n">×{r.count}</span>
@@ -160,7 +167,7 @@ function RankRow({
           )}
         </span>
         {/* Rozet renk + kod taşıyor: kimlik yalnız renge bağlı kalmasın. */}
-        <span className="rank__badge" style={{ color: roleColor(player.npc_kind) }}>
+        <span className="rank__badge" style={{ color: roleInk(player.npc_kind) }}>
           {roleCode(player.npc_kind)}
         </span>
         <span className="rank__name">{player.name}</span>

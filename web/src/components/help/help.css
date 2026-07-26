@@ -245,3 +245,95 @@
     gap: 0.15rem;
   }
 }
+
+/* ── Üç kademeli inceleme adımları ────────────────────────────────────── */
+
+.help__drill {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.help__step {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.help__step-n {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.help__step-body {
+  display: block;
+  min-width: 0;
+}
+
+.help__step-title {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.help__step-desc {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
+.help__kbd {
+  padding: 0 0.25rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+/* ── Entrika sözlüğü ──────────────────────────────────────────────────── */
+
+.help__intrigue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.help__intrigue-row {
+  display: grid;
+  grid-template-columns: 1.4rem minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.help__intrigue-icon {
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.help__intrigue-body {
+  display: block;
+  min-width: 0;
+}
+
+.help__intrigue-name {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.help__intrigue-desc {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-faint);
+}

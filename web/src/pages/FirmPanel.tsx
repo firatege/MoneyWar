@@ -1,7 +1,9 @@
 import { useDetail } from "../hooks/useDetail";
 import type { FirmDetail } from "../types-detail";
+import type { PnlPoint } from "../lib/derive";
+import { Sparkline } from "../components/sparkline/Sparkline";
 import { compact, lira2, signedCompact, tickLabel } from "../lib/format";
-import { roleColor } from "../lib/roles";
+import { roleInk } from "../lib/roles";
 import { Block, DetailShell, RankList, Stat } from "./DetailShell";
 
 /**
@@ -25,12 +27,21 @@ import { Block, DetailShell, RankList, Stat } from "./DetailShell";
 interface Props {
   id: number;
   tick: number;
+  /** Bu sezonun PnL zaman serisi (istemcide birikiyor). */
+  pnlHistory: PnlPoint[];
   onClose: () => void;
   onSelectFactory: (id: number) => void;
   onSelectFirm: (id: number) => void;
 }
 
-export function FirmPanel({ id, tick, onClose, onSelectFactory, onSelectFirm }: Props) {
+export function FirmPanel({
+  id,
+  tick,
+  pnlHistory,
+  onClose,
+  onSelectFactory,
+  onSelectFirm,
+}: Props) {
   const { data, error, loading } = useDetail<FirmDetail>(`/api/firm/${id}`, tick);
 
   // İki yönlü çubuğun ortak ölçeği: tek bir yönde dönen en büyük tutar.
@@ -80,6 +91,28 @@ export function FirmPanel({ id, tick, onClose, onSelectFactory, onSelectFirm }: 
             <Stat label="Fabrika" value={data.factories.length} sub={`${data.farms.length} çiftlik`} />
           </div>
 
+          {/* PnL eğrisi — eskiden yalnız /analytics/firm/:id altındaydı.
+              Tek sayı "şu an ne durumda" der; eğri "nasıl geldi" der ve
+              izleyicinin asıl merak ettiği bu. */}
+          {pnlHistory.length >= 2 && (
+            <Block title="Kâr / zarar seyri" note={`${pnlHistory.length} tick`} wide>
+              <div className="dt__pnl">
+                <Sparkline
+                  values={pnlHistory.map((p) => p.pnl)}
+                  width={600}
+                  height={72}
+                  baseline={0}
+                />
+              </div>
+              <p className="dt__legend">
+                <span>
+                  {tickLabel(pnlHistory[0].tick)} → {tickLabel(pnlHistory[pnlHistory.length - 1].tick)}
+                  {" · "}sıfır çizgisi başa baş
+                </span>
+              </p>
+            </Block>
+          )}
+
           {/* Fabrikalar — bir sonraki kademeye geçiş. */}
           <Block title="Fabrikaları" note="tıkla → fabrika sayfası" wide>
             {data.factories.length === 0 ? (
@@ -123,7 +156,7 @@ export function FirmPanel({ id, tick, onClose, onSelectFactory, onSelectFirm }: 
                         <button
                           type="button"
                           className="dt__linkbtn"
-                          style={{ color: roleColor(p.actor.role) }}
+                          style={{ color: roleInk(p.actor.role) }}
                           onClick={() => onSelectFirm(p.actor.id)}
                         >
                           {p.actor.name}
@@ -271,7 +304,7 @@ export function FirmPanel({ id, tick, onClose, onSelectFactory, onSelectFirm }: 
                             <button
                               type="button"
                               className="dt__linkbtn"
-                              style={{ color: roleColor(other.role) }}
+                              style={{ color: roleInk(other.role) }}
                               onClick={() => onSelectFirm(other.id)}
                             >
                               {other.name}

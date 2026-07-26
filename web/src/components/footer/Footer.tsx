@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { Logo } from "../brand/Logo";
 import "./footer.css";
 
@@ -19,8 +18,6 @@ export function Footer({ onHelp }: Props) {
         <button className="ftr__link ftr__link--btn" onClick={onHelp}>
           nasıl çalışır
         </button>
-        <span className="ftr__sep">·</span>
-        <Link className="ftr__link" to="/analytics">analitik</Link>
         <span className="ftr__sep">·</span>
         <a
           className="ftr__link"

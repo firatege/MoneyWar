@@ -2,10 +2,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
-import { AnalyticsPage } from "./pages/AnalyticsPage.tsx";
-import { FirmPage } from "./pages/FirmPage.tsx";
-import { BucketPage } from "./pages/BucketPage.tsx";
-import { MarketPage } from "./pages/MarketPage.tsx";
 import "./styles/global.css";
 
 const root = document.getElementById("root");
@@ -15,11 +11,14 @@ createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
+        {/* Tek sayfa. Ayrı "analitik" bölümü vardı; içeriğinin tamamı
+            dashboard'ın üç kademeli inceleme akışına taşındı — orada
+            kalan son iki şey (fiyat seyri, firma PnL eğrisi) şehir ve
+            firma sayfalarına eklendi. İki paralel arayüzü ayakta tutmak
+            hem bakım yüküydü hem de "insan ne aradığını bulmalı"
+            hedefine ters düşüyordu. */}
         <Route path="/" element={<DashboardPage />} />
-        <Route path="/analytics" element={<AnalyticsPage />} />
-        <Route path="/analytics/firm/:id" element={<FirmPage />} />
-        <Route path="/analytics/bucket/:city/:product" element={<BucketPage />} />
-        <Route path="/analytics/market" element={<MarketPage />} />
+        <Route path="*" element={<DashboardPage />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

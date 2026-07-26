@@ -27,7 +27,8 @@ export type Focus =
   | { kind: "factory"; id: number };
 
 export function DashboardPage() {
-  const { snapshot, prev, feed, status, market, seasons, resetSeason } = useGameSocket();
+  const { snapshot, prev, feed, status, market, history, bucketHistory, seasons, resetSeason } =
+    useGameSocket();
   const [focus, setFocus] = useState<Focus>({ kind: "none" });
   const [showHelp, setShowHelp] = useState(false);
 
@@ -92,6 +93,8 @@ export function DashboardPage() {
             <CityPanel
               slug={focus.slug}
               tick={tick}
+              snapshot={snapshot}
+              bucketHistory={bucketHistory}
               onClose={() => setFocus({ kind: "none" })}
               onSelectFirm={(id) => setFocus({ kind: "firm", id })}
             />
@@ -100,6 +103,7 @@ export function DashboardPage() {
             <FirmPanel
               id={focus.id}
               tick={tick}
+              pnlHistory={history[focus.id] ?? []}
               onClose={() => setFocus({ kind: "none" })}
               onSelectFactory={(id) => setFocus({ kind: "factory", id })}
               onSelectFirm={(id) => setFocus({ kind: "firm", id })}

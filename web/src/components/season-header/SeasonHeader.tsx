@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
 import type { ConnStatus, SeasonSummary, Snapshot } from "../../types";
 import { clock, lira, signedCompact } from "../../lib/format";
 import { Logo } from "../brand/Logo";
@@ -28,8 +27,6 @@ export function SeasonHeader({ snapshot, status, onHelp, seasons = [], onReset }
   const remaining = clock((total - tick) * spt);
   const [showHistory, setShowHistory] = useState(false);
   const [resetting, setResetting] = useState(false);
-  const loc = useLocation();
-  const onAnalytics = loc.pathname.startsWith("/analytics");
 
   const handleReset = async () => {
     if (!onReset) return;
@@ -50,12 +47,6 @@ export function SeasonHeader({ snapshot, status, onHelp, seasons = [], onReset }
           <button className="hdr__help" onClick={onHelp} title="nasıl çalışır">
             nasıl çalışır?
           </button>
-          <Link
-            className={`hdr__help hdr__nav-link ${onAnalytics ? "hdr__nav-link--active" : ""}`}
-            to={onAnalytics ? "/" : "/analytics"}
-          >
-            {onAnalytics ? "← dashboard" : "analitik →"}
-          </Link>
           {seasons.length > 0 && (
             <button className="hdr__help" onClick={() => setShowHistory(true)} title="geçmiş sezonlar">
               geçmiş
