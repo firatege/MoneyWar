@@ -681,6 +681,35 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         .collect();
 
     if candidates.is_empty() {
+        // ── BİLİNEN SORUN: fabrika dağılımı = ürün sıralaması ─────────────
+        //
+        // Aşağıdaki `find()` "enum sırasındaki ilk boşluk"u seçiyor; marja
+        // da ihtiyaca da bakmıyor. Dünyadaki tüm (şehir, ürün) slotları
+        // dolduktan sonra kurulan **her** fabrika bu yoldan geçtiği için
+        // dağılım listenin kendisi oluyor:
+        //
+        //   gözlenen  Kumaş 13 · Un 12 · Zeytinyağı 8 · Şarap 7 · Elbise 6 · Ekmek 5 · Ziyafet 5
+        //   liste     [Kumaş, Un, Zeytinyağı, Şarap, Elbise, Ekmek, Ziyafet]
+        //
+        // Zincirin tepesi bu yüzden hiç büyümüyor — Ziyafet listenin sonunda.
+        //
+        // Düzeltmesi denendi: yedek yol da ilk fabrikayla aynı skorlamadan
+        // geçirildi. Dağılım gerçekten düzeldi (Kumaş 13→5, Un 12→5,
+        // Ekmek 5→9, Ziyafet 5→14) ama **açlık tepeden dibe taşındı**:
+        // 14 Ziyafet fabrikası 3.972 Ekmek için kapışır oldu, taban çöktü.
+        //
+        //   30 oyun × 350 tick     açlık  makas  Sanayici   Alıcı
+        //   şimdiki (find)           %54   3.4x     85015   +8952
+        //   skorlamalı, açık ağ. 0   %59   3.8x    116440   -9112
+        //   skorlamalı, açık ağ. 10  %64   3.7x     85285  -12853
+        //
+        // Marj tek başına yanlış sinyal (ham ucuz olduğu için dibi ödüllendirir),
+        // kıtlık sinyali de tek başına yanlış (tepeye yığar). Doğrusu **akış
+        // dengesi**: bir Un fabrikası ~1.5 Ekmek fabrikasını, bir Ekmek
+        // fabrikası ~1.4 Ziyafet fabrikasını besler. Skorun bu oranı hedeflemesi
+        // gerekiyor — girdi bulunabilirliğine bakan gerçek bir tasarım işi,
+        // tek sabitle çözülmüyor.
+        //
         // Tüm 9 dolmuş — kendi sahibi olmadığı bir kombinasyon (overlap)
         let own_taken: std::collections::BTreeSet<(CityId, ProductKind)> = state
             .factories
