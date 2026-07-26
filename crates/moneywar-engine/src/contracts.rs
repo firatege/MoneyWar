@@ -39,13 +39,12 @@ pub(crate) fn process_propose_contract(
         ))));
     }
     // Personal kontratta target oyuncu da var olmalı.
-    if let ListingKind::Personal { target } = proposal.listing {
-        if !state.players.contains_key(&target) {
+    if let ListingKind::Personal { target } = proposal.listing
+        && !state.players.contains_key(&target) {
             return Err(EngineError::Domain(DomainError::Validation(format!(
                 "personal target {target} not found"
             ))));
         }
-    }
 
     // ID üret + Contract::propose ile validation.
     let contract_id = ContractId::new(state.counters.next_contract_id);

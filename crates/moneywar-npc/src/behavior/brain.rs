@@ -453,11 +453,10 @@ impl AgentBrain {
                     return self.transition(war);
                 }
                 // Fırsatçı: bir rakibin tekelleştirdiği (fiyat şişirdiği) pazara gir.
-                if self.archetype == IntrigueArchetype::Firsatci {
-                    if let Some((city, product)) = rival_monopoly_bucket(state, player_id) {
+                if self.archetype == IntrigueArchetype::Firsatci
+                    && let Some((city, product)) = rival_monopoly_bucket(state, player_id) {
                         return self.transition(Goal::Corner { city, product });
                     }
-                }
                 // Bir bucket'ta baskın pozisyon kazandıysam → Corner.
                 if let Some((city, product)) = self.strongest_owned_bucket() {
                     if self.ownership_of(city, product) >= corner_threshold {
@@ -476,11 +475,10 @@ impl AgentBrain {
                 }
                 // Rakip tehdidi yüksekse → en tehditkar rakibe savaş.
                 let threat = self.rival_threat_for(c, p, player_id);
-                if threat > war_threshold {
-                    if let Some(target) = self.war_target() {
+                if threat > war_threshold
+                    && let Some(target) = self.war_target() {
                         return self.transition(Goal::PriceWar { city: c, product: p, target });
                     }
-                }
                 // Pekiştirildiyse (yüksek sahiplik) → Consolidate.
                 if self.ownership_of(c, p) > 0.6 {
                     Some(Goal::Consolidate)

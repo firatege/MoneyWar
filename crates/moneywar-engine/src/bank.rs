@@ -35,7 +35,7 @@ const BANK_MAX_OUTLAY_RATIO_PCT: i64 = 60;
 /// `advance_tick` içinden çağrılır — Banka NPC'lerin kredi akışını işler.
 pub(crate) fn tick_banks(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     let t = tick.value();
-    if t == 0 || t % BANK_LEND_PERIOD != 0 {
+    if t == 0 || !t.is_multiple_of(BANK_LEND_PERIOD) {
         return;
     }
 

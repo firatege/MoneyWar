@@ -44,13 +44,12 @@ impl LogSink {
                 ring.push_back(line.to_string());
             }
         }
-        if let Ok(mut f) = self.file.lock() {
-            if let Some(w) = f.as_mut() {
+        if let Ok(mut f) = self.file.lock()
+            && let Some(w) = f.as_mut() {
                 let _ = w.write_all(block.as_bytes());
                 let _ = w.write_all(b"\n");
                 let _ = w.flush();
             }
-        }
     }
 
     /// Son `n` satırı düz metin olarak döndür (n=0 → tümü).

@@ -102,11 +102,10 @@ impl Lobby {
 
     /// Ready toggle. Rol seçilmemişse no-op (sessiz reddet).
     pub fn set_ready(&mut self, player_id: PlayerId, ready: bool) {
-        if let Some(slot) = self.slots.get_mut(&player_id) {
-            if slot.role.is_some() {
+        if let Some(slot) = self.slots.get_mut(&player_id)
+            && slot.role.is_some() {
                 slot.ready = ready;
             }
-        }
     }
 
     /// Tüm slot'lar (en az 2) ready ve rolü var mı?

@@ -24,7 +24,7 @@ use std::time::Instant;
 
 use moneywar_domain::Money;
 use moneywar_engine::{LogEvent, leaderboard, story_headline};
-use moneywar_sim::balance::{BalanceAccumulator, BalanceReport};
+use moneywar_web::balance::{BalanceAccumulator, BalanceReport};
 use moneywar_sim::drama::DramaScorecard;
 use moneywar_sim::metrics::{Metrics, MetricsAccumulator};
 use moneywar_web::driver::SimDriver;
@@ -390,7 +390,7 @@ fn print_balance(outcomes: &[Outcome]) {
     println!("{:-<95}", "");
 
     let mut rows: Vec<(f64, String)> = Vec::new();
-    for &kind in &moneywar_sim::balance::ROLE_ORDER {
+    for &kind in &moneywar_web::balance::ROLE_ORDER {
         let per: Vec<_> = outcomes
             .iter()
             .filter_map(|o| o.balance.roles.iter().find(|r| r.kind == kind))
@@ -399,7 +399,7 @@ fn print_balance(outcomes: &[Outcome]) {
             continue;
         }
         let k = per.len() as f64;
-        let avg = |f: &dyn Fn(&moneywar_sim::balance::RoleBalance) -> f64| -> f64 {
+        let avg = |f: &dyn Fn(&moneywar_web::balance::RoleBalance) -> f64| -> f64 {
             per.iter().map(|r| f(r)).sum::<f64>() / k
         };
         let per_capita = avg(&|r| r.pnl_per_capita);
@@ -445,7 +445,7 @@ fn print_balance(outcomes: &[Outcome]) {
     // ── Arz / talep dengesi ──────────────────────────────────────────────────
     // Fabrika neden atıl, fiyat neden kayıyor sorusunun tek cevap kaynağı:
     // talep arzın kaç katı ve kitaba giren arzın kaçta kaçı gerçekten satıldı.
-    let mut flows: std::collections::BTreeMap<&'static str, Vec<moneywar_sim::balance::MarketFlow>> =
+    let mut flows: std::collections::BTreeMap<&'static str, Vec<moneywar_web::balance::MarketFlow>> =
         std::collections::BTreeMap::new();
     for o in outcomes {
         for (product, flow) in &o.balance.market {
@@ -456,7 +456,7 @@ fn print_balance(outcomes: &[Outcome]) {
         .into_iter()
         .map(|(name, fs)| {
             let k = fs.len() as f64;
-            let mean = |f: &dyn Fn(&moneywar_sim::balance::MarketFlow) -> f64| -> f64 {
+            let mean = |f: &dyn Fn(&moneywar_web::balance::MarketFlow) -> f64| -> f64 {
                 fs.iter().map(f).sum::<f64>() / k
             };
             let ratio = mean(&|f| f.demand_supply_ratio().min(99.0));
@@ -506,7 +506,7 @@ fn print_balance(outcomes: &[Outcome]) {
     // üretiliyor ama Sanayici piyasada kaybediyor. Bu tablo ikincisini ölçer.
     let mut raw_rows: Vec<(u64, String)> = Vec::new();
     let mut raw_total = 0.0;
-    for &kind in &moneywar_sim::balance::ROLE_ORDER {
+    for &kind in &moneywar_web::balance::ROLE_ORDER {
         let qty: u64 = outcomes
             .iter()
             .filter_map(|o| o.balance.raw_buy_by_role.iter().find(|(k, _)| *k == kind))
@@ -612,7 +612,7 @@ fn print_balance(outcomes: &[Outcome]) {
     // (aldığı hammaddeyi tüketir), aracı için yüksek. Tüccar'ın kârı taşımadan
     // mı geliyor sorusunun doğrudan cevabı.
     let mut churn_rows: Vec<String> = Vec::new();
-    for &kind in &moneywar_sim::balance::ROLE_ORDER {
+    for &kind in &moneywar_web::balance::ROLE_ORDER {
         let vals: Vec<f64> = outcomes
             .iter()
             .filter_map(|o| o.balance.churn_by_role.iter().find(|(k, _)| *k == kind))
@@ -633,7 +633,7 @@ fn print_balance(outcomes: &[Outcome]) {
     // Emek piyasası / banka çalışmasının referansı: kapalı döngüye geçince
     // para arzı sabit kalmalı, deflasyona girmemeli.
     let lira = |cents: f64| cents / 100.0;
-    let m = |f: &dyn Fn(&moneywar_sim::balance::MoneyFlow) -> i64| -> f64 {
+    let m = |f: &dyn Fn(&moneywar_web::balance::MoneyFlow) -> i64| -> f64 {
         outcomes.iter().map(|o| f(&o.balance.money) as f64).sum::<f64>() / n_games
     };
     println!("\n  PARA ARZI (oyun başına ortalama)");

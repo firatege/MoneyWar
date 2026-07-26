@@ -10,6 +10,7 @@ use moneywar_domain::{GameState, Tick};
 use moneywar_engine::{TickReport, advance_tick, leaderboard, rng_for};
 use moneywar_npc::{BrainPool, Difficulty, decide_all_npcs};
 
+use crate::balance::{BalanceAccumulator, BalanceReport};
 use crate::dto::{Snapshot, build_snapshot};
 use crate::world::new_season;
 
@@ -39,6 +40,13 @@ fn next_seed(base: u64, season: u64) -> u64 {
         .wrapping_add(season.wrapping_mul(0x1234_5678_9ABC_DEF1))
 }
 
+/// Kapanan bir sezonun denetim kaydı — arşive yazılacak paket.
+#[derive(Debug, Clone)]
+pub struct CompletedSeason {
+    pub season: u64,
+    pub report: BalanceReport,
+}
+
 /// Sezon döngüsü sürücüsü.
 #[derive(Debug)]
 pub struct SimDriver {
@@ -51,6 +59,9 @@ pub struct SimDriver {
     pub brains: BrainPool,
     /// Son 20 sezonun özeti.
     pub season_history: Vec<SeasonSummary>,
+    /// Bu sezonun denge denetimi — her tick beslenir, sezon dönüşünde sıfırlanır.
+    /// `GET /api/audit` bunun anlık raporunu döndürür.
+    audit: BalanceAccumulator,
     base_seed: u64,
     difficulty: Difficulty,
 }
@@ -73,6 +84,7 @@ impl SimDriver {
             seconds_per_tick,
             brains: BrainPool::default(),
             season_history: Vec::new(),
+            audit: BalanceAccumulator::default(),
             base_seed,
             difficulty,
         }
@@ -112,6 +124,8 @@ impl SimDriver {
         let seed = next_seed(self.base_seed, self.season);
         self.state = new_season(seed);
         self.last_report = TickReport::new(Tick::ZERO);
+        self.audit = BalanceAccumulator::default();
+        self.audit.sample_money(&self.state);
         tracing::info!(season = self.season, "sezon manuel sıfırlandı");
     }
 
@@ -123,16 +137,25 @@ impl SimDriver {
     }
 
     /// Tek tick ilerlet. Sezon dolduysa yeni seed ile yeni sezon başlat.
-    pub fn step(&mut self) {
+    ///
+    /// Sezon kapandıysa **tamamlanan sezonun** denetim raporunu döndürür;
+    /// çağıran onu arşivler. Sürücü diske yazmaz — IO web katmanının işi.
+    pub fn step(&mut self) -> Option<CompletedSeason> {
         if self.state.current_tick.value() >= self.season_ticks {
             let summary = self.capture_summary();
+            let finished = CompletedSeason {
+                season: self.season,
+                report: self.audit_report(),
+            };
             self.push_history(summary);
             self.season += 1;
             let seed = next_seed(self.base_seed, self.season);
             self.state = new_season(seed);
             self.last_report = TickReport::new(Tick::ZERO);
+            self.audit = BalanceAccumulator::default();
+            self.audit.sample_money(&self.state);
             tracing::info!(season = self.season, seed, "yeni sezon başladı");
-            return;
+            return Some(finished);
         }
 
         let next_tick = Tick::new(self.state.current_tick.value() + 1);
@@ -141,12 +164,26 @@ impl SimDriver {
         match advance_tick(&self.state, &cmds) {
             Ok((next_state, report)) => {
                 self.state = next_state;
+                for entry in &report.entries {
+                    self.audit.record(&self.state, &entry.event);
+                }
+                self.audit.sample_money(&self.state);
                 self.last_report = report;
             }
             Err(e) => {
                 tracing::error!(tick = next_tick.value(), error = %e, "advance_tick hatası");
             }
         }
+        None
+    }
+
+    /// Bu sezonun **şimdiye kadarki** denge denetimi.
+    ///
+    /// Sim'in sezon sonu raporuyla aynı hesap; fark, sezon ortasında da
+    /// çağrılabilmesi. "Şu an bir sorun var mı?" sorusunun tek adresi.
+    #[must_use]
+    pub fn audit_report(&self) -> BalanceReport {
+        self.audit.finalize(&self.state)
     }
 
     /// Mevcut durumun tam snapshot'ı.
@@ -160,5 +197,69 @@ impl SimDriver {
             self.seconds_per_tick,
             &self.brains,
         )
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stepped(ticks: u32) -> SimDriver {
+        let mut d = SimDriver::new(crate::DEFAULT_SEED, 350, 3, crate::DIFFICULTY);
+        for _ in 0..ticks {
+            d.step();
+        }
+        d
+    }
+
+    #[test]
+    fn audit_report_is_available_mid_season() {
+        // "Şu an sorun var mı?" sorusu sezon bitmeden sorulabilmeli — sim
+        // sezon sonunda rapor üretiyordu, canlı oyunda beklemek işe yaramaz.
+        let d = stepped(40);
+        let r = d.audit_report();
+        assert!(!r.roles.is_empty(), "rol tablosu dolmalı");
+        assert!(
+            r.money.supply_start > 0,
+            "para arzı örneklemesi sezon başından itibaren olmalı"
+        );
+    }
+
+    #[test]
+    fn audit_accumulates_over_ticks() {
+        let early = stepped(10).audit_report();
+        let late = stepped(60).audit_report();
+        let sum = |r: &BalanceReport| -> u64 {
+            r.roles.iter().map(|x| x.flow.fills).sum()
+        };
+        assert!(sum(&late) > sum(&early), "denetim tick'lerle birikmeli");
+    }
+
+    #[test]
+    fn audit_resets_on_season_rollover() {
+        // Sezon dönünce denetim sıfırlanmalı; yoksa yeni sezonun tablosu
+        // eskisinin verisiyle kirlenir.
+        let mut d = SimDriver::new(crate::DEFAULT_SEED, 5, 3, crate::DIFFICULTY);
+        for _ in 0..5 {
+            d.step();
+        }
+        let before_rollover: u64 = d.audit_report().roles.iter().map(|r| r.flow.fills).sum();
+        assert!(before_rollover > 0, "sezon içinde fill birikmiş olmalı");
+
+        d.step(); // sezon dolu → yeni sezon
+        assert_eq!(d.season, 2);
+        let after: u64 = d.audit_report().roles.iter().map(|r| r.flow.fills).sum();
+        assert_eq!(after, 0, "yeni sezon temiz denetimle başlamalı");
+    }
+
+    #[test]
+    fn audit_report_serializes_to_json() {
+        // Endpoint JSON döndürüyor; alanların serileşmesi kırılırsa
+        // canlıda 500 alırız.
+        let r = stepped(20).audit_report();
+        let json = serde_json::to_string(&r).expect("rapor serileşmeli");
+        assert!(json.contains("roles"));
+        assert!(json.contains("money"));
     }
 }

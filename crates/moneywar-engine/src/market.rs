@@ -258,22 +258,17 @@ fn clear_bucket(
             // girdiler pahalandığında hiç devreye giremezdi. Maliyet
             // baseline'lardan hesaplandığı için (piyasa fiyatından değil)
             // sönümlü kalır, sarmal kurmaz.
-            //
-            // Not: let-chain (`if let ... && ...`) kullanılmıyor — deploy
-            // image'ı Rust 1.86 ve bu sözdizimi 1.88'de stabilleşti.
-            if !product.is_raw() {
-                if let Some(cost) = state.recipe_unit_cost(city, product) {
-                    let floor = cost
-                        .as_cents()
-                        .saturating_mul(
-                            100 + moneywar_domain::balance::min_production_margin_pct(),
-                        )
-                        / 100;
-                    if let Some(baseline) = state.price_baseline.get_mut(&key) {
-                        if baseline.as_cents() < floor {
-                            *baseline = Money::from_cents(floor);
-                        }
-                    }
+            if !product.is_raw()
+                && let Some(cost) = state.recipe_unit_cost(city, product)
+            {
+                let floor = cost
+                    .as_cents()
+                    .saturating_mul(100 + moneywar_domain::balance::min_production_margin_pct())
+                    / 100;
+                if let Some(baseline) = state.price_baseline.get_mut(&key)
+                    && baseline.as_cents() < floor
+                {
+                    *baseline = Money::from_cents(floor);
                 }
             }
         }

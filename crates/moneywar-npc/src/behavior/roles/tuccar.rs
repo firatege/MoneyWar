@@ -316,11 +316,10 @@ fn enumerate_contract_accepts(state: &GameState, player: &Player) -> Vec<ActionC
         if contract.seller == player.id {
             continue;
         }
-        if let moneywar_domain::ListingKind::Personal { target } = contract.listing {
-            if target != player.id {
+        if let moneywar_domain::ListingKind::Personal { target } = contract.listing
+            && target != player.id {
                 continue;
             }
-        }
         // Sadece mamul (Tüccar arbitraj için taşır, ham almaz Sanayici accept'i için)
         if !contract.product.is_finished() {
             continue;

@@ -93,13 +93,13 @@ pub(crate) fn tick_economy(
     let t = tick.value();
 
     // Wages — Sanayici fab'ları işçilere (Alıcı'lara) ücret ödesin (closed loop)
-    if t > 0 && t % WAGE_PERIOD == 0 {
+    if t > 0 && t.is_multiple_of(WAGE_PERIOD) {
         pay_factory_wages(state, report, tick);
     }
 
     // Depolama maliyeti — büyük stok tutmanın bedeli.
     // Sanayici'ye indirimli (fabrika deposu), diğerlerine standart fiyat.
-    if t > 0 && t % STORAGE_PERIOD == 0 {
+    if t > 0 && t.is_multiple_of(STORAGE_PERIOD) {
         charge_storage_costs(state, report, tick);
     }
 
@@ -110,7 +110,7 @@ pub(crate) fn tick_economy(
     // yoktan yaratılmıyor, firmanın cebinden çıkıyor.
 
     // Maintenance — fab işletme gideri (Anno mekaniği): Sanayici'den çek, sistem dışı
-    if t > 0 && t % MAINTENANCE_PERIOD == 0 {
+    if t > 0 && t.is_multiple_of(MAINTENANCE_PERIOD) {
         charge_factory_maintenance(state, report, tick);
     }
 
@@ -128,7 +128,7 @@ pub(crate) fn tick_economy(
     // Sanayici NPC fab dağılımı 9 mamul bucket'ı kapsayamadığında (5 NPC ×
     // 1-2 fab = 6-7 fab) kalan bucket'lara baseline arz garanti. World
     // player yoksa (sim) no-op — TUI seed_world World'u oluşturur.
-    if t > 0 && t % WORLD_FAB_PERIOD == 0 {
+    if t > 0 && t.is_multiple_of(WORLD_FAB_PERIOD) {
         tick_world_factories(state, report, tick);
     }
 
@@ -385,7 +385,7 @@ fn consume_alici_inventory(state: &mut GameState, tick: Tick) {
     for pid in alici_ids {
         // Player offset: her Alıcı kendi tick'inde tüketir.
         let offset = (pid.value() % u64::from(CONSUME_PERIOD)) as u32;
-        if (t + offset) % CONSUME_PERIOD != 0 {
+        if !(t + offset).is_multiple_of(CONSUME_PERIOD) {
             continue;
         }
         let Some(player) = state.players.get_mut(&pid) else {
@@ -459,7 +459,7 @@ fn harvest_ciftci_stock(
     for pid in ciftci_ids {
         // v8.25: Player offset — her Çiftçi kendi tick'inde mahsul alır.
         let offset = (pid.value() % u64::from(HARVEST_PERIOD)) as u32;
-        if (t + offset) % HARVEST_PERIOD != 0 {
+        if !(t + offset).is_multiple_of(HARVEST_PERIOD) {
             continue;
         }
         // Çiftçi şehir ataması — PlayerId mod 3 ile 3 şehir.
@@ -572,8 +572,8 @@ fn harvest_ciftci_stock(
                     actual_prime,
                 ));
             }
-            if let Some(sec_raw) = secondary {
-                if actual_secondary > 0 {
+            if let Some(sec_raw) = secondary
+                && actual_secondary > 0 {
                     let _ = p.inventory.add(city, sec_raw, actual_secondary);
                     report.push(LogEntry::economy_harvest(
                         tick,
@@ -583,9 +583,8 @@ fn harvest_ciftci_stock(
                         actual_secondary,
                     ));
                 }
-            }
-            if let Some(dem_raw) = demand {
-                if actual_demand > 0 {
+            if let Some(dem_raw) = demand
+                && actual_demand > 0 {
                     let _ = p.inventory.add(city, dem_raw, actual_demand);
                     report.push(LogEntry::economy_harvest(
                         tick,
@@ -595,7 +594,6 @@ fn harvest_ciftci_stock(
                         actual_demand,
                     ));
                 }
-            }
         }
     }
 }
@@ -689,12 +687,11 @@ fn collect_and_redistribute_tax(state: &mut GameState, report: &mut TickReport, 
             continue;
         }
         let tax = Money::from_cents(tax_cents);
-        if let Some(p) = state.players.get_mut(pid) {
-            if p.cash >= tax {
+        if let Some(p) = state.players.get_mut(pid)
+            && p.cash >= tax {
                 let _ = p.debit(tax);
                 total_tax_cents += tax_cents;
             }
-        }
     }
 
     if total_tax_cents == 0 {

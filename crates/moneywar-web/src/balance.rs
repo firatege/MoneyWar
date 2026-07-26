@@ -42,7 +42,7 @@ pub const ROLE_ORDER: [NpcKind; 6] = [
 // =============================================================================
 
 /// Bir rolün sezon boyunca biriken emir akışı sayaçları.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub struct FlowCounters {
     /// Motorun kabul ettiği `SubmitOrder` sayısı.
     pub submitted: u64,
@@ -131,7 +131,7 @@ pub struct BalanceAccumulator {
 }
 
 /// Bir ürünün alıcı/satıcı dökümü — "kim üretiyor, kim tüketiyor".
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ProductLedger {
     pub product: ProductKind,
     /// El değiştiren toplam birim.
@@ -149,7 +149,7 @@ type ChurnBuckets = BTreeMap<(CityId, ProductKind), (u64, u64)>;
 ///
 /// Emek piyasası ve banka çalışmasının zemini: kapalı döngüye geçince para
 /// arzının sabit kalıp kalmadığı, deflasyona girip girmediği buradan görülür.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub struct MoneyFlow {
     pub supply_start: i64,
     pub supply_end: i64,
@@ -197,7 +197,7 @@ pub fn money_supply_cents(state: &GameState) -> i64 {
 /// - [`supply_clear_rate`](Self::supply_clear_rate) **alt sınırdır** — gerçek
 ///   oran yaklaşık `ort. TTL` katı kadar yüksektir,
 /// - [`priced_rate`](Self::priced_rate) tam doğrudur (pass sayımı).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub struct MarketFlow {
     /// Kitapta görülen toplam alış miktarı (TTL boyunca tekrar sayılır).
     pub demand: u64,
@@ -602,7 +602,7 @@ pub fn classify_reason(reason: &str) -> String {
 // =============================================================================
 
 /// Tek rolün denge satırı.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RoleBalance {
     pub kind: NpcKind,
     /// Roldeki oyuncu sayısı.
@@ -620,7 +620,7 @@ pub struct RoleBalance {
 }
 
 /// Bir oyunun denge denetimi.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BalanceReport {
     pub roles: Vec<RoleBalance>,
     /// Ürün → piyasa akışı, arz açığı azalan sırada.

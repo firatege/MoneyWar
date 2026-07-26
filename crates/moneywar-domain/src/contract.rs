@@ -128,12 +128,12 @@ impl Contract {
                 "delivery_tick cannot be in the past".into(),
             ));
         }
-        if let ListingKind::Personal { target } = listing {
-            if target == seller {
-                return Err(DomainError::Validation(
-                    "seller cannot offer a personal contract to self".into(),
-                ));
-            }
+        if let ListingKind::Personal { target } = listing
+            && target == seller
+        {
+            return Err(DomainError::Validation(
+                "seller cannot offer a personal contract to self".into(),
+            ));
         }
 
         Ok(Self {
@@ -171,12 +171,12 @@ impl Contract {
                 "seller cannot accept own contract".into(),
             ));
         }
-        if let ListingKind::Personal { target } = self.listing {
-            if target != by {
-                return Err(DomainError::Validation(format!(
-                    "personal contract targets {target}, not {by}"
-                )));
-            }
+        if let ListingKind::Personal { target } = self.listing
+            && target != by
+        {
+            return Err(DomainError::Validation(format!(
+                "personal contract targets {target}, not {by}"
+            )));
         }
         self.accepted_by = Some(by);
         self.state = ContractState::Active;

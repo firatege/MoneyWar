@@ -1,9 +1,8 @@
 # ── Stage 1: Rust build ──────────────────────────────────────────────────────
 #
-# Sürüm, geliştirme toolchain'i ve Cargo.toml'daki `rust-version` ile aynı
-# tutulmalı. 1.86'dayken sessiz bir tuzaktı: modern sözdizimi (let-chain,
-# 1.88'de stabil) lokalde derleniyor, ancak deploy anında image build'inde
-# patlıyordu. Bu satırı değiştirirken Cargo.toml `rust-version`'ı da güncelle.
+# Cargo.toml'daki `rust-version` (MSRV, şu an 1.88) bu sürümün **altına**
+# inemez. 1.86'dayken sessiz bir tuzaktı: let-chain sözdizimi (1.88'de
+# stabil) lokalde derleniyor ama deploy anında image build'inde patlıyordu.
 FROM rust:1.96-bookworm AS rust-builder
 
 WORKDIR /app

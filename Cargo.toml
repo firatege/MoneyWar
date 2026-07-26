@@ -14,10 +14,11 @@ members = [
 [workspace.package]
 version = "0.8.0"
 edition = "2024"
-# Dockerfile'daki `FROM rust:...` ile aynı tutulmalı — ikisi ayrışırsa
-# modern sözdizimi lokalde geçip deploy'da patlar (2026-07-26'da let-chain
-# ile yaşandı).
-rust-version = "1.96"
+# **Asgari** desteklenen sürüm (MSRV) — "derlediğimiz sürüm" değil.
+# 1.88: let-chain (`if ... && let ...`) bu sürümde stabilleşti ve kodda
+# kullanılıyor. Dockerfile bundan yeni bir sürüm kullanabilir, kullanmalı da;
+# ama daha eskisi derleyemez. 2026-07-26'da image 1.86'dayken deploy patladı.
+rust-version = "1.88"
 license = "UNLICENSED"
 authors = ["firatege"]
 description = "Tick-tabanlı ekonomi simülasyon oyunu — motor + terminal TUI"

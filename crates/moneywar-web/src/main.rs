@@ -16,6 +16,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::{RwLock, broadcast};
 
+use moneywar_web::archive::SeasonArchive;
 use moneywar_web::debuglog::{LogSink, format_tick_block};
 use moneywar_web::driver::SimDriver;
 use moneywar_web::{DEFAULT_SEED, DIFFICULTY, SEASON_TICKS, TICK_SECONDS, dto};
@@ -105,7 +106,22 @@ async fn main() -> std::io::Result<()> {
         });
     let log = Arc::new(LogSink::new(log_file));
 
-    spawn_tick_loop(driver.clone(), tx.clone(), log.clone());
+    // Sezon arşivi: MONEYWAR_ARCHIVE env > /app/debug/seasons (volume varsa).
+    // Ham tick log'u sezonda ~48 MB; denetim özeti ~10 KB — saklanabilir olan bu.
+    let archive = std::env::var("MONEYWAR_ARCHIVE")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::path::Path::new("/app/debug")
+                .is_dir()
+                .then(|| PathBuf::from("/app/debug/seasons"))
+        })
+        .and_then(SeasonArchive::new);
+    if let Some(a) = archive.as_ref() {
+        tracing::info!(dir = %a.dir().display(), "sezon arşivi açık");
+    }
+
+    spawn_tick_loop(driver.clone(), tx.clone(), log.clone(), archive);
 
     let app_state = web::Data::new(AppState { driver, tx, log });
 
@@ -128,6 +144,7 @@ async fn main() -> std::io::Result<()> {
             .route("/api/series", web::get().to(get_series))
             .route("/api/log", web::get().to(get_log))
             .route("/api/seasons", web::get().to(get_seasons))
+            .route("/api/audit", web::get().to(get_audit))
             .route("/api/reset", web::post().to(post_reset))
             .route("/ws", web::get().to(ws_handler));
 
@@ -162,17 +179,23 @@ fn spawn_tick_loop(
     driver: Arc<RwLock<SimDriver>>,
     tx: broadcast::Sender<Arc<str>>,
     log: Arc<LogSink>,
+    archive: Option<SeasonArchive>,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(TICK_SECONDS));
         loop {
             interval.tick().await;
-            let (json, block) = {
+            let (json, block, finished) = {
                 let mut d = driver.write().await;
-                d.step();
+                let finished = d.step();
                 let block = format_tick_block(&d.state, &d.last_report, d.season);
-                (serde_json::to_string(&d.snapshot()), block)
+                (serde_json::to_string(&d.snapshot()), block, finished)
             };
+            // Sezon kapandıysa denetimini arşivle (kilit dışında — IO tick'i
+            // bekletmesin).
+            if let (Some(done), Some(a)) = (finished, archive.as_ref()) {
+                a.write(&done);
+            }
             log.push_block(&block);
             match json {
                 Ok(s) => {
@@ -196,6 +219,23 @@ async fn get_seasons(state: web::Data<AppState>) -> impl Responder {
     let mut history = d.season_history.clone();
     history.reverse();
     HttpResponse::Ok().json(history)
+}
+
+/// Bu sezonun **canlı** denge denetimi — rol adaleti, arz/talep, üretim
+/// marjı, para arzı, ürün defteri.
+///
+/// Ham olay akışı (`/api/log`) "ne oldu" sorusuna cevap verir ama sezonda
+/// 48 MB tutar ve "bir sorun var mı" sorusunu cevaplamaz. Bu endpoint aynı
+/// soruyu birkaç KB'de cevaplar: sorun varsa hangi rolde, hangi üründe,
+/// hangi kanalda olduğunu gösteren toplulaştırılmış tablolar.
+async fn get_audit(state: web::Data<AppState>) -> impl Responder {
+    let d = state.driver.read().await;
+    HttpResponse::Ok().json(serde_json::json!({
+        "season": d.season,
+        "tick": d.state.current_tick.value(),
+        "season_ticks": d.season_ticks,
+        "report": d.audit_report(),
+    }))
 }
 
 /// Mevcut sezonu sıfırlar — tick 0'dan başlar, önceki skor geçmişe eklenir.
@@ -253,11 +293,10 @@ async fn ws_handler(
 
     actix_web::rt::spawn(async move {
         // İlk yükleme: anlık snapshot.
-        if let Some(s) = initial {
-            if session.text(s).await.is_err() {
+        if let Some(s) = initial
+            && session.text(s).await.is_err() {
                 return;
             }
-        }
 
         loop {
             tokio::select! {

@@ -111,11 +111,10 @@ pub(crate) fn process_repay_loan(
     borrower.debit(total_due)?;
 
     // Plan v4: Banka NPC kredi vermişse, geri ödeme Banka'ya gider (closed loop).
-    if let Some(bank_id) = lender {
-        if let Some(bank) = state.players.get_mut(&bank_id) {
+    if let Some(bank_id) = lender
+        && let Some(bank) = state.players.get_mut(&bank_id) {
             let _ = bank.credit(total_due);
         }
-    }
 
     state.loans.remove(&loan_id);
     let on_time = !tick.is_before(Tick::ZERO); // her zaman true — komut bazında on-time sayılır.
@@ -168,11 +167,10 @@ fn auto_settle(state: &mut GameState, report: &mut TickReport, tick: Tick, lid: 
             let _ = p.debit(total_due);
         }
         // Banka NPC kredi vermişse geri yatır (closed loop).
-        if let Some(bank_id) = lender {
-            if let Some(bank) = state.players.get_mut(&bank_id) {
+        if let Some(bank_id) = lender
+            && let Some(bank) = state.players.get_mut(&bank_id) {
                 let _ = bank.credit(total_due);
             }
-        }
         state.loans.remove(&lid);
         report.push(LogEntry::loan_repaid(tick, borrower, lid, total_due, false));
     } else {
@@ -183,11 +181,10 @@ fn auto_settle(state: &mut GameState, report: &mut TickReport, tick: Tick, lid: 
             let _ = p.debit(seized);
         }
         // Default durumunda Banka mevcut nakdi alır (kısmi geri kazanım).
-        if let Some(bank_id) = lender {
-            if let Some(bank) = state.players.get_mut(&bank_id) {
+        if let Some(bank_id) = lender
+            && let Some(bank) = state.players.get_mut(&bank_id) {
                 let _ = bank.credit(seized);
             }
-        }
         state.loans.remove(&lid);
         // Temerrüt iz bırakır: banka bir daha bu firmaya kredi açmaz ve
         // ikinci temerrütte firma aciz sayılıp iflas eder. Eskiden borç

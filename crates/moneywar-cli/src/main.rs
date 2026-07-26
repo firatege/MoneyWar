@@ -175,8 +175,8 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
             last_auto_tick = Instant::now();
         }
 
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -184,7 +184,6 @@ fn run_app(terminal: &mut Term, app: &mut App) -> Result<()> {
                     return Ok(());
                 }
             }
-        }
 
         if app.game_over() {
             app.auto_sim = false;
@@ -3897,8 +3896,8 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
             )));
         }
         // Kervan seçildiyse konumunu ve ETA bilgisini göster.
-        if let Some(FieldValue::CaravanId(cid)) = wizard.fields.first() {
-            if let Some(caravan) = app.state.caravans.get(cid) {
+        if let Some(FieldValue::CaravanId(cid)) = wizard.fields.first()
+            && let Some(caravan) = app.state.caravans.get(cid) {
                 let loc = caravan.state.current_city().map(city_short).unwrap_or("?");
                 let cap = caravan.capacity;
                 out.push(Line::from(Span::styled(
@@ -3911,8 +3910,8 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
                     Style::default().fg(Color::Cyan),
                 )));
                 // Hedef seçildiyse mesafe + bozulma uyarısı.
-                if let Some(FieldValue::City(to_city)) = wizard.fields.get(1) {
-                    if let Some(from_city) = caravan.state.current_city() {
+                if let Some(FieldValue::City(to_city)) = wizard.fields.get(1)
+                    && let Some(from_city) = caravan.state.current_city() {
                         let distance = from_city.distance_to(*to_city);
                         out.push(Line::from(Span::styled(
                             format!(
@@ -3982,9 +3981,7 @@ fn wizard_preflight_hints(app: &App, wizard: &Wizard) -> Vec<Line<'static>> {
                             }
                         }
                     }
-                }
             }
-        }
     }
 
     // Sell wizard: şehir + ürün seçildiyse stok durumunu göster.
@@ -4167,14 +4164,12 @@ fn wizard_preflight_blocks(app: &App, wizard: &Wizard) -> Vec<String> {
                 .relist_cooldown
                 .get(&(HUMAN_ID, city, product))
                 .copied()
-            {
-                if app.state.current_tick.is_before(until) {
+                && app.state.current_tick.is_before(until) {
                     let remaining = until.value().saturating_sub(app.state.current_tick.value());
                     blocks.push(format!(
                         "Cooldown: {city}/{product} bucket'ta {remaining} tick beklemen lazım"
                     ));
                 }
-            }
             // Cash/stok kontrolü fiyat girilince. Bug fix: text_buf yalnızca
             // PriceLira adımında geçerli — TTL adımında text_buf TTL değerine
             // dönüşüyordu, eski kod onu price olarak okuyup yanlış cash hesabı
@@ -4599,8 +4594,8 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                     format!("  💡 {hint}"),
                     Style::default().fg(Color::DarkGray),
                 )));
-                if let Some(default) = offer_default_for(&app.state, wizard, field) {
-                    if default > 0 {
+                if let Some(default) = offer_default_for(&app.state, wizard, field)
+                    && default > 0 {
                         let pretty = match field {
                             FieldKind::PriceLira => i64::try_from(default)
                                 .map(|c| format!("{}", Money::from_cents(c)))
@@ -4620,11 +4615,10 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                                 .add_modifier(Modifier::ITALIC),
                         )));
                     }
-                }
                 // v8.20: PriceLira adımında pazar bilgisi (best_bid/ask/last) +
                 // 'M' tuşu marketable fiyatı text_buf'a yazıyor (NPC parite).
-                if matches!(field, FieldKind::PriceLira) {
-                    if let Some((city, product)) = wizard_market_target(wizard) {
+                if matches!(field, FieldKind::PriceLira)
+                    && let Some((city, product)) = wizard_market_target(wizard) {
                         let bid = app.state.best_bid(city, product);
                         let ask = app.state.best_ask(city, product);
                         let last = app
@@ -4700,7 +4694,6 @@ fn render_wizard_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App, wiza
                             }
                         }
                     }
-                }
             }
         }
     } else if wizard.confirm_more_cargo {
@@ -5094,14 +5087,12 @@ fn offer_default_for(state: &GameState, wizard: &Wizard, field: FieldKind) -> Op
 /// ürün için stoğu en yüksek şehir başa. Diğer durumlarda CityId::ALL aynısı.
 fn smart_cities_for_wizard(state: &GameState, wizard: &Wizard) -> Vec<CityId> {
     let mut cities = CityId::ALL.to_vec();
-    if matches!(wizard.kind, ActionKind::Offer) {
-        if let Some(FieldValue::Product(prod)) = wizard.fields.first() {
-            if let Some(p) = state.players.get(&HUMAN_ID) {
+    if matches!(wizard.kind, ActionKind::Offer)
+        && let Some(FieldValue::Product(prod)) = wizard.fields.first()
+            && let Some(p) = state.players.get(&HUMAN_ID) {
                 let prod = *prod;
                 cities.sort_by_key(|c| std::cmp::Reverse(p.inventory.get(*c, prod)));
             }
-        }
-    }
     cities
 }
 
@@ -7908,11 +7899,9 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
                 // Ek ürün: ana Product+Qty'yi extra_cargo'ya taşı, fields'ı Product'a geri sar.
                 if let (Some(FieldValue::Number(qty)), Some(FieldValue::Product(prod))) =
                     (wizard.fields.get(3).cloned(), wizard.fields.get(2).cloned())
-                {
-                    if let Ok(q32) = u32::try_from(qty) {
+                    && let Ok(q32) = u32::try_from(qty) {
                         wizard.extra_cargo.push((prod, q32));
                     }
-                }
                 wizard.fields.truncate(2); // CaravanId + CityTo kalsın
                 wizard.confirm_more_cargo = false;
                 return WizardOutcome::Continue;
@@ -8035,15 +8024,13 @@ fn handle_wizard_key(app: &mut App, wizard: &mut Wizard, code: KeyCode) -> Wizar
                 // Offer wizard: boş Enter → akıllı default (qty=stok, price=
                 // market×1.05, delivery_tick=current+6). Kullanıcı `0` ile
                 // başlayıp custom değer girebilir.
-                if wizard.text_buf.is_empty() {
-                    if let Some(default) = offer_default_for(&app.state, wizard, field) {
-                        if default > 0 {
+                if wizard.text_buf.is_empty()
+                    && let Some(default) = offer_default_for(&app.state, wizard, field)
+                        && default > 0 {
                             wizard.fields.push(FieldValue::Number(default));
                             wizard.text_buf.clear();
                             return WizardOutcome::Continue;
                         }
-                    }
-                }
                 // Para alanları için ondalık → cents. Diğer alanlar için
                 // basit pozitif tam sayı.
                 let parsed: Option<u64> = if is_money {
@@ -8560,16 +8547,14 @@ fn parse_order_cmd(
     let city = parse_city(args[0])?;
     let product = parse_product(args[1])?;
     // Sanayici mamul BUY yapamaz — üretir, almaz.
-    if side == OrderSide::Buy && product.is_finished() {
-        if let Some(p) = app.state.players.get(&HUMAN_ID) {
-            if p.has_npc_kind(NpcKind::Sanayici) {
+    if side == OrderSide::Buy && product.is_finished()
+        && let Some(p) = app.state.players.get(&HUMAN_ID)
+            && p.has_npc_kind(NpcKind::Sanayici) {
                 return Err(format!(
                     "Sanayici {} satın alamaz — sen üretiyorsun, Tüccardan almak yerine kendin üret.",
                     product
                 ));
             }
-        }
-    }
     let qty: u32 = args[2]
         .parse()
         .map_err(|_| format!("geçersiz miktar: {}", args[2]))?;
@@ -9121,11 +9106,10 @@ fn summarize_report(report: &moneywar_engine::TickReport, state: &GameState) -> 
                 // NPC dispatch'leri ayrı satır spam'i yapmaz; "NPC trafik"
                 // özet satırında dispatch sayısı gösterilir. İnsan dispatch'i
                 // zaten human_lines tarafında detaylı yazılır.
-                if let Some(actor) = entry.actor {
-                    if actor != HUMAN_ID {
+                if let Some(actor) = entry.actor
+                    && actor != HUMAN_ID {
                         npc_dispatches += 1;
                     }
-                }
             }
             _ => {}
         }

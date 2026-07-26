@@ -5,6 +5,8 @@
 //! burada dışa açılır. Böylece sim ile frontend birebir aynı oyunu oynar —
 //! kopyalanmış dünya kurulumu kaynaklı sapma (drift) olmaz.
 
+pub mod archive;
+pub mod balance;
 pub mod debuglog;
 pub mod driver;
 pub mod dto;

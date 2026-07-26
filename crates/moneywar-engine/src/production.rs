@@ -396,8 +396,8 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
         (factory.owner, factory.city, factory.product, completed)
     };
 
-    if completed_units > 0 {
-        if let Some(player) = state.players.get_mut(&owner) {
+    if completed_units > 0
+        && let Some(player) = state.players.get_mut(&owner) {
             // Inventory overflow teorik; invariant olarak başarmalı.
             if let Err(e) = player.inventory.add(city, product, completed_units) {
                 report.push(LogEntry::factory_idle(
@@ -419,7 +419,6 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
                 ));
             }
         }
-    }
 
     // 2) Yeni batch başlatma — önceki batch bitmeden yenisi başlamaz.
     // Pipeline üretim kaldırıldı: fabrika seri çalışır, paralel değil.

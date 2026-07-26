@@ -103,11 +103,10 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         let min_reserve_cents = (owned as i64 + 1) * reserve_per_owned * 100;
         let reserve_ok = player.cash.as_cents() >= next_cost.as_cents() + min_reserve_cents;
 
-        if reserve_ok {
-            if let Some((city, product)) = pick_factory_target(state, player, brain) {
+        if reserve_ok
+            && let Some((city, product)) = pick_factory_target(state, player, brain) {
                 out.push(ActionCandidate::BuildFactory { city, product });
             }
-        }
     }
 
     // 2) Ham madde AL — fab-bazlı talep (gerçek tedarik zinciri).
@@ -611,11 +610,10 @@ fn enumerate_contract_accepts(
             continue;
         }
         // Personal ise kendisine olmalı
-        if let moneywar_domain::ListingKind::Personal { target } = contract.listing {
-            if target != player.id {
+        if let moneywar_domain::ListingKind::Personal { target } = contract.listing
+            && target != player.id {
                 continue;
             }
-        }
         if !needed_raws.contains(&contract.product) {
             continue;
         }
