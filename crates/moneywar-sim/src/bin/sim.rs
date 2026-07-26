@@ -1,4 +1,4 @@
-//! Headless MoneyWar sim — frontend'de gözüken oyunun **birebir aynısını** koşar.
+//! Headless `MoneyWar` sim — frontend'de gözüken oyunun **birebir aynısını** koşar.
 //!
 //! Canlı sunucuyla (moneywar-web) aynı `SimDriver`, aynı dünya kurulumu
 //! (`new_season`) ve aynı tick-by-tick log formatını (`format_tick_block`)
@@ -14,7 +14,7 @@
 //! Argümanlar:
 //!   --games <N>     Kaç oyun simüle edilsin. Default 1 (--parallel verilince 5).
 //!   --parallel      Oyunları paralel (thread) koştur. Default sıralı.
-//!   --ticks <N>     Oyun başına tick. Default 150 (moneywar-web SEASON_TICKS).
+//!   --ticks <N>     Oyun başına tick. Default 150 (moneywar-web `SEASON_TICKS`).
 //!   --seed <N>      Base seed. Default frontend ile aynı; oyun #1 birebir o oyundur.
 //!   --out <DIR>     Log çıktı dizini. Default "artifacts/sim".
 
@@ -228,8 +228,8 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
 fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
     println!("\n{:=<82}", "");
     println!(
-        "{:>5}  {:>18}  {:>8}  {:>6}  {:>8}  {:>8}  {}",
-        "oyun", "seed", "eşleşen", "fill", "expired", "reddet", "lider (PnL₺)"
+        "{:>5}  {:>18}  {:>8}  {:>6}  {:>8}  {:>8}  lider (PnL₺)",
+        "oyun", "seed", "eşleşen", "fill", "expired", "reddet"
     );
     println!("{:-<82}", "");
 
@@ -255,8 +255,8 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
     // ── SANAYİCİ metrikleri ──────────────────────────────────────────────────
     println!("\n  SANAYİCİ");
     println!(
-        "{:>5}  {:>9}  {:>9}  {:>9}  {:>9}   {}",
-        "oyun", "fab HHI", "ürt HHI", "ham HHI", "ürt birim", "fabrika dağılımı"
+        "{:>5}  {:>9}  {:>9}  {:>9}  {:>9}   fabrika dağılımı",
+        "oyun", "fab HHI", "ürt HHI", "ham HHI", "ürt birim"
     );
     println!("{:-<82}", "");
     for o in outcomes {
@@ -282,8 +282,8 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
     // ── TÜCCAR metrikleri ────────────────────────────────────────────────────
     println!("\n  TÜCCAR");
     println!(
-        "{:>5}  {:>9}  {:>9}  {:>9}   {}",
-        "oyun", "kervan HHI", "rota HHI", "taşınan", "en aktif rota"
+        "{:>5}  {:>9}  {:>9}  {:>9}   en aktif rota",
+        "oyun", "kervan HHI", "rota HHI", "taşınan"
     );
     println!("{:-<82}", "");
     for o in outcomes {
@@ -304,7 +304,7 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
 
     // ── DRAMA (docs/finish-plan.md Faz 0: hikâyelik olay skorkartı) ─────────
     println!("\n  DRAMA");
-    println!("{:>5}  {:>6}  {:>5}  {}", "oyun", "olay", "fren", "döküm");
+    println!("{:>5}  {:>6}  {:>5}  döküm", "oyun", "olay", "fren");
     println!("{:-<82}", "");
     for o in outcomes {
         let v = o.drama.verdict(o.matched_qty);
@@ -341,7 +341,7 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
 
     // ── ORTAK ────────────────────────────────────────────────────────────────
     println!("\n  ORTAK");
-    println!("{:>5}  {:>6}   {}", "oyun", "Gini", "rol PnL");
+    println!("{:>5}  {:>6}   rol PnL", "oyun", "Gini");
     println!("{:-<82}", "");
     for o in outcomes {
         let m = &o.metrics;
@@ -457,7 +457,7 @@ fn print_balance(outcomes: &[Outcome]) {
         .map(|(name, fs)| {
             let k = fs.len() as f64;
             let mean = |f: &dyn Fn(&moneywar_sim::balance::MarketFlow) -> f64| -> f64 {
-                fs.iter().map(|x| f(x)).sum::<f64>() / k
+                fs.iter().map(f).sum::<f64>() / k
             };
             let ratio = mean(&|f| f.demand_supply_ratio().min(99.0));
             let verdict = if ratio > 2.0 {

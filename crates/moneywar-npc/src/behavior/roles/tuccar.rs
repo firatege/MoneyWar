@@ -22,9 +22,9 @@ use crate::behavior::candidates::ActionCandidate;
 use crate::behavior::pricing::apply_jitter;
 
 /// Arbitraj eşiği — bu yüzdeden az spread varsa arbitraj kârsız.
-/// Faz F tuning: 20 → 15. Demand_for matrisi mamul baseline farkını
+/// Faz F tuning: 20 → 15. `Demand_for` matrisi mamul baseline farkını
 /// %25-28 yaratıyor; ham specialty farkı %14-75 (çoğunlukla yeterli).
-/// v0.5.1: 10 denedi → Tüccar PnL kötüleşti (-122K). Geri %15.
+/// v0.5.1: 10 denedi → Tüccar `PnL` kötüleşti (-122K). Geri %15.
 const ARBITRAGE_SPREAD_PCT: i64 = 15;
 
 /// Bir (şehir, ürün) için açık order book'taki en yüksek BUY emir fiyatı.
@@ -98,8 +98,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             }
             let from_price = state
                 .reference_price(cur_city, product)
-                .map(|m| m.as_cents())
-                .unwrap_or(0);
+                .map_or(0, moneywar_domain::Money::as_cents);
             for to_city in CityId::ALL {
                 if to_city == cur_city {
                     continue;
@@ -110,11 +109,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 // SELL" gibi devasa talep sinyallerini yakalar — eskiden
                 // reference_price baseline'a düşüp arbitraj görünmez oluyordu.
                 let to_price = best_bid_in_city(state, to_city, product)
-                    .map(|m| m.as_cents())
+                    .map(moneywar_domain::Money::as_cents)
                     .or_else(|| {
                         state
                             .reference_price(to_city, product)
-                            .map(|m| m.as_cents())
+                            .map(moneywar_domain::Money::as_cents)
                     })
                     .unwrap_or(0);
                 let profit_per_unit = to_price - from_price;
@@ -225,11 +224,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 continue;
             }
             let to_target = best_bid_in_city(state, to_city, product)
-                .map(|m| m.as_cents())
+                .map(moneywar_domain::Money::as_cents)
                 .or_else(|| {
                     state
                         .reference_price(to_city, product)
-                        .map(|m| m.as_cents())
+                        .map(moneywar_domain::Money::as_cents)
                 })
                 .unwrap_or(0);
             if to_target < min_sell_cents {
@@ -376,7 +375,7 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
     // Yeni: Tüccar bu ürünün stoğunun olduğu şehirden direkt teslim
     // (transit yok, breach yok). Fiyat o şehrin best_bid × 0.95 ile makul.
     let mut best_stock_city: Option<(CityId, u32)> = None;
-    for &city in CityId::ALL.iter() {
+    for &city in &CityId::ALL {
         let stock = player.inventory.get(city, product);
         if stock < 50 {
             continue;
@@ -480,7 +479,7 @@ fn bias_cheap_city(
             2
         }
     } else if cands.len() == 2 {
-        if r < 70 { 0 } else { 1 }
+        usize::from(r >= 70)
     } else {
         0
     };

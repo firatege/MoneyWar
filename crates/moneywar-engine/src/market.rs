@@ -188,11 +188,11 @@ fn clear_bucket(
                 6..=9  => 1600, // +%60
                 _      => 2000, // max 2×
             };
-            let mut factor_milli = if imbalance > 0 {
-                1000 + imbalance * 8 * streak_mult / 1_000_000
-            } else {
-                1000 + imbalance * 8 * streak_mult / 1_000_000
-            };
+            // Not: burada bir zamanlar `if imbalance > 0 { ... } else { ... }`
+            // vardı ama iki dal birebir aynıydı — muhtemelen asimetrik ayar
+            // (yukarı hızlı, aşağı yavaş) düşünülüp yazılmamış. `imbalance`
+            // işaretli olduğu için tek ifade iki yönü de doğru işliyor.
+            let mut factor_milli = 1000 + imbalance * 8 * streak_mult / 1_000_000;
 
             // v8.24 (C): Stok-bazlı aşağı drift — threshold düşürüldü
             // (raw 800→400, mamul 200→100). Drift daha sık tetiklenir,
@@ -204,7 +204,7 @@ fn clear_bucket(
                 .sum();
             let high_threshold: u32 = if product.is_raw() { 400 } else { 100 };
             if total_stock > high_threshold {
-                let excess = (total_stock - high_threshold).min(2000) as i64;
+                let excess = i64::from((total_stock - high_threshold).min(2000));
                 let down = 3 + excess / 500;
                 factor_milli -= down;
             }

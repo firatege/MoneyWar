@@ -406,7 +406,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> Result<bool> {
         Mode::RecentTrades { scroll, only_mine, city_filter } => {
             let filtered_len = app.recent_trades.iter().filter(|t| {
                 let mine_ok = !only_mine || t.buyer_role == "Sen" || t.seller_role == "Sen";
-                let city_ok = city_filter.map_or(true, |c| t.city == c);
+                let city_ok = city_filter.is_none_or(|c| t.city == c);
                 mine_ok && city_ok
             }).count();
             let max_scroll = filtered_len.saturating_sub(1);
@@ -2152,14 +2152,13 @@ fn distribute_inventory(
             if !product.is_raw() {
                 return base * 2; // Bitmiş ürün — uniform (profil dışı).
             }
+            // Yalnız şehrin uzmanlık hammaddesi bol başlar; secondary,
+            // demand ve profilsiz durum aynı orta seviyede (v8.5'te demand
+            // 1→2 çıkarılınca kuru raf sorunu çözüldü ve üç dal eşitlendi).
             let mult = if state.city_specialty.get(city) == Some(product) {
                 4 // prime: bol başlangıç stoğu (v8.5 8→4)
-            } else if state.city_secondary.get(city) == Some(product) {
-                2 // secondary: orta
-            } else if state.city_demand.get(city) == Some(product) {
-                2 // demand: orta (v8.5 1→2, kuru raf önlendi)
             } else {
-                2 // profile populate edilmemiş → eski uniform
+                2
             };
             base * mult
         })
@@ -4189,7 +4188,7 @@ fn wizard_preflight_blocks(app: &App, wizard: &Wizard) -> Vec<String> {
                 }
             };
             if matches!(wizard.kind, ActionKind::Buy) && price_cents > 0 && qty > 0 {
-                let total_cents = price_cents.saturating_mul(qty as i64);
+                let total_cents = price_cents.saturating_mul(i64::from(qty));
                 let with_tax =
                     total_cents + total_cents * moneywar_domain::balance::TRANSACTION_TAX_PCT / 100;
                 if player.cash.as_cents() < with_tax {
@@ -5329,7 +5328,7 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 app.state.current_tick,
                 moneywar_engine::IDLE_FACTORY_THRESHOLD,
             );
-            let pending = factory.pending_units();
+            let _pending = factory.pending_units();
             let status_color = if is_idle { Color::Red } else { Color::Green };
             let status_label = if is_idle { "ATIL" } else { "ÜRETİYOR" };
 
@@ -5355,7 +5354,7 @@ fn render_holdings_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             // Bitiş tick'i
             let finish_info = if !is_idle {
                 let prod_ticks = factory.product.production_ticks();
-                let last_t = factory.last_production_tick.map(|t| t.value()).unwrap_or(0);
+                let last_t = factory.last_production_tick.map(moneywar_domain::Tick::value).unwrap_or(0);
                 let finish = last_t + prod_ticks;
                 let cur = app.state.current_tick.value();
                 if finish > cur {
@@ -5805,7 +5804,7 @@ fn render_recent_trades_overlay(f: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
     // Filtreli trade listesi
     let filtered: Vec<&TradeRecord> = app.recent_trades.iter().filter(|t| {
         let mine_ok = !only_mine || t.buyer_role == "Sen" || t.seller_role == "Sen";
-        let city_ok = city_filter.map_or(true, |c| t.city == c);
+        let city_ok = city_filter.is_none_or(|c| t.city == c);
         mine_ok && city_ok
     }).collect();
 

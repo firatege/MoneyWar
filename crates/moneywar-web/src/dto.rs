@@ -83,7 +83,7 @@ pub struct PlayerDto {
     pub cash_lira: f64,
     pub pnl_lira: f64,
     pub is_npc: bool,
-    /// Ajan hedef durumu: "Expand" | "Corner:istanbul:kumas" | "PriceWar:…" | "Consolidate" | "Retreat" | null
+    /// Ajan hedef durumu: "Expand" | "Corner:istanbul:kumas" | "`PriceWar`:…" | "Consolidate" | "Retreat" | null
     pub goal: Option<String>,
     /// Kişilik trait vektörü [0,1] — sadece NPC'ler için.
     pub traits: Option<BrainTraitsDto>,
@@ -96,7 +96,7 @@ pub struct BrainTraitsDto {
     pub patience: f64,
     pub risk: f64,
     pub greed: f64,
-    /// Sezon boyunca PnL trendi: 0=kaybediyor, 0.5=sabit, 1=kazanıyor.
+    /// Sezon boyunca `PnL` trendi: 0=kaybediyor, 0.5=sabit, 1=kazanıyor.
     pub pnl_trend: f64,
 }
 
@@ -399,13 +399,12 @@ fn build_prices(state: &GameState) -> Vec<PriceCell> {
             let (buy_qty, sell_qty) = state
                 .order_book
                 .get(&(city, product))
-                .map(|book| {
+                .map_or((0, 0), |book| {
                     let bq: u32 = book.iter().filter(|o| o.side.is_buy()).map(|o| o.quantity).sum();
                     let sq: u32 =
                         book.iter().filter(|o| o.side.is_sell()).map(|o| o.quantity).sum();
                     (bq, sq)
-                })
-                .unwrap_or((0, 0));
+                });
             cells.push(PriceCell {
                 city: city_slug(city).to_string(),
                 city_label: city.display_name().to_string(),
@@ -618,7 +617,7 @@ fn actor_name(state: &GameState, entry: &LogEntry) -> String {
 fn is_anonymous_buyer(state: &GameState, id: PlayerId) -> bool {
     // Alıcı/Spekülatör/Banka → anonim (sadece satıcı gösterilir).
     // p.has_npc_kind metodu PartialEq ile karşılaştırır.
-    state.players.get(&id).map_or(true, |p| {
+    state.players.get(&id).is_none_or(|p| {
         p.has_npc_kind(NpcKind::Alici)
             || p.has_npc_kind(NpcKind::Spekulator)
             || p.has_npc_kind(NpcKind::Banka)
@@ -774,10 +773,20 @@ fn build_event(state: &GameState, entry: &LogEntry) -> EventDto {
     }
 }
 
+/// Olayın bağlı olduğu pazar ve taraflar:
+/// `(şehir, ürün, miktar, fiyat, alıcı, satıcı)`. Olay bu bilgileri
+/// taşımıyorsa ilgili alan `None`.
+type EventBucket = (
+    Option<String>,
+    Option<String>,
+    Option<u32>,
+    Option<f64>,
+    Option<u64>,
+    Option<u64>,
+);
+
 /// Olaya bağlı bucket + taraf bilgisi.
-fn event_bucket(
-    event: &LogEvent,
-) -> (Option<String>, Option<String>, Option<u32>, Option<f64>, Option<u64>, Option<u64>) {
+fn event_bucket(event: &LogEvent) -> EventBucket {
     match event {
         LogEvent::OrderMatched { city, product, quantity, price, buyer, seller, .. } => (
             Some(city_slug(*city).to_string()),

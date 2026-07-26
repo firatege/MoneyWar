@@ -3,7 +3,7 @@
 //! event'i olarak damgalar.
 //!
 //! Tasarım ilkesi: motor niyet okumaz, davranış okur. Bir NPC'nin beyninde
-//! "PriceWar" hedefi olması olay değildir; art arda 5 tick rakibinin
+//! "`PriceWar`" hedefi olması olay değildir; art arda 5 tick rakibinin
 //! fiyatını gerçekten kırması olaydır. Böylece insan oyuncular da aynı
 //! olayları tetikleyebilir ve dedektör determinizmi beyin implementasyonuna
 //! bağlanmaz.
@@ -249,7 +249,7 @@ fn is_producer(state: &GameState, player: PlayerId) -> bool {
     state
         .players
         .get(&player)
-        .is_some_and(|p| p.npc_kind.map_or(true, |k| k == NpcKind::Sanayici))
+        .is_some_and(|p| p.npc_kind.is_none_or(|k| k == NpcKind::Sanayici))
 }
 
 /// Bu tick kabul edilen SELL emirlerinden pazar → (satıcı → en düşük fiyat cent).

@@ -25,7 +25,7 @@ pub struct Weights {
     pub competition: f64,
     pub local_raw_advantage: f64,
     // ── Brain sinyalleri (Faz 2) ──────────────────────────────────────────────
-    /// PnL trendi: pozitif → kazanıyorsam daha agresif ol.
+    /// `PnL` trendi: pozitif → kazanıyorsam daha agresif ol.
     pub pnl_trend: f64,
     /// Nakit fazlası: pozitif → para varsa yatırım/aksiyon.
     pub cash_surplus: f64,

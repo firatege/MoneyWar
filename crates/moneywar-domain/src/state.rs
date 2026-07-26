@@ -138,7 +138,7 @@ pub struct GameState {
     /// match olmadan geçen tick sayısı. Match olduğunda 0'lanır, her clearing'de
     /// match yoksa +1. NPC pricing helper'ları bunu okuyup uyumsuzluk varsa
     /// fiyatı yumuşatır → kilit-anti deadlock garantisi.
-    /// Cap MAX_NO_MATCH_STREAK (15) — sonsuz büyümez, jitter'ın hesabı
+    /// Cap `MAX_NO_MATCH_STREAK` (15) — sonsuz büyümez, jitter'ın hesabı
     /// taşmaz, deterministic.
     #[serde(default)]
     pub no_match_streak: BTreeMap<(PlayerId, CityId, ProductKind), u32>,
@@ -148,7 +148,7 @@ pub struct GameState {
     pub bucket_no_fill_streak: BTreeMap<(CityId, ProductKind), u32>,
 
     /// v8.22: Easy/Hard difficulty için fiyat cömertliği. NPC pricing
-    /// helper'ları bunu urgency_pct'ye ekler (SELL floor düşer, BUY ceiling
+    /// helper'ları bunu `urgency_pct`'ye ekler (SELL floor düşer, BUY ceiling
     /// yükselir) → human için kâr fırsatı genişler.
     /// - 0  = nötr (Hard)
     /// - 5  = hafif (Medium)
@@ -157,7 +157,7 @@ pub struct GameState {
     pub market_softener_pct: u32,
 
     /// v8.24: Sezon başı orijinal fiyat çapaları — tâtonnement clamp için.
-    /// Tâtonnement her tick price_baseline'i ±%0.5 kaydırır; bu map sezon
+    /// Tâtonnement her tick `price_baseline`'i ±%0.5 kaydırır; bu map sezon
     /// başında snapshot tutar. Engine clamp'i `initial × [%70, %140]` aralığı
     /// uygular → kümülatif fiyat patlaması yok. Sezon başında set edilir
     /// (CLI/sim seed) ve sezon boyu sabit kalır.
@@ -187,7 +187,7 @@ impl RelationScore {
     #[must_use]
     pub fn trust_score(self) -> f64 {
         // log-benzeri doyum: 10 işlem → ~0.5, 50 işlem → ~0.9
-        let x = self.trade_count as f64;
+        let x = f64::from(self.trade_count);
         (x / (x + 10.0)).clamp(0.0, 1.0)
     }
 }
@@ -275,17 +275,16 @@ impl GameState {
     ) -> f64 {
         self.order_book
             .get(&(city, product))
-            .map(|orders| {
+            .map_or(0.0, |orders| {
                 orders
                     .iter()
                     .filter(|o| o.player != me)
                     .map(|o| self.trust_between(me, o.player))
                     .fold(0.0f64, f64::max)
             })
-            .unwrap_or(0.0)
     }
 
-    /// Eski avg_trust (geriye uyumluluk için saklandı).
+    /// Eski `avg_trust` (geriye uyumluluk için saklandı).
     #[must_use]
     pub fn avg_trust_in_bucket(
         &self,
@@ -354,8 +353,8 @@ impl GameState {
     /// NPC karar referans fiyatı — fiyat keşfi (price discovery) için.
     /// Son 5 clearing'in ortalamasını döndürür (rolling avg). Trade history
     /// yoksa `effective_baseline`'a düşer (sezon başı durumu). Şok çarpımı
-    /// rolling_avg üzerine uygulanmaz çünkü clearing fiyatları zaten şoku
-    /// içerir; baseline fallback'inde ise effective_baseline şoku ekler.
+    /// `rolling_avg` üzerine uygulanmaz çünkü clearing fiyatları zaten şoku
+    /// içerir; baseline fallback'inde ise `effective_baseline` şoku ekler.
     /// Engine clearing path'i bu helper'ı KULLANMAZ — sadece NPC karar
     /// mantığı içindir (engine `effective_baseline`'ı pay-as-bid için
     /// kullanır, oraya dokunmuyoruz).

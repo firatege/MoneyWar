@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, VecDeque};
 use moneywar_domain::{CityId, GameState, OrderSide, PlayerId, ProductKind};
 use moneywar_engine::score_player;
 
-/// Son kaç tick'in PnL deltası trend hesabına girer.
+/// Son kaç tick'in `PnL` deltası trend hesabına girer.
 const PNL_WINDOW: usize = 8;
 /// Saniyede N lira artış = "iyi trend" referansı (normalize için).
 /// 150K lira/sezon = 1000₺/tick → bir tick'te 1000₺ kazanmak çok iyi.
@@ -65,10 +65,10 @@ impl Default for PersonalityTraits {
 
 impl PersonalityTraits {
     /// Trait'lerin mevcut `Weights`'i nasıl modüle ettiği:
-    /// - risk: arbitrage + expected_edge ölçeklenir
-    /// - aggression: rival_threat yanıtı + bucket_dominance
+    /// - risk: arbitrage + `expected_edge` ölçeklenir
+    /// - aggression: `rival_threat` yanıtı + `bucket_dominance`
     /// - patience: urgency karşıtı (yüksek sabır → urgency ağırlığı düşer)
-    /// - greed: price_rel_avg amplify (pahalıya sat, ucuza al ısrarı)
+    /// - greed: `price_rel_avg` amplify (pahalıya sat, ucuza al ısrarı)
     pub fn modulate(&self, mut w: super::scoring::Weights) -> super::scoring::Weights {
         // Risk: yüksekse spekülatif sinyallere daha duyarlı
         let risk_scale = 0.5 + self.risk;        // 0.5..1.5
@@ -96,11 +96,11 @@ impl PersonalityTraits {
 // Goal geçiş eşikleri
 /// Corner hedefi için gereken minimum sahiplik oranı.
 const CORNER_OWNERSHIP_THRESHOLD: f64 = 0.08; // daha erken corner
-/// PriceWar başlatmak için rakip tehdidin yeterince yüksek olması.
+/// `PriceWar` başlatmak için rakip tehdidin yeterince yüksek olması.
 const PRICE_WAR_THREAT_THRESHOLD: f64 = 0.15;
 /// Consolidate'ten Expand'e dönmek için gereken nakit fazlası.
 const EXPAND_CASH_THRESHOLD: f64 = 0.7;
-/// Retreat için kritik PnL eşiği.
+/// Retreat için kritik `PnL` eşiği.
 const RETREAT_PNL_THRESHOLD: f64 = 0.2;
 /// Retreat'ten çıkış için iyileşme eşiği.
 const RECOVER_PNL_THRESHOLD: f64 = 0.45;
@@ -190,13 +190,13 @@ const LOSER_NOISE_PENALTY: f64 = 0.15;
 #[derive(Debug, Clone)]
 pub struct AgentBrain {
     // ── Faz 2 sinyalleri ─────────────────────────────────────────────────────
-    /// PnL trendi: 0.0 = hızla düşüyor, 0.5 = sabit, 1.0 = hızla yükseliyor.
+    /// `PnL` trendi: 0.0 = hızla düşüyor, 0.5 = sabit, 1.0 = hızla yükseliyor.
     pub pnl_trend: f64,
     /// Nakit fazlası: 0.0 = kasada para yok, 1.0 = bol para.
     pub cash_surplus: f64,
     /// Bucket bazlı pazar sahipliği: sell emri payı (0..1).
     pub market_ownership: BTreeMap<(CityId, ProductKind), f64>,
-    /// Kendi bucket'larıma rakip baskısı: PlayerId → ağırlıklı tehdit skoru.
+    /// Kendi bucket'larıma rakip baskısı: `PlayerId` → ağırlıklı tehdit skoru.
     pub rival_threat: BTreeMap<PlayerId, f64>,
 
     // ── Faz 3: fiyat beklentisi ───────────────────────────────────────────────
@@ -319,7 +319,7 @@ impl AgentBrain {
         (base_noise + adj).clamp(base_noise * 0.5, base_noise + LOSER_NOISE_PENALTY)
     }
 
-    /// Bu (city, product) için market_ownership sinyali (0..1).
+    /// Bu (city, product) için `market_ownership` sinyali (0..1).
     #[must_use]
     pub fn ownership_of(&self, city: CityId, product: ProductKind) -> f64 {
         self.market_ownership
@@ -386,7 +386,7 @@ impl AgentBrain {
                 .map(|o| o.quantity)
                 .sum();
             if total_sell > 0 {
-                let share = my_sell as f64 / total_sell as f64;
+                let share = f64::from(my_sell) / f64::from(total_sell);
                 if share > 0.0 {
                     self.market_ownership.insert((*city, *product), share);
                 }
@@ -394,7 +394,7 @@ impl AgentBrain {
         }
     }
 
-    /// Trait'leri pnl_trend'e göre kaydır.
+    /// Trait'leri `pnl_trend`'e göre kaydır.
     fn update_traits(&mut self) {
         let t = &mut self.traits;
         let trend = self.pnl_trend; // 0=kaybediyor, 0.5=sabit, 1=kazanıyor
@@ -561,7 +561,7 @@ impl AgentBrain {
         self.goal_age = 0;
     }
 
-    /// En güçlü sahip olunan bucket (market_ownership en yüksek).
+    /// En güçlü sahip olunan bucket (`market_ownership` en yüksek).
     fn strongest_owned_bucket(&self) -> Option<(CityId, ProductKind)> {
         self.market_ownership
             .iter()
@@ -595,7 +595,7 @@ impl AgentBrain {
                 for o in orders {
                     if o.player != player_id {
                         *self.rival_threat.entry(o.player).or_default() +=
-                            o.quantity as f64 * ownership;
+                            f64::from(o.quantity) * ownership;
                     }
                 }
             }
@@ -636,7 +636,7 @@ impl BrainPool {
     }
 }
 
-/// Bir rakibin tekelleştirdiği ilk pazar (BTreeMap sırası → deterministik).
+/// Bir rakibin tekelleştirdiği ilk pazar (`BTreeMap` sırası → deterministik).
 /// Fırsatçının "şişmiş fiyatlı pazara gir" sinyali.
 fn rival_monopoly_bucket(state: &GameState, player_id: PlayerId) -> Option<(CityId, ProductKind)> {
     state

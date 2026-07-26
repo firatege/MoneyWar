@@ -5,7 +5,8 @@
 //!   ham madde alım yoğunlaşması, toplam üretilen birim.
 //! - Tüccar → lojistik hakimiyeti: kervan dispatch HHI, şehir-çifti akış
 //!   HHI, taşınan toplam birim.
-//! Ortak metrikler: servet Gini, rol PnL tablosu.
+//!
+//! Ortak metrikler: servet Gini, rol `PnL` tablosu.
 //!
 //! Saf yardımcılar (`hhi`, `gini`) ayrı tutulur ki test edilebilsin.
 
@@ -83,7 +84,7 @@ pub struct MetricsAccumulator {
 }
 
 impl MetricsAccumulator {
-    /// OrderMatched olayı. `seller_kind` rolü sanayici ham alım tespiti için.
+    /// `OrderMatched` olayı. `seller_kind` rolü sanayici ham alım tespiti için.
     pub fn record_match(
         &mut self,
         _city: CityId,
@@ -102,7 +103,7 @@ impl MetricsAccumulator {
         }
     }
 
-    /// ProductionCompleted olayı — Sanayici üretim hakimiyeti.
+    /// `ProductionCompleted` olayı — Sanayici üretim hakimiyeti.
     pub fn record_production(
         &mut self,
         city: CityId,
@@ -118,7 +119,7 @@ impl MetricsAccumulator {
             .or_default() += u64::from(units);
     }
 
-    /// CaravanArrived olayı — Tüccar lojistik hakimiyeti.
+    /// `CaravanArrived` olayı — Tüccar lojistik hakimiyeti.
     pub fn record_caravan(
         &mut self,
         from: CityId,
@@ -290,7 +291,7 @@ pub struct Metrics {
     // ── Ortak ─────────────────────────────────────────────────────────────────
     /// Servet Gini (tüm roller, 0=eşit, 1=tek elde).
     pub wealth_gini: f64,
-    /// Rol → toplam PnL (lira), azalan.
+    /// Rol → toplam `PnL` (lira), azalan.
     pub role_pnl: Vec<(String, f64)>,
 }
 

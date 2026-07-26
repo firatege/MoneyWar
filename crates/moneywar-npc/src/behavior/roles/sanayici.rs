@@ -32,7 +32,7 @@ use crate::behavior::pricing::{CrossPolicy, derived_input_ceiling, marketable_as
 /// tavan yerine bu tercih edildi ki tekelleşme emergent kalsın.
 ///
 /// Denendi ve geri alındı (2026-07-25): "aç fabrikan varken yenisini kurma"
-/// freni Sanayici'nin kişi başı PnL'ini 57K → 30K'ya düşürdü. Darboğaz fabrika
+/// freni Sanayici'nin kişi başı `PnL`'ini 57K → 30K'ya düşürdü. Darboğaz fabrika
 /// sayısı değil, hammaddeyi piyasada kaybetmekti; çözüm türev talep tavanı
 /// oldu (bkz. `pricing::derived_input_ceiling`).
 const TARGET_FACTORIES: usize = usize::MAX;
@@ -305,7 +305,7 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
                 (1, 0, false)
             };
 
-        let base_qty = (qty / 2).max(1).min(50);
+        let base_qty = (qty / 2).clamp(1, 50);
         let quantity = base_qty.saturating_mul(goal_vol_mult).min(200);
 
         let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
@@ -440,7 +440,7 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
 }
 
 /// Sanayici'nin mamul kervan dispatch adayları.
-/// Stok BATCH_SIZE × 2 birimi aşarsa, en yüksek referans fiyatlı şehre gönder.
+/// Stok `BATCH_SIZE` × 2 birimi aşarsa, en yüksek referans fiyatlı şehre gönder.
 fn enumerate_mamul_dispatch(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     let dispatch_threshold = moneywar_domain::balance::FACTORY_BATCH_SIZE * 2;
@@ -461,8 +461,7 @@ fn enumerate_mamul_dispatch(state: &GameState, player: &Player) -> Vec<ActionCan
             }
             let local_price = state
                 .reference_price(cur_city, product)
-                .map(|m| m.as_cents())
-                .unwrap_or(0);
+                .map_or(0, moneywar_domain::Money::as_cents);
             for to_city in CityId::ALL {
                 if to_city == cur_city {
                     continue;
@@ -470,7 +469,7 @@ fn enumerate_mamul_dispatch(state: &GameState, player: &Player) -> Vec<ActionCan
                 let to_price = state
                     .best_bid(to_city, product)
                     .map(|(p, _)| p.as_cents())
-                    .or_else(|| state.reference_price(to_city, product).map(|m| m.as_cents()))
+                    .or_else(|| state.reference_price(to_city, product).map(moneywar_domain::Money::as_cents))
                     .unwrap_or(0);
                 let profit = to_price - local_price;
                 if profit <= 0 {
@@ -646,12 +645,12 @@ fn scale_pct(price: Money, pct: i64) -> Money {
 /// olarak farklı şehirlere yayılır.
 /// Sanayici fab kuruluş motivasyonu — iki aşamalı:
 ///
-/// 1. **İlk fab**: player_id ile deterministic dağılım. 5 NPC aynı tick'te
+/// 1. **İlk fab**: `player_id` ile deterministic dağılım. 5 NPC aynı tick'te
 ///    karar verince hepsi "Ist-Kumas boş" görüyordu → yığılırdı. Şimdi NPC
 ///    kendi id modulo aday sayısı ile farklı (city, product) seçer →
 ///    Sanayici'ler doğal yayılır.
 ///
-/// 2. **Sonraki fab**: en yüksek **profit margin** (mamul_price - raw_price).
+/// 2. **Sonraki fab**: en yüksek **profit margin** (`mamul_price` - `raw_price`).
 ///    Lüks talep şehirleri (Ist-Kumas 36₺, Ank-Un 36₺) çekici çünkü mamul
 ///    pahalı + ham aynı baseline. Sezgisel kârlı yatırım kararı.
 fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate::behavior::brain::AgentBrain>) -> Option<(CityId, ProductKind)> {
@@ -710,7 +709,7 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
                 let is_specialty = state.city_specialty.get(c)
                     .and_then(|raw| preferred_product.raw_input().map(|r| *raw == r))
                     .unwrap_or(false);
-                if is_specialty { 0usize } else { 1 }
+                usize::from(!is_specialty)
             })
             .copied();
         if let Some(target) = preferred {
@@ -734,16 +733,16 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
     candidates.into_iter().max_by_key(|(city, product)| {
         let mamul_cents = state
             .reference_price(*city, *product)
-            .map_or(0, |m| m.as_cents());
+            .map_or(0, moneywar_domain::Money::as_cents);
         // Gerçek kâr: (mamul_fiyat × çıktı_adedi) - (ham_fiyat × batch_size)
         // Çıktı oranı: Kumaş %80, Un %90, Zeytinyağı %100
-        let output_pct = product.output_ratio_pct() as i64;
-        let batch = moneywar_domain::balance::FACTORY_BATCH_SIZE as i64;
+        let output_pct = i64::from(product.output_ratio_pct());
+        let batch = i64::from(moneywar_domain::balance::FACTORY_BATCH_SIZE);
         let gross_revenue = mamul_cents * (batch * output_pct / 100);
         let raw_cents = product
             .raw_input()
             .and_then(|raw| state.reference_price(*city, raw))
-            .map_or(0, |m| m.as_cents());
+            .map_or(0, moneywar_domain::Money::as_cents);
         let raw_cost = raw_cents * batch;
         let margin = (gross_revenue - raw_cost).max(0) / batch; // normalize
 
@@ -791,11 +790,11 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         // Specialty bonus sadece hammadde gerçekten bol ve ucuzsa geçerli.
         // Zeytin fiyatı 2× baseline'ı geçtiyse (kıtlık) bonus sıfır —
         // Sanayici o şehre daha fazla Zeytinyağı fabrikası kurmamalı.
-        let raw_supply_ok = product_raw.map_or(true, |raw| {
+        let raw_supply_ok = product_raw.is_none_or(|raw| {
             let ref_price = state.reference_price(*city, raw)
-                .map(|m| m.as_cents()).unwrap_or(0);
+                .map_or(0, moneywar_domain::Money::as_cents);
             let baseline = state.price_baseline.get(&(*city, raw))
-                .map(|m| m.as_cents()).unwrap_or(1).max(1);
+                .map_or(1, |m| m.as_cents()).max(1);
             ref_price > 0 && ref_price < baseline * 2
         });
         let specialty_bonus = if city_prime.is_some() && city_prime == product_raw && raw_supply_ok {
@@ -882,7 +881,7 @@ fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate
 /// İki şey özellikle önemli:
 /// - **Yalnız ham madde.** Tarla ham madde üretir; tier-2/3 fabrikanın
 ///   girdisi mamuldür (Ekmek → Un, Ziyafet → Ekmek). Bunlar elenmezse motor
-///   komutu "PrivateFarm only produces raw materials" diye reddediyordu.
+///   komutu "`PrivateFarm` only produces raw materials" diye reddediyordu.
 /// - **Kıtlığa göre sıra.** Eskiden aday `BTreeSet`'ten `find()` ile, yani
 ///   ürün sıralamasındaki ilk eleman olarak alınıyordu; firma zaten bol olan
 ///   hammaddeye tarla kurup asıl darboğazını beslemeden kalıyordu.
@@ -959,7 +958,7 @@ fn enumerate_upgrade_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
 /// Yükseltme koşulları:
 /// 1. Fabrika maksimum seviyenin altında (< 3).
 /// 2. Yükseltme maliyetini karşılayacak nakit var (maliyet × 1.5 güvenlik buffer).
-/// 3. Fabrika aktif — son IDLE_FACTORY_THRESHOLD tick içinde üretim yapmış.
+/// 3. Fabrika aktif — son `IDLE_FACTORY_THRESHOLD` tick içinde üretim yapmış.
 ///
 /// Tick başına en fazla 1 yükseltme (kaynak dağılımı kontrolü).
 fn enumerate_upgrade(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
@@ -1001,10 +1000,10 @@ fn enumerate_upgrade(state: &GameState, player: &Player) -> Vec<ActionCandidate>
 /// Kapatılabilecek fabrikaları listele.
 ///
 /// Kapatma koşulları (her ikisi de gerekli):
-/// 1. Fabrika uzun süredir atıl (IDLE_FACTORY_THRESHOLD × 2 = 20 tick) — ham
+/// 1. Fabrika uzun süredir atıl (`IDLE_FACTORY_THRESHOLD` × 2 = 20 tick) — ham
 ///    madde yetersizliği veya mamul çok ucuz, sürdürülemez üretim.
-/// 2. Nakit kritik (<8K) VEYA PnL son birkaç tickte negatif yönelimli.
-///    (PnL sinyal brain'den gelir ama burada cash vekil olarak kullanılır.)
+/// 2. Nakit kritik (<8K) VEYA `PnL` son birkaç tickte negatif yönelimli.
+///    (`PnL` sinyal brain'den gelir ama burada cash vekil olarak kullanılır.)
 ///
 /// Tick başına en fazla 1 fabrika kapatılır (fazla çığ etkisi önlenir).
 fn enumerate_demolish(state: &GameState, player: &Player) -> Vec<ActionCandidate> {

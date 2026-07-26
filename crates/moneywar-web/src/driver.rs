@@ -18,7 +18,7 @@ use crate::world::new_season;
 pub struct SeasonSummary {
     pub season: u64,
     pub ticks_completed: u32,
-    /// (id, name, npc_kind, pnl_lira) sıralı skor tablosu.
+    /// (id, name, `npc_kind`, `pnl_lira`) sıralı skor tablosu.
     pub top: Vec<SeasonEntry>,
 }
 
@@ -33,7 +33,7 @@ pub struct SeasonEntry {
     pub cash_lira: f64,
 }
 
-/// SplitMix64 — sezon başına farklı ama deterministik seed türetir.
+/// `SplitMix64` — sezon başına farklı ama deterministik seed türetir.
 fn next_seed(base: u64, season: u64) -> u64 {
     base.wrapping_mul(0x9E37_79B9_7F4A_7C15)
         .wrapping_add(season.wrapping_mul(0x1234_5678_9ABC_DEF1))

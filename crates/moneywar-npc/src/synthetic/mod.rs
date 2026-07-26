@@ -80,6 +80,7 @@ fn scale_pct(price: Money, pct: i64) -> Money {
     Money::from_cents(price.as_cents().saturating_mul(pct) / 100)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn submit(
     pid: PlayerId,
     tick: Tick,
@@ -120,7 +121,7 @@ fn ciftci(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Ve
         if !product.is_raw() || qty == 0 {
             continue;
         }
-        let half = (qty / 2).max(1).min(100);
+        let half = (qty / 2).clamp(1, 100);
         let price = baseline(state, city, product);
         if let Some(c) = submit(
             player.id,
@@ -196,7 +197,7 @@ fn esnaf(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> Vec
         if qty == 0 {
             continue;
         }
-        let half = (qty / 2).max(1).min(50);
+        let half = (qty / 2).clamp(1, 50);
         let price = scale_pct(baseline(state, city, product), 105);
         if let Some(c) = submit(
             player.id,
@@ -261,7 +262,7 @@ fn sanayici(player: &Player, state: &moneywar_domain::GameState, tick: Tick) -> 
         if !product.is_finished() || qty == 0 {
             continue;
         }
-        let half = (qty / 2).max(1).min(50);
+        let half = (qty / 2).clamp(1, 50);
         let price = scale_pct(baseline(state, city, product), 105);
         if let Some(c) = submit(
             player.id,

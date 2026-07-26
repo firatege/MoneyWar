@@ -1,13 +1,13 @@
 //! Alıcı rol davranışı — tüketici, buy-only mamul.
 //!
-//! Alıcı her CONSUME_PERIOD (5) tick'te mamul stoğunun %50'sini tüketir
+//! Alıcı her `CONSUME_PERIOD` (5) tick'te mamul stoğunun %50'sini tüketir
 //! (Vic3 pop needs). Sürekli alım yapması doğal — yoksa açlık çeker.
 //!
 //! # Aday üretim kuralı
 //!
 //! Her `(şehir × mamul)` için bir Buy adayı (3 şehir × 3 mamul = 9 aday):
 //! - quantity = `affordable_qty(cash_bucket, price, want=30)` — tax-aware
-//! - unit_price = `effective_baseline(city, product)` (clamp etkisi dahil)
+//! - `unit_price` = `effective_baseline(city, product)` (clamp etkisi dahil)
 //! - skor → orchestrator hesaplar (Alıcı `Weights`'i ile)
 //!
 //! # Alıcı `Weights` mantığı (`personality.rs`'te)
@@ -60,14 +60,13 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             // Monopol kabulü: bucket'ta tek satıcı varsa daha yüksek fiyata razı ol.
             // Alıcının başka seçeneği yoksa premium ödemeye mecbur.
             let seller_count = state.order_book.get(&(city, product))
-                .map(|orders| {
+                .map_or(0, |orders| {
                     let sellers: std::collections::BTreeSet<_> = orders.iter()
                         .filter(|o| o.side.is_sell())
                         .map(|o| o.player)
                         .collect();
                     sellers.len()
-                })
-                .unwrap_or(0);
+                });
             if seller_count <= 1 {
                 // Tek satıcı → %20 daha fazla öde (monopoly tax)
                 cash_ceiling = Money::from_cents(

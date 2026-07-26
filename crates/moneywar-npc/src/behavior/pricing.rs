@@ -92,12 +92,12 @@ fn reference_or_base(state: &GameState, city: CityId, product: ProductKind) -> O
     state
         .effective_baseline(city, product)
         .or_else(|| Money::from_lira(product.base_price_lira()).ok())
-        .map(|m| m.as_cents())
+        .map(moneywar_domain::Money::as_cents)
         .filter(|c| *c > 0)
 }
 
 /// Bu (tick, city, product, side, player) için ±3% jitter yüzdesi (-3..=+3).
-/// v0.4.1: player_id eklendi — aynı bucket'ta farklı NPC'ler farklı jitter alır,
+/// v0.4.1: `player_id` eklendi — aynı bucket'ta farklı NPC'ler farklı jitter alır,
 /// senkronize emir spam'ı kırılır. Eski versiyon 4 Tüccar aynı fiyatı veriyordu
 /// ("bot army" sorunu, user gözlemi: NPC'ler birlikte hareket ediyor).
 #[must_use]
@@ -170,7 +170,7 @@ pub fn apply_jitter(
 /// kendi limitinde mi bekliyor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossPolicy {
-    /// Karşı taraf en iyi emrine yetiş (best_bid/best_ask). Floor/ceiling
+    /// Karşı taraf en iyi emrine yetiş (`best_bid/best_ask`). Floor/ceiling
     /// ihlal edilirse pas geçer.
     Cross,
     /// Kendi limit fiyatını koru. Patience/season drift ile yine yumuşar.
@@ -183,7 +183,7 @@ pub enum CrossPolicy {
 /// - **Patience erosion** (0-15%): art arda match olmadan geçen tick sayısı.
 /// - **Season drift** (0-15%): sezon ilerledikçe pozisyon kapatma baskısı.
 /// - **Difficulty softener** (0-15%): Easy mode'da NPC fiyat marjları human
-///   lehine kayar (state.market_softener_pct). Hard mode'da 0.
+///   lehine kayar (`state.market_softener_pct`). Hard mode'da 0.
 #[must_use]
 fn urgency_pct(state: &GameState, player: PlayerId, city: CityId, product: ProductKind) -> i64 {
     let streak = state.no_match_streak(player, city, product);
@@ -202,10 +202,10 @@ fn urgency_pct(state: &GameState, player: PlayerId, city: CityId, product: Produ
 /// `stock_floor` = "bu fiyatın altına asla satmam" tabanı. Genelde
 /// `reference × stock_discount_pct` (Çiftçi'nin stok-baskısı indirimi).
 ///
-/// - `Cross`: best_bid varsa ve floor'un üstündeyse → bid'i hedef al.
+/// - `Cross`: `best_bid` varsa ve floor'un üstündeyse → bid'i hedef al.
 /// - `Passive`: floor'da kal.
 ///
-/// Sonuç urgency_pct ile yumuşatılır → patience erosion + season drift uygular.
+/// Sonuç `urgency_pct` ile yumuşatılır → patience erosion + season drift uygular.
 /// Zero/negative sonuç None döner (jitter sonrası).
 #[must_use]
 pub fn marketable_ask(
@@ -251,10 +251,10 @@ pub fn marketable_ask(
 /// `cash_ceiling` = "bu fiyatın üstüne asla almam" tavanı. Genelde
 /// `reference × premium_pct`.
 ///
-/// - `Cross`: best_ask varsa ve ceiling'in altındaysa → ask'ı hedef al.
+/// - `Cross`: `best_ask` varsa ve ceiling'in altındaysa → ask'ı hedef al.
 /// - `Passive`: ceiling'de kal.
 ///
-/// urgency_pct ceiling'i **yükseltir** — daha agresif alım.
+/// `urgency_pct` ceiling'i **yükseltir** — daha agresif alım.
 #[must_use]
 pub fn marketable_bid(
     state: &GameState,

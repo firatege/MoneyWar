@@ -1,4 +1,4 @@
-//! Difficulty parametre seti — top-K, silence, noise, min_score.
+//! Difficulty parametre seti — top-K, silence, noise, `min_score`.
 //!
 //! Eski fuzzy `DifficultyModulator`'ın yerini alır. Daha sade çünkü utility
 //! motoru aggressiveness multiplier'ına ihtiyaç duymuyor (ağırlık tablosu zaten
@@ -38,10 +38,10 @@ impl BehaviorDifficulty {
         min_score: 0.10,
     };
 
-    /// Easy — Hard'ın opposite'i: bol likidite (top_k yüksek), AMA NPC
+    /// Easy — Hard'ın opposite'i: bol likidite (`top_k` yüksek), AMA NPC
     /// fiyatları human lehine cömert (bkz. `state.market_softener_pct=15`,
     /// pricing helper'larda Easy mode'da floor düşer / ceiling yükselir).
-    /// Eski Easy (top_k=2, silence=3) piyasayı donuklaştırıyordu — human
+    /// Eski Easy (`top_k=2`, silence=3) piyasayı donuklaştırıyordu — human
     /// emir veriyor ama karşı taraf yok hissi. Şimdi NPC'ler aktif emir
     /// basıyor (likidite), sadece marjları yumuşak (human cömertlik).
     pub const EASY: Self = Self {

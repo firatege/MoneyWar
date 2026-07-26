@@ -1,4 +1,4 @@
-//! MoneyWar web platformu — actix backend.
+//! `MoneyWar` web platformu — actix backend.
 //!
 //! Sonsuz sezon loop'u arka planda her `TICK_SECONDS` saniyede bir tick
 //! ilerletir; her tick snapshot'ı broadcast kanalına yollar. İzleyiciler

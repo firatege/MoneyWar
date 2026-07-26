@@ -161,7 +161,7 @@ pub(crate) fn process_build_private_farm(
         .filter(|f| f.city == city && f.product == product)
         .count() as i64;
     let cost_lira = PRIVATE_FARM_BUILD_COST_LIRA + existing_in_slot * PRIVATE_FARM_BUILD_COST_LIRA / 2;
-    let cost = Money::from_lira(cost_lira).map_err(|e| EngineError::Domain(e))?;
+    let cost = Money::from_lira(cost_lira).map_err(EngineError::Domain)?;
     let player_mut = state.players.get_mut(&owner).expect("validated");
     if player_mut.cash < cost {
         return Err(EngineError::Domain(DomainError::InsufficientFunds {
@@ -432,7 +432,7 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
     let have_raw = player.inventory.get(city, raw);
     // Shortage soft penalty: tam batch yoksa kısmi üret.
     // Batch boyutu fabrika seviyesine göre değişir (level 1=50, 2=75, 3=100).
-    let level_batch = state.factories.get(&fid).map_or(Factory::BATCH_SIZE, |f| f.batch_size());
+    let level_batch = state.factories.get(&fid).map_or(Factory::BATCH_SIZE, moneywar_domain::Factory::batch_size);
     let partial_min = (level_batch / 4).max(1);
     let mut batch_size = if have_raw >= level_batch {
         level_batch

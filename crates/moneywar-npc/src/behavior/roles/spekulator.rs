@@ -23,13 +23,13 @@ use crate::behavior::pricing::apply_jitter;
 // SPREAD_OPPORTUNITY_PCT v8.14'te kaldırıldı — Spek artık arbitraj filtresine
 // bağlı değil, lokal market maker. Eski cheapest/richest helpers da silindi.
 
-/// v8.19: Spek **odaklı raw spekülatör** — sadece **prime_raw** bucket'larında
+/// v8.19: Spek **odaklı raw spekülatör** — sadece **`prime_raw`** bucket'larında
 /// BID + stok varsa ASK. Eski 18-bucket lokal market maker -271K zarar
 /// kasası (Esnafsız ham BUY iştahı düşünce Spek alıp satamadı, depoda 10K+
 /// ham çürüdü; 0 SELL match). v8.19'da 3 bucket'a indirilmişti.
 ///
 /// v0.6.0 Faz 2 (cliff fix): Sanayici off-fab BUY kaldırıldı, Spek likidite
-/// devraldı. 5 prime_raw bucket dar — Sanayici fab şehri specialty'siyle
+/// devraldı. 5 `prime_raw` bucket dar — Sanayici fab şehri specialty'siyle
 /// çakışmadığında Spek müşteri bulamadı, stok birikti (Faz 2'de -19K zarar).
 /// Yeni: **15 raw bucket** (5 şehir × 3 raw). Her raw'ı her şehirde işler →
 /// Sanayici fab şehri ne olursa olsun Spek o şehirde alternatif tedarikçi.
@@ -100,7 +100,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
                 player.id,
             );
             if ask_price.as_cents() > 0 {
-                let qty = (stock / 2).max(1).min(30);
+                let qty = (stock / 2).clamp(1, 30);
                 out.push(ActionCandidate::SubmitOrder {
                     side: OrderSide::Sell,
                     city,

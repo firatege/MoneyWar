@@ -162,9 +162,9 @@ fn compute_factory_value(state: &GameState, player_id: PlayerId, current: Tick) 
     Money::from_cents(total)
 }
 
-/// v0.5.1: Kervan asset değeri — buy_cost'un %50'si (factory ile aynı).
+/// v0.5.1: Kervan asset değeri — `buy_cost`'un %50'si (factory ile aynı).
 /// Tüccar/Sanayici 1+ kervan satın alır, satın alma cash sızıntısı
-/// görünmesin diye PnL'de geri kazanılır.
+/// görünmesin diye `PnL`'de geri kazanılır.
 fn compute_caravan_value(state: &GameState, player_id: PlayerId) -> Money {
     let owned: Vec<&moneywar_domain::Caravan> = state
         .caravans
@@ -177,8 +177,7 @@ fn compute_caravan_value(state: &GameState, player_id: PlayerId) -> Money {
     let role = state
         .players
         .get(&player_id)
-        .map(|p| p.role)
-        .unwrap_or(moneywar_domain::Role::Tuccar);
+        .map_or(moneywar_domain::Role::Tuccar, |p| p.role);
     let mut total: i64 = 0;
     for (idx, _) in owned.iter().enumerate() {
         let cost = moneywar_domain::Caravan::buy_cost(role, u32::try_from(idx).unwrap_or(u32::MAX));

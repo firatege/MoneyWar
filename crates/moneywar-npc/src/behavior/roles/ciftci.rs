@@ -1,6 +1,6 @@
 //! Çiftçi rol davranışı — hammadde üreticisi, sell-only.
 //!
-//! Çiftçi her HARVEST_PERIOD (8) tick'te `harvest_ciftci_stock` ile envantere
+//! Çiftçi her `HARVEST_PERIOD` (8) tick'te `harvest_ciftci_stock` ile envantere
 //! mahsul alır. Davranışı sade: stoğunu pazara satar, "ne zaman ne kadar?"
 //! kararı utility skor üzerinden.
 //!
@@ -8,7 +8,7 @@
 //!
 //! Envanterindeki her `(city, raw_product, qty)` için bir Sell adayı:
 //! - quantity = stoğun yarısı (max 100, min 1)
-//! - unit_price = `effective_baseline(city, product)`
+//! - `unit_price` = `effective_baseline(city, product)`
 //! - skor → orchestrator hesaplar (Çiftçi `Weights`'i ile)
 //!
 //! # Çiftçi `Weights` mantığı (`personality.rs`'te)
@@ -29,7 +29,7 @@ use crate::behavior::pricing::{CrossPolicy, marketable_ask};
 /// v8.20: Order-book aware pricing — `marketable_ask` üzerinden geçer.
 ///
 /// Rol kimliği: **üretici** → mahsul fire riski → satış zorunluluğu.
-/// Stok>500 olduğunda CROSS — best_bid'a iner (taze stoğu eritir).
+/// Stok>500 olduğunda CROSS — `best_bid`'a iner (taze stoğu eritir).
 /// Stok<500 ise PASSIVE — kâr maks (taze ürün, beklemeye değer).
 ///
 /// Floor (asla altına satmama eşiği) stok'a göre:
@@ -38,7 +38,7 @@ use crate::behavior::pricing::{CrossPolicy, marketable_ask};
 /// - 500-999 → %80 (orta basınç)
 /// - 1000+ → %65 (kriz)
 ///
-/// `marketable_ask` urgency_pct uygular → hatta cross olmadan bile floor
+/// `marketable_ask` `urgency_pct` uygular → hatta cross olmadan bile floor
 /// patience erosion + season drift ile %30 düşer → match garantisi.
 #[must_use]
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {

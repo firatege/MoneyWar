@@ -6,7 +6,7 @@
 //!
 //! Hesap: qty-ağırlıklı ortalama (son N tick clearing'lerinin price × qty
 //! toplamı / qty toplamı). qty bilgisi `price_history`'de yok — şu an basit
-//! aritmetik ortalama (rolling_avg) kullanılıyor.
+//! aritmetik ortalama (`rolling_avg`) kullanılıyor.
 //!
 //! Endeks tipleri:
 //! - **Tarım**: 3 ham (Pamuk + Buğday + Zeytin) ortalama, 3 şehir × 3 ürün

@@ -123,22 +123,14 @@ pub fn format_tick_block(state: &GameState, report: &TickReport, season: u64) ->
                 .and_then(|h| h.last().map(|(_, p)| format!("{p:>8}")))
                 .unwrap_or_else(|| "       -".into());
             let avg5 = state
-                .rolling_avg_price(city, product, 5)
-                .map(|p| format!("{p:>8}"))
-                .unwrap_or_else(|| "       -".into());
+                .rolling_avg_price(city, product, 5).map_or_else(|| "       -".into(), |p| format!("{p:>8}"));
             let base = state
                 .price_baseline
-                .get(&(city, product))
-                .map(|p| format!("{p:>8}"))
-                .unwrap_or_else(|| "       -".into());
+                .get(&(city, product)).map_or_else(|| "       -".into(), |p| format!("{p:>8}"));
             let bid = state
-                .best_bid(city, product)
-                .map(|(p, _)| format!("{p:>8}"))
-                .unwrap_or_else(|| "       -".into());
+                .best_bid(city, product).map_or_else(|| "       -".into(), |(p, _)| format!("{p:>8}"));
             let ask = state
-                .best_ask(city, product)
-                .map(|(p, _)| format!("{p:>8}"))
-                .unwrap_or_else(|| "       -".into());
+                .best_ask(city, product).map_or_else(|| "       -".into(), |(p, _)| format!("{p:>8}"));
             let spread = match (state.best_bid(city, product), state.best_ask(city, product)) {
                 (Some((b, _)), Some((a, _))) => {
                     format!("{:>6}", a.as_cents().saturating_sub(b.as_cents()))
@@ -148,13 +140,12 @@ pub fn format_tick_block(state: &GameState, report: &TickReport, season: u64) ->
             let (buy_q, sell_q) = state
                 .order_book
                 .get(&(city, product))
-                .map(|book| {
+                .map_or((0, 0), |book| {
                     let bq: u32 = book.iter().filter(|o| o.side.is_buy()).map(|o| o.quantity).sum();
                     let sq: u32 =
                         book.iter().filter(|o| o.side.is_sell()).map(|o| o.quantity).sum();
                     (bq, sq)
-                })
-                .unwrap_or((0, 0));
+                });
             let bucket_label = format!("{}/{}", city.display_name(), product.display_name());
             out.push_str(&format!(
                 "s{season} t{tick:>3}  <bucket>                 {bucket_label:<20} {last} {avg5} {base} {bid} {ask} {spread} {buy_q:>6} {sell_q:>6}\n"

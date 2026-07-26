@@ -114,8 +114,7 @@ pub fn decide_behavior(
     // Faz 6: rol+kişilik ağırlıkları → brain traits ile dinamik modülasyon.
     let base_weights = personality::for_kind_personality(player.npc_kind, player.personality);
     let weights = brain
-        .map(|b| b.traits.modulate(base_weights))
-        .unwrap_or(base_weights);
+        .map_or(base_weights, |b| b.traits.modulate(base_weights));
     let mut scored: Vec<(ActionCandidate, f64)> = candidates
         .into_iter()
         .map(|cand| {
@@ -149,8 +148,7 @@ pub fn decide_behavior(
             };
             // Faz 3: skill noise — kazanan keskin, kaybeden panikler.
             let effective_noise = brain
-                .map(|b| b.skill_noise(difficulty.noise))
-                .unwrap_or(difficulty.noise);
+                .map_or(difficulty.noise, |b| b.skill_noise(difficulty.noise));
             let noise = if effective_noise > 0.0 {
                 (rng.random::<f64>() - 0.5) * 2.0 * effective_noise
             } else {

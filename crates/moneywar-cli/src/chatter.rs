@@ -142,7 +142,7 @@ fn shock_for(state: &GameState, tick: Tick, event: &LogEvent) -> Option<ChatterE
     else {
         return None;
     };
-    let speaker_id = pick_npc_speaker(state, tick, u64::from(event_id.value()))?;
+    let speaker_id = pick_npc_speaker(state, tick, event_id.value())?;
     let speaker = state.players.get(&speaker_id)?;
     let personality = speaker.personality.unwrap_or(Personality::TrendFollower);
     let kind = ChatterKind::ShockEvent;

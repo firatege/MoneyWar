@@ -37,9 +37,9 @@ pub fn for_kind_personality(kind: Option<NpcKind>, personality: Option<Personali
 /// - **Aggressive**: cash + arbitrage agresif (al/sat hızlı), competition zayıf
 /// - **Hoarder**: stock pozitifse satışı bastır (depola), urgency düşük
 /// - **Arbitrageur**: arbitrage + event ana sürücü (fırsat avcısı)
-/// - **EventTrader**: event + momentum (haber-driven hızlı reaksiyon)
-/// - **TrendFollower**: momentum amplify
-/// - **MeanReverter**: momentum tersine (yükselen → satar)
+/// - **`EventTrader`**: event + momentum (haber-driven hızlı reaksiyon)
+/// - **`TrendFollower`**: momentum amplify
+/// - **`MeanReverter`**: momentum tersine (yükselen → satar)
 /// - **Cartel**: competition negatif amplify (rekabet yerine plan)
 fn apply_personality(mut w: Weights, personality: Option<Personality>) -> Weights {
     let Some(p) = personality else {

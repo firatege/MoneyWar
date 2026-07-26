@@ -26,7 +26,7 @@ use crate::behavior::pricing::apply_jitter;
 /// Esnaf'ın bu tick için aday listesi.
 ///
 /// **Sıralama: önce SAT, sonra AL** (v8.16). Behavior dispatcher Easy'de
-/// top_k=2 ile sınırlı, BUY ve SELL adayları aynı skor → tie-break enumerate
+/// `top_k=2` ile sınırlı, BUY ve SELL adayları aynı skor → tie-break enumerate
 /// sırasına göre. Eski sıralama BUY-önce idi → SELL hiç emit olmuyordu →
 /// Esnaf 18K stok birikti, -457K zarar. SAT-önce sıralaması Esnaf'ın
 /// stoğunu pazara çıkarır, kâr/zarar dengelenir.
@@ -65,7 +65,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         if unit_price.as_cents() <= 0 {
             continue;
         }
-        let quantity = (qty / 2).max(1).min(50);
+        let quantity = (qty / 2).clamp(1, 50);
         out.push(ActionCandidate::SubmitOrder {
             side: OrderSide::Sell,
             city,

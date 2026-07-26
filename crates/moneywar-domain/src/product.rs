@@ -252,7 +252,8 @@ impl ProductKind {
     /// - `Kumas` (Pamuk): %80 — dokumacılık fire (kumaş kenar, parça vb)
     /// - `Un` (Buğday): %90 — değirmen az kayıp
     /// - `Zeytinyagi` (Zeytin): %50 — sıkım sonrası posa atılır, yarı verim
-    /// Ham ürünler ve geçerli olmayan üretim için %100 (identity, no-op).
+    ///
+    /// Ham ürünler ve geçerli olmayan üretim için tam verim (identity, no-op).
     #[must_use]
     pub const fn output_ratio_pct(self) -> u32 {
         match self {
@@ -273,7 +274,8 @@ impl ProductKind {
     /// - `Un`: %20 — temel gıda, günlük tüketim
     /// - `Kumas`: %12 — mevsimlik, yavaş yıpranır
     /// - `Zeytinyagi`: %7 — lüks, az tüketilir
-    /// Ham ürünler için 0 (Alıcı ham tüketmez).
+    ///
+    /// Ham ürünler için sıfır — Alıcı ham tüketmez.
     #[must_use]
     pub const fn alici_consume_pct(self) -> u32 {
         match self {
@@ -294,7 +296,8 @@ impl ProductKind {
     /// - `Un`: 2 (değirmen — mevcut default)
     /// - `Zeytinyagi`: 3 (sıkım orta süre)
     /// - `Kumas`: 4 (dokumacılık yavaş)
-    /// Ham ürünler için 0 (üretim mekaniği yok, sadece mahsul).
+    ///
+    /// Ham ürünler için sıfır — üretim mekaniği yok, sadece mahsul.
     #[must_use]
     pub const fn production_ticks(self) -> u32 {
         match self {

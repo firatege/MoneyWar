@@ -26,7 +26,7 @@ pub fn new_season(seed: u64) -> GameState {
     s
 }
 
-/// Baseline fiyatları doldur (sim build_state ile birebir):
+/// Baseline fiyatları doldur (sim `build_state` ile birebir):
 /// ham → lokal specialty 4₺, off-specialty 7₺; mamul → şehir talebine göre
 /// `base × {High:1.2, Normal:1.0, Low:0.8}`.
 fn seed_baselines(s: &mut GameState) {
@@ -82,7 +82,7 @@ fn seed_profiles(s: &mut GameState, rng: &mut ChaCha8Rng) {
 }
 
 /// NPC kadrosunu kur — Tüccar / Sanayici / Spekülatör / Alıcı / Çiftçi / Banka.
-/// Cash ve başlangıç stoğu değerleri sim build_state ile aynı.
+/// Cash ve başlangıç stoğu değerleri sim `build_state` ile aynı.
 fn seed_npcs(s: &mut GameState, rng: &mut ChaCha8Rng, comp: NpcComposition) {
     let mut next_id: u64 = 100;
 
@@ -222,7 +222,7 @@ fn pick_personality(rng: &mut ChaCha8Rng) -> Personality {
     Personality::ALL[rng.random_range(0..Personality::ALL.len())]
 }
 
-/// Stoğu ağırlıklı rastgele dağıt (sim build_state ile aynı algoritma).
+/// Stoğu ağırlıklı rastgele dağıt (sim `build_state` ile aynı algoritma).
 /// Sanayici başlangıç stoğu — sadece ham madde.
 /// Mamul stoğuyla başlayınca t1'de haksız satış yapıyorlardı.
 fn distribute_raw_inv(player: &mut Player, rng: &mut ChaCha8Rng, total: u32) {

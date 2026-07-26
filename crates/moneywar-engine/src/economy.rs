@@ -32,7 +32,7 @@ const WAGE_PERIOD: u32 = 5;
 /// Depolama maliyeti periyodu — her N tick'te stok ücreti kesilir.
 const STORAGE_PERIOD: u32 = 10;
 /// Ücretsiz stok eşiği (birim) — bu miktarın altı ücretlendirilmez.
-/// Sanayici'nin çalışma stoğunu (BATCH_SIZE=100) korur.
+/// Sanayici'nin çalışma stoğunu (`BATCH_SIZE=100`) korur.
 const STORAGE_FREE_UNITS: u32 = 25;
 /// Standart depolama maliyeti (cents/birim/periyot) — Tüccar, Spek, Çiftçi.
 const STORAGE_COST_CENTS: i64 = 6;
@@ -54,7 +54,7 @@ const MAINTENANCE_PERIOD: u32 = 10;
 /// atılır (amortisman). Aktif/atıl fark etmez → boş fab kuran cezalı.
 /// Anno 1800 inspiration: building maintenance.
 /// F4 tuning: 100 → 250 (Sanayici tekel kıs). Çoklu fab pasif gider artar
-/// → 3 fab × 250 × 9 sefer = 6.75K maintenance/sezon. Sanayici PnL +46K
+/// → 3 fab × 250 × 9 sefer = 6.75K maintenance/sezon. Sanayici `PnL` +46K
 /// → ~+15K hedef (Tüccar/Esnaf'la dengeli).
 const MAINTENANCE_PER_FACTORY_LIRA: i64 = 250;
 
@@ -72,7 +72,7 @@ const HARVEST_PERIOD: u32 = 8;
 /// Mahsul miktarı (birim) — her Çiftçi'ye specialty ürünü.
 /// v8.19 (A): 200-400 → 120-240. Esnaf emekli olunca ham BUY tarafı çöktü
 /// (Sanayici 5 + Spek 3 alıcı, Çiftçi 6 × 80 birim/tick = 480 ham/tick arz
-/// emilemiyor). Match eff %12-39, FactoryIdle 1260. Mahsul %40 düşürülür
+/// emilemiyor). Match eff %12-39, `FactoryIdle` 1260. Mahsul %40 düşürülür
 /// → Çiftçi sezon başına ~3500 birim üretir (eski 5800).
 const HARVEST_QTY_MIN: u32 = 60;
 const HARVEST_QTY_MAX: u32 = 120;
@@ -95,11 +95,11 @@ const ALICI_SALARY_PERIOD: u32 = 3;
 /// `350/3 × 1600 × 10 Alıcı ≈ 1.9M₺/sezon` sıfırdan yaratılıyor. Eski
 /// kalibrasyon yorumu 90 tick'lik sezona göre yazılmıştı ve 60K/Alıcı
 /// diyordu; gerçekte 2000₺ ile 232K/Alıcı basılıyordu — kâr rollerinin
-/// toplam PnL'inin yaklaşık yarısı bu kanaldan geliyordu.
+/// toplam `PnL`'inin yaklaşık yarısı bu kanaldan geliyordu.
 ///
 /// 2000 → 1600 (2026-07-25 denge denetimi). Ölçüm, 10 oyun × 350 tick,
 /// iki ayrı seed ailesinde tutarlı:
-/// - Tüccar / Sanayici kişi başı PnL oranı 4.3× → 3.0×
+/// - Tüccar / Sanayici kişi başı `PnL` oranı 4.3× → 3.0×
 /// - toplam eşleşme hacmi 2.59M → 2.65M (arttı)
 /// - üretim 1632 → 1594 batch (~%2 düşüş)
 /// - bedeli: Tüccar iflası sezon başına 1.4 → 2.1 (4 Tüccar'dan). Felaket
@@ -177,8 +177,7 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
         let is_sanayici = state
             .players
             .get(&pid)
-            .map(|p| p.npc_kind == Some(NpcKind::Sanayici))
-            .unwrap_or(false);
+            .is_some_and(|p| p.npc_kind == Some(NpcKind::Sanayici));
         let cost_per_unit = if is_sanayici {
             STORAGE_COST_SANAYICI_CENTS
         } else {
@@ -191,9 +190,8 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
                 let qty = state
                     .players
                     .get(&pid)
-                    .map(|p| p.inventory.get(city, product))
-                    .unwrap_or(0);
-                let chargeable = qty.saturating_sub(STORAGE_FREE_UNITS) as i64;
+                    .map_or(0, |p| p.inventory.get(city, product));
+                let chargeable = i64::from(qty.saturating_sub(STORAGE_FREE_UNITS));
                 if chargeable > 0 {
                     total_cost_cents += chargeable * cost_per_unit;
                 }
@@ -246,7 +244,7 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
 
     // Toplam wage havuzu — sadece AKTİF fabrikalardan kesilir (idle = ücret yok).
     let mut wage_pool_cents: i64 = 0;
-    for (owner, _count) in &factories_by_owner {
+    for owner in factories_by_owner.keys() {
         // Aktif fab sayısı: son WAGE_PERIOD tick'te üretim yapmış olanlar.
         // IDLE_THRESHOLD (10) çok gevşekti — fabrika 3-4 tick'te bir üretip
         // her zaman "aktif" sayılıyordu. WAGE_PERIOD (5) ile gerçekten
@@ -320,7 +318,7 @@ fn pay_alici_salary(state: &mut GameState, report: &mut TickReport, tick: Tick) 
 }
 
 /// Alıcı NPC'lerinin mamul stoğunu tüket (envanterden sil). v8.25: Her Alıcı
-/// kendi player_id offset'inde tetiklenir → senkronize toplu BUY patlaması
+/// kendi `player_id` offset'inde tetiklenir → senkronize toplu BUY patlaması
 /// kalkar, ritim dağılır.
 fn consume_alici_inventory(state: &mut GameState, tick: Tick) {
     let t = tick.value();
@@ -378,9 +376,9 @@ fn charge_factory_maintenance(state: &mut GameState, _report: &mut TickReport, _
 }
 
 /// Çiftçi NPC'lere periyodik mahsul üretir. **Şehir-tabanlı 2-katmanlı**
-/// (v8): her Çiftçi bir şehre atanır (PlayerId mod 3), o şehrin
+/// (v8): her Çiftçi bir şehre atanır (`PlayerId` mod 3), o şehrin
 /// `city_specialty` (prime) hamından **full qty** ve `city_secondary` (az)
-/// hamından **qty/4** hasat yapar. Eski v6.5 PlayerId mod product yaklaşımı:
+/// hamından **qty/4** hasat yapar. Eski v6.5 `PlayerId` mod product yaklaşımı:
 /// 3 ham × 1 şehir = 3 bucket besliyordu; v8: 3 prime + 3 secondary = 6 bucket.
 /// `city_demand` slotu kasıtlı boş — Tüccar arbitrage ithalat hedefi.
 /// `city_specialty` populate edilmemişse `CityId::cheap_raw()` fallback'i.
@@ -425,9 +423,9 @@ fn harvest_ciftci_stock(
         // Ekonomiyi kırmadan doğal denge sağlar — Çiftçi de fiyata bakar.
         let price_factor_pct = {
             let ref_price = state.reference_price(city, prime)
-                .map(|m| m.as_cents()).unwrap_or(0);
+                .map_or(0, moneywar_domain::Money::as_cents);
             let baseline = state.price_baseline.get(&(city, prime))
-                .map(|m| m.as_cents()).unwrap_or(1).max(1);
+                .map_or(1, |m| m.as_cents()).max(1);
             let ratio = if baseline > 0 { ref_price * 100 / baseline } else { 100 };
             if ref_price == 0 {
                 100
@@ -548,9 +546,9 @@ fn harvest_ciftci_stock(
 /// önler. World player (`PlayerId(0)`) yoksa (sim) no-op.
 ///
 /// **Mekanik:**
-/// 1. Her periyotta her (city, finished_product) için World envanterine
+/// 1. Her periyotta her (city, `finished_product`) için World envanterine
 ///    `WORLD_FAB_QTY_PER_PERIOD` birim ekle
-/// 2. Aynı miktarda SELL emrini direkt order_book'a inject et (process_submit
+/// 2. Aynı miktarda SELL emrini direkt `order_book`'a inject et (`process_submit`
 ///    by-pass, World relist cooldown'a tâbi değil)
 /// 3. Fiyat: `effective_baseline × 0.95` (markdown — hızlı eşleşme, baseline
 ///    fair-value referansı)

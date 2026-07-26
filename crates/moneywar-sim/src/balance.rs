@@ -4,8 +4,8 @@
 //! hikâye üretimini ölçer. Burası üçüncü ekseni ölçer: **rol adaleti ve
 //! piyasa mekaniğinin sağlığı**.
 //!
-//! - Rol adaleti: kişi başı PnL — 4 Tüccar'ın toplamı 10 Sanayici'yi geçiyorsa
-//!   toplam PnL yanıltır, kişi başı yanıltmaz.
+//! - Rol adaleti: kişi başı `PnL` — 4 Tüccar'ın toplamı 10 Sanayici'yi geçiyorsa
+//!   toplam `PnL` yanıltır, kişi başı yanıltmaz.
 //! - Emir akışı: gönderilen emrin kaçı doldu, kaçı TTL'den düştü, kaçı daha
 //!   motora girmeden reddedildi. Reddedilenler sebep sınıfına göre toplanır.
 //! - Fiyat kayması: sezon sonu baseline / sezon başı baseline. 1.0 = stabil.
@@ -108,7 +108,7 @@ pub struct BalanceAccumulator {
     raw_buy_by_role: BTreeMap<NpcKind, u64>,
     /// Rol → (şehir, ürün) → (alınan, satılan). Aynı pazarda hem alıp hem
     /// satmak = çevirme (flip): mal ne dönüştürülüyor ne taşınıyor.
-    churn: BTreeMap<NpcKind, BTreeMap<(CityId, ProductKind), (u64, u64)>>,
+    churn: BTreeMap<NpcKind, ChurnBuckets>,
 
     // ── Para akışı (emek piyasası / banka çalışması için zemin) ───────────────
     /// Maaş + ücret olarak dağıtılan toplam (cent). Şu an iki kanal karışık:
@@ -126,6 +126,9 @@ pub struct BalanceAccumulator {
     /// Tick örnekleriyle toplam nakit arzı (cent). Deflasyon/enflasyon eğrisi.
     money_samples: Vec<i64>,
 }
+
+/// Bir rolün pazar başına (alınan, satılan) miktarı.
+type ChurnBuckets = BTreeMap<(CityId, ProductKind), (u64, u64)>;
 
 /// Sezon boyunca para arzı ve onu değiştiren kalemler (hepsi cent).
 ///
@@ -540,7 +543,7 @@ pub struct RoleBalance {
     pub pnl_per_capita: f64,
     pub pnl_min: f64,
     pub pnl_max: f64,
-    /// PnL'i negatif kapatan oyuncu sayısı.
+    /// `PnL`'i negatif kapatan oyuncu sayısı.
     pub losers: usize,
     /// İflas damgası yemiş oyuncu sayısı.
     pub bankrupt: usize,
@@ -573,11 +576,11 @@ pub struct BalanceReport {
 }
 
 impl BalanceReport {
-    /// Kâr amaçlı roller arasında en zengin ÷ en fakir kişi başı PnL.
+    /// Kâr amaçlı roller arasında en zengin ÷ en fakir kişi başı `PnL`.
     /// 1.0 = tam adalet.
     ///
     /// Yalnızca [`PROFIT_ROLES`] kıyaslanır: Alıcı tasarım gereği tüketici
-    /// (mal alıp yok eder, PnL'i hep negatif), Banka likidite sağlayıcı.
+    /// (mal alıp yok eder, `PnL`'i hep negatif), Banka likidite sağlayıcı.
     /// İkisi dahil edilirse oran negatif bölene düşer ve anlamsız büyür.
     ///
     /// En fakir rol de zarardaysa makas ölçülemez → `None`.

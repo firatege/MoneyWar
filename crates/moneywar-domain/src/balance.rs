@@ -105,8 +105,9 @@ pub const FACTORY_PRODUCTION_TICKS: u32 = 2;
 // =============================================================================
 
 /// Kurulum maliyet tablosu — `existing_count` index'i ile oku.
-/// 1. fabrika bedava, sonrakiler sabit 8K. Gittikçe zorlaşmıyor —
-/// sadece nakit kısıtı sınır. Sınırsız fabrika mümkün.
+///
+/// İlk fabrika bedava, sonrakiler sabit 8K. Gittikçe zorlaşmıyor — sadece
+/// nakit kısıtı sınır, sınırsız fabrika mümkün.
 pub const FACTORY_BUILD_COSTS_LIRA: [i64; 2] = [
     0,      // 1. bedava
     8_000,  // 2.+ sabit 8K
