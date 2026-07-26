@@ -552,7 +552,7 @@ fn print_balance(outcomes: &[Outcome]) {
             })
             .collect();
         rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        println!("\n  ÜRETİM MARJI (sezon sonu: baseline'ın tarif maliyetini aşma payı)");
+        println!("\n  ÜRETİM MARJI (sezon sonu: (fiyat − maliyet) ÷ fiyat · hedef >%30)");
         println!("{:-<95}", "");
         let line = rows
             .iter()

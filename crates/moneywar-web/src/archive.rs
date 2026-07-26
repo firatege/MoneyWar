@@ -120,7 +120,7 @@ pub fn render_markdown(season: u64, r: &BalanceReport) -> String {
     // ── Üretim marjı ────────────────────────────────────────────────────────
     if !r.margins.is_empty() {
         out.push_str("## Üretim marjı\n\n");
-        out.push_str("Mamulün baseline'ı tarif maliyetini ne kadar aşıyor. ");
+        out.push_str("Fiyatın ne kadarı kâr: (fiyat − maliyet) ÷ fiyat. Hedef >%30. ");
         out.push_str("Sıfıra yaklaşan ürün üretilemez hale gelir.\n\n");
         for (p, pct) in &r.margins {
             out.push_str(&format!("- {}: %{:.0}\n", p.display_name(), pct));

@@ -442,6 +442,14 @@ impl BalanceAccumulator {
                         if price <= 0.0 {
                             return None;
                         }
+                        // **Fiyat üzerinden** marj: (fiyat − maliyet) / fiyat.
+                        // Motorun fiyat tabanı ise **maliyet üzerinden** kâr
+                        // payı kullanır (`min_production_margin_pct`, %47).
+                        // İkisi aynı şeyin iki ifadesi ama sayıları farklı:
+                        // maliyetin %47 üstü = fiyatın %32'si. Etiket bunu
+                        // söylemediği için "taban %47 ama ölçüm %37, bug var"
+                        // diye yanlış alarma yol açtı; gerçekte %37 fiyat
+                        // marjı = %59 maliyet üstü, yani taban çalışıyor.
                         Some((price - cost) / price * 100.0)
                     })
                     .collect();
