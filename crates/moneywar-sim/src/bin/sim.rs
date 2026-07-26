@@ -554,7 +554,7 @@ fn print_balance(outcomes: &[Outcome]) {
     }
     if !ledger.is_empty() {
         println!("\n  ÜRÜN DEFTERİ — kim alıyor, kim satıyor (oyun başına ort. birim)");
-        println!("{:>16}  {:>9}   {:<32} {}", "ürün", "eşleşen", "ALAN %", "SATAN %");
+        println!("{:>16}  {:>9}   {:<32} SATAN %", "ürün", "eşleşen", "ALAN %");
         println!("{:-<95}", "");
         let pct = |m: &RoleShare| -> String {
             let tot: u64 = m.values().sum();
