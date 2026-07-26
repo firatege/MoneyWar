@@ -80,6 +80,7 @@ export function DashboardPage() {
           {(focus.kind === "none" || focus.kind === "city") && (
             <NetworkMap
               snapshot={snapshot}
+              compact={focus.kind === "city"}
               selected={selectedCity}
               onSelect={(slug) =>
                 setFocus(selectedCity === slug ? { kind: "none" } : { kind: "city", slug })

@@ -160,3 +160,17 @@
     transition: none;
   }
 }
+
+/* ── Dar mod ──────────────────────────────────────────────────────────── */
+
+/* Detay paneli açıkken harita şeride iner. Yükseklik sınırı olmasa
+   şehir adları okunmaz boyuta düşüyordu. */
+.netmap--compact {
+  flex: 0 0 auto;
+}
+
+.netmap--compact .netmap__svg {
+  height: 6.5rem;
+  flex: none;
+  padding: 0.25rem;
+}

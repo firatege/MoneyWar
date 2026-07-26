@@ -38,6 +38,13 @@
     flex: 1;
     min-height: 0;
   }
+
+  /* Sıkışık harita içeriği kadar yer kaplar; kalan alanı altındaki detay
+     paneli alır. Yukarıdaki genel kural onu da esnetip aralarında boş bir
+     bant bırakıyordu — bu seçici daha belirgin olduğu için kazanır. */
+  .app__col > .netmap--compact {
+    flex: 0 0 auto;
+  }
 }
 
 /* Paylaşılan panel kabuğu */
@@ -137,9 +144,10 @@
     flex: none;
   }
 
-  /* Akış: sabit yükseklik, kendi içinde kayar */
+  /* Akış: katmanlı görünümde içerik az olabiliyor (sakin piyasa) ve sabit
+     yükseklik kocaman bir boşluk bırakıyordu. Tavan var, taban yok. */
   .feed {
-    height: 22rem;
+    max-height: 26rem;
   }
 
   /* Fiyat ızgarası: yatay kaydırılabilir, kolonlar okunur genişlikte */

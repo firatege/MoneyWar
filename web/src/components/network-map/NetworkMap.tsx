@@ -33,7 +33,7 @@ interface NodeGeom {
 }
 
 /** Beşgen yerleşim — ilk düğüm tepede, saat yönünde. */
-function layout(): NodeGeom[] {
+function pentagon(): NodeGeom[] {
   const n = CITIES.length;
   return CITIES.map((c, i) => {
     const a = (-90 + (360 / n) * i) * (Math.PI / 180);
@@ -41,14 +41,44 @@ function layout(): NodeGeom[] {
   });
 }
 
+/**
+ * Dar mod: düğümler tek sıra.
+ *
+ * Beşgen kare bir alan ister; detay paneli açıkken harita alçak ve geniş
+ * bir şeride iniyor. O şeride beşgeni sığdırmak SVG'nin tamamını
+ * küçültüyor ve şehir adları okunmaz oluyordu. Sırada yükseklik gereksiz
+ * yere harcanmıyor, yazı boyutu korunuyor.
+ *
+ * Sırada yollar çizilmiyor: eş doğrusal noktalar arasındaki on kenar
+ * üst üste binip anlamsız bir bulamaç olurdu. "Her yol bağlı" bilgisi
+ * geniş görünümde zaten kuruluyor.
+ */
+function row(): NodeGeom[] {
+  const gap = 50;
+  const offset = ((CITIES.length - 1) * gap) / 2;
+  return CITIES.map((c, i) => ({
+    slug: c.slug,
+    label: c.label,
+    x: i * gap - offset,
+    y: 0,
+  }));
+}
+
 interface Props {
   snapshot: Snapshot | null;
   selected: string | null;
   onSelect: (city: string) => void;
+  /**
+   * Altında detay paneli açıkken harita şeride sıkışır. SVG tek parça
+   * ölçeklendiği için yazılar da küçülür ve "3 çalışıyor" alt satırı
+   * okunmaz hale gelir. Dar modda o satır düşer; sayı ve şehir adı kalır.
+   */
+  compact?: boolean;
 }
 
-export function NetworkMap({ snapshot, selected, onSelect }: Props) {
-  const nodes = useMemo(layout, []);
+export function NetworkMap({ snapshot, selected, onSelect, compact = false }: Props) {
+  const nodes = useMemo(() => (compact ? row() : pentagon()), [compact]);
+  const nodeR = compact ? 17 : NODE_R;
   const byslug = useMemo(() => new Map(nodes.map((n) => [n.slug, n])), [nodes]);
 
   const stats = useMemo(() => {
@@ -116,23 +146,29 @@ export function NetworkMap({ snapshot, selected, onSelect }: Props) {
   const maxLoad = Math.max(1, ...edges.map((e) => e.load));
 
   return (
-    <section className="netmap" aria-labelledby="netmap-title">
+    <section
+      className={`netmap${compact ? " netmap--compact" : ""}`}
+      aria-labelledby="netmap-title"
+    >
       <header className="netmap__head">
         <h2 id="netmap-title" className="netmap__title">
           Şehir ağı
         </h2>
         <p className="netmap__hint">
-          Daire içindeki sayı fabrika adedi · halka çalışanları gösterir · şehre tıkla
+          {compact
+            ? "başka şehre tıkla"
+            : "Daire içindeki sayı fabrika adedi · halka çalışanları gösterir · şehre tıkla"}
         </p>
       </header>
 
       <svg
         className="netmap__svg"
-        viewBox="-116 -110 232 238"
+        viewBox={compact ? "-140 -26 280 62" : "-116 -110 232 238"}
         role="group"
         aria-label="Şehirler ve aralarındaki yollar"
       >
         {/* Yollar — hepsi hep görünür, trafik olan kalınlaşır. */}
+        {!compact && (
         <g className="netmap__edges">
           {edges.map((e) => (
             <line
@@ -146,13 +182,16 @@ export function NetworkMap({ snapshot, selected, onSelect }: Props) {
             />
           ))}
         </g>
+        )}
 
         {/* Yoldaki kervanlar. */}
+        {!compact && (
         <g className="netmap__movers">
           {movers.map((m) => (
             <circle key={m.id} cx={m.x} cy={m.y} r={2.2} className="netmap__mover" />
           ))}
         </g>
+        )}
 
         {/* Şehirler. */}
         {nodes.map((n) => {
@@ -160,7 +199,7 @@ export function NetworkMap({ snapshot, selected, onSelect }: Props) {
           const active = s.total - s.idle;
           const isSel = selected === n.slug;
           // Halka: çalışan fabrikaların payı kadar dolu yay.
-          const circ = 2 * Math.PI * (NODE_R + RING_W / 2 + 1);
+          const circ = 2 * Math.PI * (nodeR + RING_W / 2 + 1);
           const filled = s.total > 0 ? (active / s.total) * circ : 0;
           return (
             <g
@@ -178,16 +217,16 @@ export function NetworkMap({ snapshot, selected, onSelect }: Props) {
                 }
               }}
             >
-              <circle r={NODE_R} className="netmap__disc" />
+              <circle r={nodeR} className="netmap__disc" />
               {/* Halka zemini + çalışan payı. Yay tepeden başlasın diye döndürülür. */}
               <circle
-                r={NODE_R + RING_W / 2 + 1}
+                r={nodeR + RING_W / 2 + 1}
                 className="netmap__ring-bg"
                 strokeWidth={RING_W}
               />
               {s.total > 0 && (
                 <circle
-                  r={NODE_R + RING_W / 2 + 1}
+                  r={nodeR + RING_W / 2 + 1}
                   className="netmap__ring"
                   strokeWidth={RING_W}
                   strokeDasharray={`${filled} ${circ - filled}`}
@@ -195,15 +234,17 @@ export function NetworkMap({ snapshot, selected, onSelect }: Props) {
                 />
               )}
               {monopolyCities.has(n.slug) && (
-                <circle cy={-NODE_R - 7} r={2.6} className="netmap__flag" />
+                <circle cy={-nodeR - 6} r={2.6} className="netmap__flag" />
               )}
               <text className="netmap__count" y={1}>
                 {s.total}
               </text>
-              <text className="netmap__sub" y={11}>
-                {s.total > 0 ? `${active} çalışıyor` : "fabrika yok"}
-              </text>
-              <text className="netmap__label" y={NODE_R + 13}>
+              {!compact && (
+                <text className="netmap__sub" y={11}>
+                  {s.total > 0 ? `${active} çalışıyor` : "fabrika yok"}
+                </text>
+              )}
+              <text className="netmap__label" y={nodeR + 12}>
                 {n.label}
               </text>
             </g>
