@@ -46,7 +46,7 @@ use crate::{
         process_build_factory as build_factory_impl,
         process_build_private_farm as build_private_farm_impl,
         process_demolish_factory as demolish_factory_impl,
-        process_upgrade_factory as upgrade_factory_impl,
+        process_set_factory_staff, process_upgrade_factory as upgrade_factory_impl,
         process_upgrade_farm as upgrade_farm_impl,
     },
     report::{LogEntry, TickReport},
@@ -198,6 +198,9 @@ fn dispatch(
         }
         Command::UpgradeFactory { owner, factory_id } => {
             upgrade_factory_impl(state, report, tick, *owner, *factory_id)
+        }
+        Command::SetFactoryStaff { owner, factory_id, employees } => {
+            process_set_factory_staff(state, report, tick, *owner, *factory_id, *employees)
         }
         Command::BuildPrivateFarm { owner, city, product } => {
             build_private_farm_impl(state, report, tick, *owner, *city, *product)

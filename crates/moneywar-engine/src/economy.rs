@@ -38,19 +38,15 @@ const STORAGE_FREE_UNITS: u32 = 25;
 const STORAGE_COST_CENTS: i64 = 6;
 /// Sanayici depolama maliyeti — fabrika deposu var, daha ucuz.
 const STORAGE_COST_SANAYICI_CENTS: i64 = 1;
-/// Sanayici fabrikası başına ücret (lira) — her wage period'da Sanayici'den
-/// çıkar, Alıcı'lara eşit dağıtılır. Closed-loop ekonomi.
-/// v0.5.1: 1500 → 3500. Sim 10 seed Hard: Sanayici PnL +116K (eşik 80K üst
-/// aşıyor), Tüccar -115K (alt aşıyor), Alıcı -137K. Sanayici servet
-/// fazlasını Alıcı'ya geri pompala: 3500 × 9 sefer × ~3 fab = 95K/Sanayici,
-/// 8 Alıcı'ya ~24K/Alıcı/sezon. Sanayici PnL ~80K'ya iner, Alıcı -113K'ya.
-/// v0.6.0: 3500 → 5000. Bursa+Konya genişlemesinde Alıcı kaybı yine -137K
-/// kalıyor, eşik -110K aşılamıyor. Wage akışı +43% ile Alıcı'ya ek ~12K
-/// transfer, Sanayici PnL bandının üst yarısı (+68K) aşağı çekilir.
-/// v0.6.0 Faz 1 (talep cliff): 5000 → 2500. WAGE_PERIOD 10→5 ile birlikte
-/// toplam transfer sabit (5000×9 = 2500×18 = 45K). Hedef: cash akışı
-/// pürüzsüz, miktar değişmez.
-const WAGE_PER_FACTORY_LIRA: i64 = 300;
+/// Çalışan başına ücret — her wage period'da Sanayici'den çıkar, Alıcı'lara
+/// (hane halkı) eşit dağıtılır. Ekonominin kapalı döngü bacağı.
+///
+/// Eskiden ücret **fabrika başına** sabitti (300₺) ve emek diye bir kavram
+/// yoktu; üretim saf sermaye fonksiyonuydu. Artık fabrikanın kadrosu var,
+/// ücret kadroya bağlı: firma işçi tutar, üretimi artar, ama ücret yükü de
+/// artar — satamazsa batar. Seviye-1 kadrosu 3 kişi olduğundan kişi başı
+/// 100₺ eski toplam akışı yaklaşık korur.
+const WAGE_PER_EMPLOYEE_LIRA: i64 = moneywar_domain::balance::WAGE_PER_EMPLOYEE_LIRA;
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
@@ -255,16 +251,20 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
         // IDLE_THRESHOLD (10) çok gevşekti — fabrika 3-4 tick'te bir üretip
         // her zaman "aktif" sayılıyordu. WAGE_PERIOD (5) ile gerçekten
         // son dönemde üretim yaptıysa ücret öde, yapmadıysa ödeme.
-        let active_count = state
+        // Ücret **çalışan başına** ödenir; atıl fabrikanın da kadrosu varsa
+        // ücreti çıkar (işçi çalışmasa da maaşını alır — firma ya işçiyi
+        // çıkarır ya yükü taşır). Kadro = 0 olan fabrika ücret doğurmaz.
+        let headcount: i64 = state
             .factories
             .values()
-            .filter(|f| f.owner == *owner && !f.is_atil(tick, WAGE_PERIOD))
-            .count() as i64;
-        if active_count == 0 {
+            .filter(|f| f.owner == *owner)
+            .map(|f| i64::from(f.employees))
+            .sum();
+        if headcount == 0 {
             continue;
         }
-        let wage_per_owner_cents = WAGE_PER_FACTORY_LIRA
-            .saturating_mul(active_count)
+        let wage_per_owner_cents = WAGE_PER_EMPLOYEE_LIRA
+            .saturating_mul(headcount)
             .saturating_mul(100);
         if let Some(p) = state.players.get_mut(owner) {
             let actual_cents = wage_per_owner_cents.min(p.cash.as_cents());

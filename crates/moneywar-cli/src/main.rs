@@ -8804,6 +8804,9 @@ fn describe_command_short(cmd: &Command) -> String {
         Command::UpgradeFarm { farm_id, .. } => {
             format!("tarla yükselt #{}", farm_id.value())
         }
+        Command::SetFactoryStaff { factory_id, employees, .. } => {
+            format!("kadro #{} → {employees} kişi", factory_id.value())
+        }
     }
 }
 
@@ -8861,6 +8864,9 @@ fn describe_command(cmd: &Command) -> String {
         }
         Command::UpgradeFarm { farm_id, .. } => {
             format!("tarla yükselt: {farm_id}")
+        }
+        Command::SetFactoryStaff { factory_id, employees, .. } => {
+            format!("kadro: {factory_id} → {employees} kişi")
         }
     }
 }

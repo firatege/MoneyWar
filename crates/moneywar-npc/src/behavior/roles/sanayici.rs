@@ -416,6 +416,9 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
     // Cap: Sanayici aynı anda max 1 aktif buyer kontratı.
     out.extend(enumerate_contract_accepts(state, player, &needed_raws));
 
+    // Kadro kararı — emek kıt, doğru fabrikaya koy.
+    out.extend(enumerate_staffing(state, player));
+
     // Mamul kervan dispatch — stok yüksekse en pahalı şehre gönder.
     out.extend(enumerate_mamul_dispatch(state, player));
 
@@ -826,6 +829,48 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
 
         base_score + specialty_bonus + jitter + corner_bonus
     })
+}
+
+/// Kadro adayları — hangi fabrikaya işçi konacak, hangisinden çekilecek.
+///
+/// Emek dünyada kıt ([`LABOR_POOL_SIZE`]) ve ücret çalışan başına ödeniyor,
+/// yani boş duran fabrikanın kadrosu saf zarar. Karar iki yönlü:
+///
+/// - **Çıkar:** fabrika uzun süredir üretmiyorsa (girdisi yok) kadroyu
+///   sıfırla. Hem ücret yükünden kurtulur hem işçiyi havuza iade eder —
+///   başka firma ya da kendi çalışan fabrikası alabilsin.
+/// - **Al:** üretimi süren ama eksik kadrolu fabrikayı tam kadroya çıkar.
+///
+/// Tick başına en fazla bir hamle; kadro sürekli oynamasın.
+///
+/// [`LABOR_POOL_SIZE`]: moneywar_domain::balance::LABOR_POOL_SIZE
+fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    let threshold = moneywar_domain::balance::IDLE_FACTORY_THRESHOLD;
+    let mine = || state.factories.values().filter(|f| f.owner == player.id);
+
+    // Önce boşa ücret ödenen fabrikayı boşalt — nakit koruması öncelikli.
+    if let Some(f) = mine()
+        .filter(|f| f.employees > 0)
+        .find(|f| f.is_atil(state.current_tick, threshold))
+    {
+        return vec![ActionCandidate::SetStaff {
+            factory_id: f.id,
+            employees: 0,
+        }];
+    }
+
+    // Sonra çalışan ama eksik kadrolu fabrikayı doldur.
+    if let Some(f) = mine()
+        .filter(|f| !f.is_atil(state.current_tick, threshold))
+        .find(|f| f.employees < f.required_employees())
+    {
+        return vec![ActionCandidate::SetStaff {
+            factory_id: f.id,
+            employees: f.required_employees(),
+        }];
+    }
+
+    Vec::new()
 }
 
 /// Özel çiftlik kurma adayını listele — dikey entegrasyon hamlesi.

@@ -846,6 +846,16 @@ pub enum LogEvent {
         cost: Money,
     },
 
+    /// Fabrika kadrosu değişti. `hired` pozitif = işe alım, negatif = çıkarma.
+    /// `pool_left` hamlenin ardından dünyada kalan boş işgücü.
+    FactoryStaffChanged {
+        factory_id: FactoryId,
+        owner: PlayerId,
+        employees: u32,
+        hired: i64,
+        pool_left: u32,
+    },
+
     /// Fabrika kapatıldı; kısmi nakit geri ödemesi yapıldı.
     FactoryDemolished {
         factory_id: FactoryId,

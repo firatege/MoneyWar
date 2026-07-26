@@ -36,6 +36,18 @@ pub struct Factory {
     /// Yeni fabrikalar seviye 1 başlar; `UpgradeFactory` komutuyla artar.
     #[serde(default = "default_factory_level")]
     pub level: u8,
+    /// Çalışan sayısı. Üretim kadroyla orantılı ölçeklenir
+    /// ([`Self::staffing_pct`]); kadrosuz fabrika üretmez.
+    ///
+    /// Yeni fabrika tam kadroyla açılır. Eski kayıtlarda alan yoksa da tam
+    /// kadro varsayılır — kaydı yüklenen dünya birden durmasın.
+    #[serde(default = "default_employees")]
+    pub employees: u32,
+}
+
+/// serde default — eski kayıtta `employees` yoksa seviye-1 tam kadro.
+fn default_employees() -> u32 {
+    crate::balance::EMPLOYEES_PER_FACTORY_L1
 }
 
 impl Factory {
@@ -67,7 +79,32 @@ impl Factory {
             last_production_tick: None,
             batches: Vec::new(),
             level: 1,
+            employees: crate::balance::EMPLOYEES_PER_FACTORY_L1,
         })
+    }
+
+    /// Bu seviyedeki tam kadro.
+    #[must_use]
+    pub const fn required_employees(&self) -> u32 {
+        match self.level {
+            1 => crate::balance::EMPLOYEES_PER_FACTORY_L1,
+            2 => crate::balance::EMPLOYEES_PER_FACTORY_L2,
+            _ => crate::balance::EMPLOYEES_PER_FACTORY_L3,
+        }
+    }
+
+    /// Kadro doluluğu yüzdesi (0–100). Üretim bununla ölçeklenir.
+    ///
+    /// Eksik kadro üretimi orantılı düşürür; fazla işçi fayda vermez (tavan
+    /// %100). Kadrosuz fabrika hiç üretmez — bina tek başına mal üretmiyor.
+    #[must_use]
+    pub const fn staffing_pct(&self) -> u32 {
+        let required = self.required_employees();
+        if required == 0 {
+            return 100;
+        }
+        let pct = self.employees * 100 / required;
+        if pct > 100 { 100 } else { pct }
     }
 
     /// Upgrade maliyeti — bu seviyeden bir üst seviyeye geçiş.
@@ -80,11 +117,14 @@ impl Factory {
         }
     }
 
-    /// Bu fabrikanın batch boyutu — seviye × ürün katmanı.
+    /// Bu fabrikanın batch boyutu — seviye × ürün katmanı × kadro doluluğu.
     ///
     /// Seviye çarpanı: 1=×1, 2=×1.5, 3+=×2. Katman ölçeği
     /// ([`ProductKind::batch_scale_pct`]) üst katmanları küçültür ki üretim
-    /// piramidi doğru yönde dursun (bkz. o fonksiyonun dokümanı).
+    /// piramidi doğru yönde dursun. Kadro ([`Self::staffing_pct`]) eksik
+    /// personeli orantılı ceza olarak yansıtır.
+    ///
+    /// Kadro sıfırsa sonuç 0 döner — fabrika üretmez.
     #[must_use]
     pub const fn batch_size(&self) -> u32 {
         let by_level = match self.level {
@@ -93,7 +133,8 @@ impl Factory {
             _ => Self::BATCH_SIZE * 2,       // 3+ → 2×
         };
         let scaled = by_level * self.product.batch_scale_pct() / 100;
-        if scaled == 0 { 1 } else { scaled }
+        let staffed = scaled * self.staffing_pct() / 100;
+        if staffed == 0 && self.employees > 0 { 1 } else { staffed }
     }
 
     /// Bu seviyedeki üretim tick sayısı. Seviye 1=2, 2=2, 3=1 (daha hızlı).
@@ -252,6 +293,72 @@ mod tests {
         assert_eq!(Factory::build_cost(2), Money::from_lira(8_000).unwrap());
         assert_eq!(Factory::build_cost(10), Money::from_lira(8_000).unwrap());
         assert_eq!(Factory::build_cost(99), Money::from_lira(8_000).unwrap());
+    }
+
+
+    // ── Emek ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn new_factory_opens_fully_staffed() {
+        let f = test_factory();
+        assert_eq!(f.employees, f.required_employees());
+        assert_eq!(f.staffing_pct(), 100);
+    }
+
+    #[test]
+    fn required_employees_grows_with_level() {
+        let mut f = test_factory();
+        let l1 = f.required_employees();
+        f.level = 2;
+        let l2 = f.required_employees();
+        f.level = 3;
+        let l3 = f.required_employees();
+        assert!(l1 < l2 && l2 < l3, "kadro seviyeyle artmalı: {l1} {l2} {l3}");
+    }
+
+    #[test]
+    fn unstaffed_factory_produces_nothing() {
+        let mut f = test_factory();
+        f.employees = 0;
+        assert_eq!(f.staffing_pct(), 0);
+        assert_eq!(f.batch_size(), 0, "kadrosuz fabrika üretmemeli");
+    }
+
+    #[test]
+    fn half_staffed_factory_produces_about_half() {
+        let mut f = test_factory();
+        let full = f.batch_size();
+        f.employees = f.required_employees() / 2; // 3 → 1
+        let partial = f.batch_size();
+        assert!(partial > 0 && partial < full, "eksik kadro üretimi kısmalı: {partial} < {full}");
+    }
+
+    #[test]
+    fn overstaffing_gives_no_bonus() {
+        let mut f = test_factory();
+        let full = f.batch_size();
+        f.employees = f.required_employees() * 3;
+        assert_eq!(f.staffing_pct(), 100, "kadro doluluğu %100'ü aşmamalı");
+        assert_eq!(f.batch_size(), full, "fazla işçi fayda vermemeli");
+    }
+
+    #[test]
+    fn labor_pool_is_a_real_constraint_not_effectively_infinite() {
+        // Emek sonlu ve fiyatlı olmalı: havuz, dünyanın kurma eğiliminde
+        // olduğu fabrika sayısını (ölçüm: ~38) tam kadroyla besleyememeli.
+        // Aksi halde kadro sadece bir muhasebe kalemi olur, tercih baskısı
+        // yaratmaz.
+        //
+        // Daha dar havuzlar denendi ve pahalıya mal oldu (bkz.
+        // `balance::LABOR_POOL_SIZE` dokümanındaki tablo): bağlayıcı kısıt
+        // emek değil girdi olduğu için emeği kısmak üretimi düşürüyor.
+        const OBSERVED_FACTORY_COUNT: u32 = 38;
+        let fully_staffable =
+            crate::balance::LABOR_POOL_SIZE / crate::balance::EMPLOYEES_PER_FACTORY_L1;
+        assert!(
+            fully_staffable < OBSERVED_FACTORY_COUNT,
+            "havuz tüm fabrikaları doyurmamalı: {fully_staffable} >= {OBSERVED_FACTORY_COUNT}"
+        );
     }
 
     #[test]

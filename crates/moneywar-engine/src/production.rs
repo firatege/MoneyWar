@@ -179,6 +179,72 @@ pub(crate) fn process_build_private_farm(
     Ok(())
 }
 
+
+/// `SetFactoryStaff` — fabrikanın kadrosunu hedef değere getirir.
+///
+/// Emek dünyada kıttır: toplam istihdam [`LABOR_POOL_SIZE`]'ı aşamaz. Artış
+/// talebi havuzda kalan kadarıyla **kısmen** karşılanır (tamamen reddedilmez)
+/// — gerçek işgücü piyasasında da "3 kişi arıyorum" ilanına 1 kişi başvurur.
+/// Azaltma her zaman tam uygulanır ve işçileri havuza geri verir.
+///
+/// [`LABOR_POOL_SIZE`]: moneywar_domain::balance::LABOR_POOL_SIZE
+pub(crate) fn process_set_factory_staff(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    owner: PlayerId,
+    factory_id: FactoryId,
+    target: u32,
+) -> Result<(), EngineError> {
+    use moneywar_domain::balance::LABOR_POOL_SIZE;
+
+    let factory = state.factories.get(&factory_id).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} not found"
+        )))
+    })?;
+    if factory.owner != owner {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} is not owned by {owner}"
+        ))));
+    }
+    let current = factory.employees;
+    if target == current {
+        return Ok(());
+    }
+
+    let employed: u32 = state.factories.values().map(|f| f.employees).sum();
+    let free = LABOR_POOL_SIZE.saturating_sub(employed);
+
+    let applied = if target > current {
+        current.saturating_add((target - current).min(free))
+    } else {
+        target
+    };
+    if applied == current {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "no free labor: pool {LABOR_POOL_SIZE} fully employed"
+        ))));
+    }
+
+    let factory = state.factories.get_mut(&factory_id).expect("checked above");
+    factory.employees = applied;
+
+    let employed_after: u32 = state.factories.values().map(|f| f.employees).sum();
+    report.push(LogEntry {
+        tick,
+        actor: Some(owner),
+        event: crate::LogEvent::FactoryStaffChanged {
+            factory_id,
+            owner,
+            employees: applied,
+            hired: i64::from(applied) - i64::from(current),
+            pool_left: LABOR_POOL_SIZE.saturating_sub(employed_after),
+        },
+    });
+    Ok(())
+}
+
 /// `UpgradeFactory` komutunu uygula — level artar, batch büyür.
 pub(crate) fn process_upgrade_factory(
     state: &mut GameState,
@@ -463,6 +529,108 @@ fn step_factory(state: &mut GameState, report: &mut TickReport, tick: Tick, fid:
 
 #[cfg(test)]
 mod tests {
+    /// İki fabrikalı, tek sahipli sade dünya — emek havuzu testleri için.
+    fn staff_state() -> GameState {
+        let mut s = GameState::new(
+            moneywar_domain::RoomId::new(1),
+            moneywar_domain::RoomConfig::hizli(),
+        );
+        let p = moneywar_domain::Player::new(
+            PlayerId::new(1),
+            "S".to_string(),
+            moneywar_domain::Role::Sanayici,
+            moneywar_domain::Money::from_lira(100_000).unwrap(),
+            false,
+        )
+        .unwrap();
+        s.players.insert(p.id, p);
+        for i in 1..=2u64 {
+            let f = moneywar_domain::Factory::new(
+                moneywar_domain::FactoryId::new(i),
+                PlayerId::new(1),
+                moneywar_domain::CityId::Istanbul,
+                moneywar_domain::ProductKind::Kumas,
+            )
+            .unwrap();
+            s.factories.insert(f.id, f);
+        }
+        s
+    }
+
+    fn pid(n: u64) -> PlayerId { PlayerId::new(n) }
+    fn fid(n: u64) -> moneywar_domain::FactoryId { moneywar_domain::FactoryId::new(n) }
+
+    // ── Emek havuzu ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn hiring_is_capped_by_the_world_labor_pool() {
+        use moneywar_domain::balance::{EMPLOYEES_PER_FACTORY_L1, LABOR_POOL_SIZE};
+        let mut s = staff_state();
+        let mut r = TickReport::new(Tick::new(1));
+
+        // Havuzu doldur: tek fabrikayı havuz kadar büyütmeye çalış.
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), LABOR_POOL_SIZE + 100)
+            .unwrap();
+        let employed: u32 = s.factories.values().map(|f| f.employees).sum();
+        assert_eq!(employed, LABOR_POOL_SIZE, "istihdam havuzu aşamaz");
+
+        // İkinci fabrika artık işçi bulamaz.
+        let res = process_set_factory_staff(
+            &mut s,
+            &mut r,
+            Tick::new(1),
+            pid(1),
+            fid(2),
+            EMPLOYEES_PER_FACTORY_L1 + 5,
+        );
+        assert!(res.is_err(), "havuz boşken işe alım başarısız olmalı");
+    }
+
+    #[test]
+    fn firing_returns_workers_to_the_pool() {
+        use moneywar_domain::balance::LABOR_POOL_SIZE;
+        let mut s = staff_state();
+        let mut r = TickReport::new(Tick::new(1));
+
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), LABOR_POOL_SIZE)
+            .unwrap();
+        // Hepsini çıkar → havuz boşalır, ikinci fabrika kadro bulabilir.
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), 0).unwrap();
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(2), 5).unwrap();
+
+        assert_eq!(s.factories[&fid(2)].employees, 5);
+    }
+
+    #[test]
+    fn partial_hire_when_pool_is_nearly_empty() {
+        use moneywar_domain::balance::{EMPLOYEES_PER_FACTORY_L1, LABOR_POOL_SIZE};
+        let mut s = staff_state();
+        let mut r = TickReport::new(Tick::new(1));
+
+        // Havuzda tam 2 kişi bırak. İki fabrika da tam kadro açıldığı için
+        // 2. fabrikanın mevcut kadrosu da hesaba katılmalı.
+        let target_f1 = LABOR_POOL_SIZE - 2 - EMPLOYEES_PER_FACTORY_L1;
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), target_f1)
+            .unwrap();
+        let before = s.factories[&fid(2)].employees;
+        // 10 iste, 2 bulabilmeli.
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(2), before + 10)
+            .unwrap();
+        assert_eq!(
+            s.factories[&fid(2)].employees,
+            before + 2,
+            "eksik işgücü kısmen karşılanmalı"
+        );
+    }
+
+    #[test]
+    fn cannot_staff_a_factory_you_do_not_own() {
+        let mut s = staff_state();
+        let mut r = TickReport::new(Tick::new(1));
+        let res = process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(2), fid(1), 1);
+        assert!(res.is_err(), "başkasının fabrikasına kadro atanamaz");
+    }
+
     use super::*;
     use moneywar_domain::{CityId, Money, Player, PlayerId, ProductKind, Role, RoomConfig, RoomId};
 

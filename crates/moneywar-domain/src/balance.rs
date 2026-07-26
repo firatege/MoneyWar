@@ -53,6 +53,46 @@
 /// [`ProductKind::batch_scale_pct`]: crate::ProductKind::batch_scale_pct
 pub const FACTORY_BATCH_SIZE: u32 = 65;
 
+// =============================================================================
+// Emek
+// =============================================================================
+
+/// Dünyadaki toplam işgücü. Firmalar bu havuzdan işçi tutar; havuz bitince
+/// yeni fabrika kadro bulamaz ve eksik kadroyla düşük üretir.
+///
+/// **Kalibrasyon (2026-07-26).** 110, mevcut dünyada (~38 fabrika × 3 kişi =
+/// 114 kadro ihtiyacı) emeği *ucu ucuna* kıt yapar. Daha dar havuzlar
+/// ölçüldü ve pahalıya mal oluyor:
+///
+/// | havuz | adalet makası | girdisiz deneme | Sanayici `PnL` |
+/// |---|---|---|---|
+/// |  50 | 5.6× | %59 | 80K |
+/// |  80 | 4.1× | %64 | 90K |
+/// | 110 | 3.3× | %69 | 96K |
+///
+/// Sebep: oyunun bağlayıcı kısıtı emek değil **girdi**. Fabrikaların çoğu
+/// zaten hammadde bulamıyor; üstüne emek kıtlığı koymak üretimi kısıyor ama
+/// darboğazı çözmüyor. Havuz, girdi kıtlığı azaldıkça daraltılabilir —
+/// o zaman emek gerçek bir tercih baskısı yaratır.
+pub const LABOR_POOL_SIZE: u32 = 110;
+
+/// Seviye 1 fabrikanın tam kadrosu. Seviye çarpanı [`FACTORY_BATCH_SIZE`]
+/// ile aynı yönde: 1× / 1.5× / 2× → 3 / 4 / 6.
+pub const EMPLOYEES_PER_FACTORY_L1: u32 = 3;
+/// Seviye 2 tam kadro.
+pub const EMPLOYEES_PER_FACTORY_L2: u32 = 4;
+/// Seviye 3+ tam kadro.
+pub const EMPLOYEES_PER_FACTORY_L3: u32 = 6;
+
+/// Çalışan başına ücret (lira), `WAGE_PERIOD` tick'te bir ödenir.
+///
+/// Eski model **aktif fabrika** başına 300₺ ödüyordu (~20 aktif fab →
+/// 6.000₺/periyot). Kadro modelinde ücret tüm çalışanlara ödenir, atıl
+/// fabrikanınkine de — 114 kişi × 100₺ = 11.400₺ ile fatura neredeyse
+/// ikiye katlanıyordu ve Sanayici `PnL`'i 102K → 80K'ya düşüyordu.
+/// 60₺ eski toplam yükü gerçekten korur.
+pub const WAGE_PER_EMPLOYEE_LIRA: i64 = 60;
+
 /// Batch başlatıldıktan kaç tick sonra biter (§4).
 /// Eski yolculuk: 2 → 3 (Sanayici aşırı kârlı diye yavaşlatıldı), şimdi
 /// 3 → 2 (NPC Sanayici sezon boyu hammadde bulamayıp 321/sezon `FactoryIdle`

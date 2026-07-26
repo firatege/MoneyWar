@@ -104,6 +104,17 @@ pub enum Command {
         factory_id: crate::FactoryId,
     },
 
+    /// Fabrikanın kadrosunu ayarla — işe al ya da çıkar.
+    ///
+    /// `employees` **hedef** kadrodur, delta değil. Motor dünya emek
+    /// havuzuna ([`crate::balance::LABOR_POOL_SIZE`]) göre kırpar: havuzda
+    /// yoksa artış kısmen uygulanır. Azaltma her zaman kabul edilir.
+    SetFactoryStaff {
+        owner: PlayerId,
+        factory_id: crate::FactoryId,
+        employees: u32,
+    },
+
     /// NPC'nin kendi nakdine periyodik enjeksiyon. Talep döngüsü
     /// için `AliciNpc` gibi pure-buyer NPC'ler kullanır. Motor sadece
     /// `is_npc=true` oyuncular için kabul eder; insan oyuncudan gelirse
@@ -134,6 +145,7 @@ impl Command {
                 // NPC/player ayrımı engine'de yapılır.
                 PlayerId::new(0)
             }
+            Self::SetFactoryStaff { owner, .. } => *owner,
             Self::SubscribeNews { player, .. }
             | Self::TakeLoan { player, .. }
             | Self::RepayLoan { player, .. }
