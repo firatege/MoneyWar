@@ -535,8 +535,11 @@ fn print_balance(outcomes: &[Outcome]) {
     // ── Ürün defteri ─────────────────────────────────────────────────────────
     // Her mal için: kim alıyor, kim satıyor. Zincirin nerede koptuğunu ve
     // ara malın üreticiye mi tüketiciye mi gittiğini gösterir.
-    let mut ledger: std::collections::BTreeMap<&'static str, (u64, std::collections::BTreeMap<&'static str, u64>, std::collections::BTreeMap<&'static str, u64>)> =
-        std::collections::BTreeMap::new();
+    /// Rol etiketi → birim.
+    type RoleShare = std::collections::BTreeMap<&'static str, u64>;
+    /// Ürün adı → (eşleşen birim, alanlar, satanlar).
+    type Ledger = std::collections::BTreeMap<&'static str, (u64, RoleShare, RoleShare)>;
+    let mut ledger: Ledger = Ledger::new();
     for o in outcomes {
         for pl in &o.balance.product_flow {
             let e = ledger.entry(pl.product.display_name()).or_default();
@@ -553,9 +556,11 @@ fn print_balance(outcomes: &[Outcome]) {
         println!("\n  ÜRÜN DEFTERİ — kim alıyor, kim satıyor (oyun başına ort. birim)");
         println!("{:>16}  {:>9}   {:<32} {}", "ürün", "eşleşen", "ALAN %", "SATAN %");
         println!("{:-<95}", "");
-        let pct = |m: &std::collections::BTreeMap<&'static str, u64>| -> String {
+        let pct = |m: &RoleShare| -> String {
             let tot: u64 = m.values().sum();
-            if tot == 0 { return "—".into(); }
+            if tot == 0 {
+                return String::from("—");
+            }
             let mut v: Vec<_> = m.iter().collect();
             v.sort_by(|a, b| b.1.cmp(a.1));
             v.iter().take(3)
