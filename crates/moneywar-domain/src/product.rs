@@ -328,6 +328,29 @@ impl ProductKind {
             Self::Sarap => 45,
             // Katman 2-3: girdilerinin toplamı + montaj primi. Üst katman
             // daha kârlı ama üç tedarik zinciri birden ayakta olmalı.
+            //
+            // # Bilinen sorun ve başarısız denemesi
+            //
+            // Bu merdiven marjı zincir boyunca **ters** çeviriyor:
+            //   tier-1 %70-82 · tier-2 %39-48 · tier-3 %37
+            // Ham madde 5₺ olduğu için tier-1 bedavaya kâr ediyor; tepede
+            // girdiler zaten pahalı. NPC rasyonel davranıp dibe fabrika
+            // kuruyor (12 Kumaş, 12 Un — 5 Ekmek, 5 Ziyafet) ve zincirin
+            // tepesi aç kalıyor: Ziyafet sezonda 300 birim üretiyor,
+            // tüketici 2242 istiyor (%13 karşılama). Ölçüm için bkz.
+            // `moneywar-web/tests/chain_probe.rs`.
+            //
+            // Merdiveni düzleştirmek denendi ve **geri alındı**. Her katmana
+            // ~%70 marj veren değerler (Ekmek 120 · Elbise 155 · Ziyafet 600)
+            // girdi açlığını %55'ten %40'a indirdi ama dengeyi yıktı:
+            //   Spekülatör +90K → -27K · Alıcı -12K → -36K · makas 3.1× → 35×
+            // Yarısı kadarı (85/115/300) da yetmedi: açlık %42, makas 6.7×.
+            //
+            // Mekanizma şu: mamul fiyatını yükseltmek değeri tüketiciden
+            // (Alıcı) ve ham madde tutandan (Spekülatör) üreticiye aktarıyor.
+            // Yani bu kaldıraç açlığı **dağılım karşılığında** satın alıyor;
+            // tek başına kullanılamaz. Çözüm gelirse hane halkı gelirini de
+            // fiyat seviyesiyle birlikte hareket ettirmekten geçer.
             Self::Elbise => 90,
             Self::Ekmek => 60,
             Self::Ziyafet => 180,
