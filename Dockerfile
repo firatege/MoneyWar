@@ -1,5 +1,10 @@
 # ── Stage 1: Rust build ──────────────────────────────────────────────────────
-FROM rust:1.86-bookworm AS rust-builder
+#
+# Sürüm, geliştirme toolchain'i ve Cargo.toml'daki `rust-version` ile aynı
+# tutulmalı. 1.86'dayken sessiz bir tuzaktı: modern sözdizimi (let-chain,
+# 1.88'de stabil) lokalde derleniyor, ancak deploy anında image build'inde
+# patlıyordu. Bu satırı değiştirirken Cargo.toml `rust-version`'ı da güncelle.
+FROM rust:1.96-bookworm AS rust-builder
 
 WORKDIR /app
 COPY . .

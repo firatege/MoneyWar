@@ -14,7 +14,10 @@ members = [
 [workspace.package]
 version = "0.8.0"
 edition = "2024"
-rust-version = "1.85"
+# Dockerfile'daki `FROM rust:...` ile aynı tutulmalı — ikisi ayrışırsa
+# modern sözdizimi lokalde geçip deploy'da patlar (2026-07-26'da let-chain
+# ile yaşandı).
+rust-version = "1.96"
 license = "UNLICENSED"
 authors = ["firatege"]
 description = "Tick-tabanlı ekonomi simülasyon oyunu — motor + terminal TUI"
