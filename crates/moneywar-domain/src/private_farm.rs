@@ -40,13 +40,19 @@ impl PrivateFarm {
     pub const fn default_level() -> u8 { 1 }
 
     /// Seviyeye göre tick başına üretim.
-    /// lv1=20, lv2=35, lv3=55 birim/tick
+    ///
+    /// Taban [`crate::balance::PRIVATE_FARM_OUTPUT_PER_TICK`]'ten gelir;
+    /// seviye çarpanları ×1 / ×1.75 / ×2.75. Eskiden burada 20/35/55 gömülü
+    /// duruyordu ve denge sabiti hiçbir yerden okunmuyordu — sabiti
+    /// değiştirmek ekonomiyi zerre etkilemiyordu (süpürmede üç farklı debi
+    /// birebir aynı sonucu verdi, kablonun kopuk olduğu böyle çıktı).
     #[must_use]
     pub const fn output_per_tick(&self) -> u32 {
+        let base = crate::balance::PRIVATE_FARM_OUTPUT_PER_TICK;
         match self.level {
-            1 => 20,
-            2 => 35,
-            _ => 55, // lv3+
+            1 => base,
+            2 => base * 7 / 4,
+            _ => base * 11 / 4, // lv3+
         }
     }
 

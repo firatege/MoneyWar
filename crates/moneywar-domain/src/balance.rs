@@ -379,12 +379,25 @@ pub const WORLD_FAB_SELL_TTL: u32 = 3;
 /// ham madde üretimi düşük teknoloji.
 pub const PRIVATE_FARM_BUILD_COST_LIRA: i64 = 15_000;
 
-/// Özel çiftlik tick başına üretim (birim ham madde).
-/// Piyasa Çiftçisi ortalama ~8-12/tick; özel çiftlik biraz daha az (özel = küçük tarla).
-pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 20;
+/// Özel çiftlik tick başına üretim (birim ham madde), seviye 1.
+///
+/// Bu sabit uzun süre **okunmuyordu**: `PrivateFarm::output_per_tick()`
+/// içinde 20/35/55 gömülüydü. Kablo bağlanınca değer gerçek bir kaldıraç
+/// oldu ve 20'nin fazla olduğu ölçüldü — tarla ham maddeyi pazarı atlayarak
+/// ürettiği için Çiftçi'nin müşterisini ve Spekülatör'ün stok değerini
+/// siliyor. Debi 20'de Spekülatör'ün üçü de batıyordu.
+///
+/// 8'de denge duruyor: girdi açlığı %69 → %54, rol makası 2.9× (hedef <3×),
+/// bütün kâr rolleri pozitif. Sabitin kendi tarifi de zaten bunu diyordu —
+/// "piyasa Çiftçisi ~8-12/tick, özel çiftlik biraz daha az".
+pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 8;
 
 /// Sanayici başına max özel çiftlik sayısı.
-pub const PRIVATE_FARM_MAX_PER_OWNER: usize = 6;
+///
+/// 6'ydı. On Sanayici × 6 tarla, pazarı atlayan büyük bir ham madde akışı
+/// demek; ölçümde Çiftçi ve Spekülatör'ü çökertiyordu. 2'de dikey
+/// bütünleşme hâlâ mümkün ama pazarın yerini almıyor.
+pub const PRIVATE_FARM_MAX_PER_OWNER: usize = 2;
 
 // =============================================================================
 // Fabrika yükseltme

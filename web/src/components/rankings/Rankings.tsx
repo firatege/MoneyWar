@@ -14,7 +14,18 @@ import "./rankings.css";
  * istenen role göre süzülebilen firma listesi.
  */
 
-/** Rol filtresi düğmeleri. `null` = hepsi. */
+/**
+ * Sıralamada ve rol dağılımında gösterilmeyen roller.
+ *
+ * Bunlar ekonomide çalışmaya devam eder — sayıları ve oranları tasarımın
+ * parçası, dokunulmuyor. Sadece izleyicinin takip ettiği tabloda yer
+ * kaplamıyorlar: Alıcı tüketici tarafı (kâr etmesi beklenmez, tablonun
+ * yarısını dolduruyordu), Spekülatör ise arka planda stok tutan bir
+ * dengeleyici. İzleyicinin izlediği yarış şirketler ve tüccarlar arasında.
+ */
+const HIDDEN_ROLES = new Set(["Alıcı", "Spekülatör"]);
+
+/** Rol filtresi düğmeleri. `null` = gizlenenler dışında hepsi. */
 const FILTERS: { key: string | null; label: string }[] = [
   { key: null, label: "hepsi" },
   { key: "Sanayici", label: "şirketler" },
@@ -32,18 +43,23 @@ interface Props {
 export function Rankings({ snapshot, prev, selectedId, onSelect }: Props) {
   const [filter, setFilter] = useState<string | null>("Sanayici");
 
-  const roles = snapshot?.roles ?? [];
+  const roles = (snapshot?.roles ?? []).filter((r) => !HIDDEN_ROLES.has(r.label));
   // Iraksak çubuk için ortak ölçek: en büyük mutlak değer iki yana da yeter.
   const roleScale = Math.max(1, ...roles.map((r) => Math.abs(r.per_capita_pnl_lira)));
 
+  // Gizli roller her iki listeden de düşer; "hepsi" filtresi de onları
+  // kapsamaz, yoksa düğme adı yalan söylerdi.
+  const visible = (snap: Snapshot | null) =>
+    (snap?.leaderboard ?? []).filter((p) => !HIDDEN_ROLES.has(p.npc_kind ?? ""));
+
   const rows = useMemo(() => {
-    const all = snapshot?.leaderboard ?? [];
+    const all = visible(snapshot);
     return filter == null ? all : all.filter((p) => p.npc_kind === filter);
   }, [snapshot, filter]);
 
   const prevRank = useMemo(() => {
     const m = new Map<number, number>();
-    const all = prev?.leaderboard ?? [];
+    const all = visible(prev);
     const list = filter == null ? all : all.filter((p) => p.npc_kind === filter);
     list.forEach((p, i) => m.set(p.id, i));
     return m;

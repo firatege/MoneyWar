@@ -395,10 +395,20 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
     }
 
     // 4c) Özel çiftlik — yeterli fabrika VE minimum tick.
-    // state.config.season_ticks hizli=90 olduğundan season_pct güvenilmez.
-    // Mutlak eşik: t60 sonrası (350 tickin ~17%'si) + en az 8 fab.
+    // state.config.season_ticks hizli=90 olduğundan season_pct güvenilmez,
+    // bu yüzden mutlak tick eşiği: t60 sonrası (350 tick'in ~%17'si).
+    //
+    // Fabrika eşiği 8'di ve **hiç kurulmuyordu**: ölçümde 350 tick boyunca
+    // sıfır tarla, sıfır reddedilen komut — yani aday listeye hiç girmiyordu.
+    // Sebep eşiğin ulaşılamaz olması; Sanayici'lerin fabrika dağılımı 2–5
+    // arasında, en çoğu 5. Eşik muhtemelen fabrika sayıları daha yüksekken
+    // yazılmıştı, denge çalışması yayılmayı kısınca erişilmez kaldı.
+    //
+    // 3'e çekildi. Kapı hâlâ dar: aday üretmek için ayrıca t60, nakit
+    // tamponu (maliyet × 1.5) ve **gerçek** bir hammadde açığı gerekiyor.
+    const MIN_FACTORIES_FOR_FARM: usize = 5;
     let current_tick = state.current_tick.value();
-    if owned >= 8 && current_tick >= 60 {
+    if owned >= MIN_FACTORIES_FOR_FARM && current_tick >= 60 {
         out.extend(enumerate_private_farm(state, player));
     }
 
