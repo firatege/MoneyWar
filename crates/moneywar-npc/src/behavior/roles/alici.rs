@@ -89,6 +89,32 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             ) else {
                 continue;
             };
+            // NOT — buradaki düz `10` bilinen bir sorun.
+            //
+            // Alıcı her ürüne, her tick, her şehirde 10 birim talip oluyor:
+            // yiyeceği ekmekle bir fırının ihtiyacı olan unu ayırt etmeden.
+            // Ölçüm (bkz. `moneywar-web/tests/order_size_probe.rs`):
+            //
+            //   Ekmek · Sanayici    825 emir × 40.8 birim = 33.660
+            //   Ekmek · Alıcı     7.085 emir ×  5.9 birim = 41.800
+            //
+            // Emir *başına* oran doğru (tüketici 6, fabrika 41); tüketici
+            // **adetçe** eziyor ve fabrika girdisini bulamıyor.
+            //
+            // Denendi, hiçbiri net kazanç vermedi (30 oyun × 350 tick):
+            //   · miktarı iştah yüzdesine bağlamak  → ekonomi küçüldü,
+            //     herkes fakirleşti (makas 3.4x → 4.3x)
+            //   · ara mal / nihai mal ayrımı (4 vs 30 birim) → açlık %54→%50
+            //     ama Ziyafet üretimi 708 → 235'e düştü
+            //   · tüketicinin ara mal teklifini kısmak (%90/%80/%70)
+            //     → makas 5.0x'e kadar bozuldu
+            //
+            // Sebep: mesele miktar değil **fiyat**. Tüketici nakit
+            // tavanından teklif verir, hatta tekel primi öder; fabrikanın
+            // teklifi ise geride kalan baseline'dan türer ve yarışı hep
+            // kaybeder. Fabrikanın teklifini yükseltmek de denenmiş ve
+            // fiyat sarmalı yaratmıştı (`pricing::derived_input_ceiling`).
+            // Gerçek çözüm o tavanın sarmal kurmadan ileri bakmasında.
             let quantity = affordable_qty(bucket_cash, unit_price, 10);
             if quantity == 0 {
                 continue;
