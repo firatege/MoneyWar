@@ -31,6 +31,10 @@
 //!      `OrderExpired` event'iyle düşer; TTL'si kalan emir kitapta yeni qty
 //!      ile kalır (persistent order book).
 
+/// Mamul baseline'ının tarif maliyetinin üstünde tutulacağı asgari pay.
+/// Üretici bu marjın altına düşen bir ürünü yapamaz hale gelir.
+const MIN_PRODUCTION_MARGIN_PCT: i64 = 20;
+
 use moneywar_domain::{
     CityId, GameState, MarketOrder, Money, PlayerId, ProductKind, Tick,
     balance::{PRICE_CLAMP_HIGH_PCT, PRICE_CLAMP_LOW_PCT},
@@ -242,6 +246,34 @@ fn clear_bucket(
                     new_cents.max(abs_min).min(abs_max)
                 };
                 *baseline = Money::from_cents(clamped);
+            }
+
+            // Maliyet tabanı: mamulün baseline'ı, tarifinin maliyetinin
+            // altına inemez.
+            //
+            // Baseline'lar şimdiye kadar birbirinden bağımsız kayıyordu:
+            // girdiler sezon boyunca yukarı (~1.4×), üst katman mamulü aşağı
+            // (~0.9×). Sonuçta zincirin tepesinde marj sıfırlanıyordu —
+            // ölçüm: Ziyafet %4, Elbise %31, oysa tier-1 ürünlerde %79-90.
+            // Marjsız mamulün fabrikası girdiye rekabetçi teklif veremiyor,
+            // tüketici girdiyi kapıyor ve zincir orada kopuyor.
+            //
+            // Taban `[%60, %160]` clamp'ının **üstüne** çıkabilir; aksi halde
+            // girdiler pahalandığında hiç devreye giremezdi. Maliyet
+            // baseline'lardan hesaplandığı için (piyasa fiyatından değil)
+            // sönümlü kalır, sarmal kurmaz.
+            if !product.is_raw()
+                && let Some(cost) = state.recipe_unit_cost(city, product)
+            {
+                let floor = cost
+                    .as_cents()
+                    .saturating_mul(100 + MIN_PRODUCTION_MARGIN_PCT)
+                    / 100;
+                if let Some(baseline) = state.price_baseline.get_mut(&key)
+                    && baseline.as_cents() < floor
+                {
+                    *baseline = Money::from_cents(floor);
+                }
             }
         }
     }
