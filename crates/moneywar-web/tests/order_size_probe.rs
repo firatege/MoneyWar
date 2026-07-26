@@ -5,9 +5,31 @@
 //! ekmek üretiliyorsa bir hane 5 birim almalı, bir fabrika 20-50 —
 //! fabrika bir batch'i doldurmak zorunda çünkü.
 //!
-//! Bu test rol × ürün bazında emir büyüklüğü dağıtımını çıkarır. Tüketici
-//! emri fabrika emriyle aynı büyüklükteyse yarışı kim kazanırsa kazansın
-//! zincir tıkanır.
+//! Bu test rol × ürün bazında emir büyüklüğünü **ve teklif fiyatını**
+//! çıkarır.
+//!
+//! # Bulgu
+//!
+//! Miktar zaten doğru — tüketici emir başına 6 birim, fabrika 41 istiyor.
+//! Belirleyici olan **fiyat** ve tablo kendi kontrol grubunu içeriyor:
+//!
+//! ```text
+//! ürün        rol         ort teklif    o zincirin karşılaması
+//! Kumaş       Sanayici        66.05₺  →  Elbise  %97-108  sağlıklı
+//! Kumaş       Alıcı           60.84₺
+//!
+//! Ekmek       Sanayici       108.03₺  →  Ziyafet %13-32   aç
+//! Ekmek       Alıcı          145.98₺
+//! ```
+//!
+//! Zincir, fabrikanın tüketiciyi **geçebildiği** yerde çalışıyor; geçemediği
+//! yerde tıkanıyor. Sebebi de görünür: Ziyafet 180₺'ye satılıyor ama tek
+//! ana girdisi Ekmek piyasada 146₺ — o fiyata üretim zaten kârsız.
+//!
+//! Dolaylı kaldıraçların hiçbiri bu sayıyı değiştirmediği için hiçbiri
+//! çözmedi (miktar, kuyruk önceliği, iştah, ölçek, fiyat merdiveni —
+//! ölçümler `alici.rs` ve `balance.rs`'te). Çözüm doğrudan
+//! `pricing::derived_input_ceiling`'in ileri bakmasında.
 
 use std::collections::BTreeMap;
 
@@ -20,6 +42,8 @@ struct Stat {
     orders: u64,
     units: u64,
     max: u32,
+    /// Teklif fiyatlarının toplamı (cent) — ortalama için.
+    price_cents: i64,
 }
 
 impl Stat {
@@ -28,6 +52,15 @@ impl Stat {
             0.0
         } else {
             self.units as f64 / self.orders as f64
+        }
+    }
+
+    /// Ortalama teklif fiyatı (lira). Yarışı kimin kazandığı buradan okunur.
+    fn avg_price(&self) -> f64 {
+        if self.orders == 0 {
+            0.0
+        } else {
+            self.price_cents as f64 / self.orders as f64 / 100.0
         }
     }
 }
@@ -59,12 +92,16 @@ fn how_big_is_each_role_order() {
             s.orders += 1;
             s.units += u64::from(order.quantity);
             s.max = s.max.max(order.quantity);
+            s.price_cents += order.unit_price.as_cents();
         }
     }
 
     println!("\n── Alım emri büyüklüğü (350 tick) ──────────────────────────");
-    println!("{:<16} {:<12} {:>8} {:>10} {:>8}", "ürün", "rol", "emir", "ort birim", "en çok");
-    println!("{}", "-".repeat(60));
+    println!(
+        "{:<16} {:<12} {:>8} {:>10} {:>8} {:>11}",
+        "ürün", "rol", "emir", "ort birim", "en çok", "ort teklif"
+    );
+    println!("{}", "-".repeat(72));
 
     // Ara mallar en kritik: fabrika ile tüketici burada yarışıyor.
     for product in [
@@ -81,12 +118,13 @@ fn how_big_is_each_role_order() {
         rows.sort_by(|a, b| b.1.avg().partial_cmp(&a.1.avg()).unwrap());
         for (kind, s) in rows {
             println!(
-                "{:<16} {:<12} {:>8} {:>10.1} {:>8}",
+                "{:<16} {:<12} {:>8} {:>10.1} {:>8} {:>10.2}₺",
                 product.display_name(),
                 kind.label(),
                 s.orders,
                 s.avg(),
-                s.max
+                s.max,
+                s.avg_price()
             );
         }
         println!();
