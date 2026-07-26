@@ -22,6 +22,60 @@ use moneywar_domain::{
 pub const FACTORY_TARGET_MARGIN_PCT: i64 =
     moneywar_domain::balance::FACTORY_TARGET_MARGIN_PCT;
 
+/// Üreticinin çıktısını baseline'ın **yüzde kaçına** satmayı beklediği.
+///
+/// # Neden gerekli
+///
+/// Fabrika hem girdi hem çıktı tarafında `effective_baseline` okuyordu.
+/// Tüketici ise baseline'ın üstüne aciliyet (%100-110), güven bonusu
+/// (≤%10) ve tekel primi (≤%20) bindirip `Cross` ile en iyi satışın
+/// üstüne atlıyor. Yani fabrika listede yazan fiyattan, tüketici gerçek
+/// piyasa fiyatından teklif veriyordu.
+///
+/// Ölçüm (`order_size_probe`): Ekmek'e Alıcı 145.98₺, Ziyafet fabrikası
+/// 108.03₺ veriyor. Fabrikanın kaybettiği her zincir tıkanıyor, kazandığı
+/// (Kumaş: 66.05₺ / 60.84₺) çalışıyor.
+///
+/// # Neden sarmal kurmaz
+///
+/// Daha önce burada `reference_price` (gerçekleşen takasların yürüyen
+/// ortalaması) denenmiş ve sarmal yaratmıştı: fabrika daha çok öder →
+/// daha çok eşleşir → ortalama yükselir → daha çok öder.
+///
+/// Bu çarpan öyle değil. Çıktı fiyatı hâlâ **baseline**'dan geliyor;
+/// baseline ise Walras dengesizliğinden türüyor ve başlangıcın
+/// `[%60, %160]` aralığına kilitli. Girdi fiyatının artması fabrikanın
+/// **bütçesini büyütmüyor** — bütçe yalnız çıktı gelirinden geliyor;
+/// artan girdi maliyeti bütçeyi girdiler arasında yeniden paylaştırıyor,
+/// toplamı değiştirmiyor. Geri besleme yolu yok, üstelik üst sınır clamp
+/// ile kapalı.
+///
+/// # Denendi: sarmal kurmadı ama sorunu da çözmedi
+///
+/// 30 oyun × 350 tick:
+///
+/// ```text
+///        açlık  makas   Tüccar  Sanayici  Spekül   Alıcı
+/// %100     %54   3.4x   231202     85015   82628   +8952
+/// %120     %54   5.3x   269405     82228   61379  -43008
+/// %140     %58   7.8x   337762     60467   68977  -59428
+/// %160     %65  30.9x   463146     32929   83147  -64651
+/// ```
+///
+/// Sarmal gerçekten olmadı (fiyatlar clamp içinde kaldı) ama açlık da
+/// düşmedi. Sebebi belirleyici: **fabrika daha çok ödeyince daha çok mal
+/// üretilmiyor**, para yalnız satıcıya geçiyor. Tüccar iki katına çıkıyor,
+/// Sanayici üçte birine iniyor.
+///
+/// Yani zincirin darboğazı teklif gücü değil **fiziksel kapasite**: Ekmek
+/// fabrikaları atıl değil (5-6 fabrikanın 0-2'si), sadece sayıları az.
+/// Daha fazla Ekmek için daha fazla Ekmek fabrikası gerekiyor; NPC ise
+/// marjı yüksek olan tier-1'e kuruyor (12 Kumaş, 12 Un — 5 Ekmek).
+/// Marjı düzleştirmek de denendi ve dağılımı bozdu (bkz. `product.rs`).
+///
+/// Bu sabit 100'de duruyor: bağlı, ölçülmüş, tarafsız.
+pub const OUTPUT_REALIZATION_PCT: i64 = 100;
+
 /// Üreticinin bir girdiye ödeyebileceği azami birim fiyat — **türev talep**.
 ///
 /// Bir fabrikanın hammaddeye ödeme gücü hammaddenin kendi fiyatından değil,
@@ -56,7 +110,9 @@ pub fn derived_input_ceiling(
     if out_units <= 0 {
         return None;
     }
-    let out_price = reference_or_base(state, city, finished)?;
+    // Çıktı baseline'ın üstünde satılıyor; bütçe de onu yansıtmalı.
+    let out_price =
+        reference_or_base(state, city, finished)?.saturating_mul(OUTPUT_REALIZATION_PCT) / 100;
     let revenue = out_price.saturating_mul(out_units);
     let budget = revenue.saturating_mul(100 - FACTORY_TARGET_MARGIN_PCT) / 100;
     if budget <= 0 {
