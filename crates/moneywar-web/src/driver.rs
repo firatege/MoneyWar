@@ -12,6 +12,7 @@ use moneywar_npc::{BrainPool, Difficulty, decide_all_npcs};
 
 use crate::balance::{BalanceAccumulator, BalanceReport};
 use crate::dto::{Snapshot, build_snapshot};
+use crate::ledger::Ledger;
 use crate::world::new_season;
 
 /// Bir sezonun sonu özeti — geçmiş sezon tablosu için saklanır.
@@ -62,6 +63,9 @@ pub struct SimDriver {
     /// Bu sezonun denge denetimi — her tick beslenir, sezon dönüşünde sıfırlanır.
     /// `GET /api/audit` bunun anlık raporunu döndürür.
     audit: BalanceAccumulator,
+    /// Son işlemlerin/üretimlerin halka tamponu — drill-down sayfalarının
+    /// "en son ne yaptı", "kim kimle" sorularının kaynağı.
+    pub ledger: Ledger,
     base_seed: u64,
     difficulty: Difficulty,
 }
@@ -85,6 +89,7 @@ impl SimDriver {
             brains: BrainPool::default(),
             season_history: Vec::new(),
             audit: BalanceAccumulator::default(),
+            ledger: Ledger::new(),
             base_seed,
             difficulty,
         }
@@ -126,6 +131,7 @@ impl SimDriver {
         self.last_report = TickReport::new(Tick::ZERO);
         self.audit = BalanceAccumulator::default();
         self.audit.sample_money(&self.state);
+        self.ledger.clear();
         tracing::info!(season = self.season, "sezon manuel sıfırlandı");
     }
 
@@ -154,13 +160,20 @@ impl SimDriver {
             self.last_report = TickReport::new(Tick::ZERO);
             self.audit = BalanceAccumulator::default();
             self.audit.sample_money(&self.state);
+            self.ledger.clear();
             tracing::info!(season = self.season, seed, "yeni sezon başladı");
             return Some(finished);
         }
 
         let next_tick = Tick::new(self.state.current_tick.value() + 1);
         let mut rng = rng_for(self.state.room_id, next_tick);
-        let cmds = decide_all_npcs(&self.state, &mut rng, next_tick, self.difficulty, &mut self.brains);
+        let cmds = decide_all_npcs(
+            &self.state,
+            &mut rng,
+            next_tick,
+            self.difficulty,
+            &mut self.brains,
+        );
         match advance_tick(&self.state, &cmds) {
             Ok((next_state, report)) => {
                 self.state = next_state;
@@ -168,6 +181,7 @@ impl SimDriver {
                     self.audit.record(&self.state, &entry.event);
                 }
                 self.audit.sample_money(&self.state);
+                self.ledger.ingest(&report);
                 self.last_report = report;
             }
             Err(e) => {
@@ -200,7 +214,6 @@ impl SimDriver {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,9 +243,7 @@ mod tests {
     fn audit_accumulates_over_ticks() {
         let early = stepped(10).audit_report();
         let late = stepped(60).audit_report();
-        let sum = |r: &BalanceReport| -> u64 {
-            r.roles.iter().map(|x| x.flow.fills).sum()
-        };
+        let sum = |r: &BalanceReport| -> u64 { r.roles.iter().map(|x| x.flow.fills).sum() };
         assert!(sum(&late) > sum(&early), "denetim tick'lerle birikmeli");
     }
 

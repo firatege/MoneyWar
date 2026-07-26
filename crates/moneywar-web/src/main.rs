@@ -16,6 +16,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio::sync::{RwLock, broadcast};
 
+use moneywar_domain::{FactoryId, PlayerId};
 use moneywar_web::archive::SeasonArchive;
 use moneywar_web::debuglog::{LogSink, format_tick_block};
 use moneywar_web::driver::SimDriver;
@@ -45,8 +46,14 @@ fn security_headers() -> DefaultHeaders {
         .add(("X-Content-Type-Options", "nosniff"))
         .add(("X-Frame-Options", "DENY"))
         .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
-        .add(("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
-        .add(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
+        .add((
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=()",
+        ))
+        .add((
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        ))
         // index.html ve API yanıtları HER yüklemede doğrulanmalı.
         // Cache-Control yokken tarayıcılar sezgisel önbellekleme uygulayıp
         // sayfayı sunucuya hiç sormadan diskten veriyordu: yeni sürüm çıksa
@@ -70,8 +77,7 @@ struct AppState {
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -134,7 +140,13 @@ async fn main() -> std::io::Result<()> {
         }
     });
     let static_dir_exists = std::path::Path::new(&static_dir).is_dir();
-    tracing::info!(port, base_seed, static_dir, static_dir_exists, "moneywar-web başlıyor");
+    tracing::info!(
+        port,
+        base_seed,
+        static_dir,
+        static_dir_exists,
+        "moneywar-web başlıyor"
+    );
 
     HttpServer::new(move || {
         let mut app = App::new()
@@ -145,6 +157,9 @@ async fn main() -> std::io::Result<()> {
             .route("/api/log", web::get().to(get_log))
             .route("/api/seasons", web::get().to(get_seasons))
             .route("/api/audit", web::get().to(get_audit))
+            .route("/api/city/{slug}", web::get().to(get_city))
+            .route("/api/firm/{id}", web::get().to(get_firm))
+            .route("/api/factory/{id}", web::get().to(get_factory))
             .route("/api/reset", web::post().to(post_reset))
             .route("/ws", web::get().to(ws_handler));
 
@@ -156,15 +171,13 @@ async fn main() -> std::io::Result<()> {
             // (DefaultHeaders yalnız eksik başlığı ekler).
             app = app.service(
                 web::scope("/assets")
-                    .wrap(DefaultHeaders::new().add((
-                        "Cache-Control",
-                        "public, max-age=31536000, immutable",
-                    )))
+                    .wrap(
+                        DefaultHeaders::new()
+                            .add(("Cache-Control", "public, max-age=31536000, immutable")),
+                    )
                     .service(Files::new("", format!("{static_dir}/assets"))),
             );
-            app = app.service(
-                Files::new("/", static_dir.clone()).index_file("index.html"),
-            );
+            app = app.service(Files::new("/", static_dir.clone()).index_file("index.html"));
         }
         app
     })
@@ -238,6 +251,37 @@ async fn get_audit(state: web::Data<AppState>) -> impl Responder {
     }))
 }
 
+/// Şehir detay sayfası — fabrikalar, sahipler, stok, kim kimle iş yapıyor.
+///
+/// Snapshot'ta değil çünkü her tick yayınlanan pakete her şehrin envanteri
+/// ve işlem defteri girseydi yayın birkaç yüz KB'ye çıkardı. Bu veri
+/// tıklanınca, tek şehir için hesaplanır.
+async fn get_city(state: web::Data<AppState>, path: web::Path<String>) -> impl Responder {
+    let Some(city) = moneywar_web::dto::parse_city(&path) else {
+        return HttpResponse::NotFound().json(serde_json::json!({ "error": "bilinmeyen şehir" }));
+    };
+    let d = state.driver.read().await;
+    HttpResponse::Ok().json(moneywar_web::detail::city_detail(&d.state, &d.ledger, city))
+}
+
+/// Firma detay sayfası — fabrikalar, envanter, son işlemler, güven ilişkileri.
+async fn get_firm(state: web::Data<AppState>, path: web::Path<u64>) -> impl Responder {
+    let d = state.driver.read().await;
+    match moneywar_web::detail::firm_detail(&d.state, &d.ledger, PlayerId::new(*path)) {
+        Some(detail) => HttpResponse::Ok().json(detail),
+        None => HttpResponse::NotFound().json(serde_json::json!({ "error": "firma yok" })),
+    }
+}
+
+/// Fabrika detay sayfası — kadro, girdi durumu, marj, üretim geçmişi.
+async fn get_factory(state: web::Data<AppState>, path: web::Path<u64>) -> impl Responder {
+    let d = state.driver.read().await;
+    match moneywar_web::detail::factory_detail(&d.state, &d.ledger, FactoryId::new(*path)) {
+        Some(detail) => HttpResponse::Ok().json(detail),
+        None => HttpResponse::NotFound().json(serde_json::json!({ "error": "fabrika yok" })),
+    }
+}
+
 /// Mevcut sezonu sıfırlar — tick 0'dan başlar, önceki skor geçmişe eklenir.
 async fn post_reset(state: web::Data<AppState>) -> impl Responder {
     {
@@ -294,9 +338,10 @@ async fn ws_handler(
     actix_web::rt::spawn(async move {
         // İlk yükleme: anlık snapshot.
         if let Some(s) = initial
-            && session.text(s).await.is_err() {
-                return;
-            }
+            && session.text(s).await.is_err()
+        {
+            return;
+        }
 
         loop {
             tokio::select! {

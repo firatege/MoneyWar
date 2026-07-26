@@ -26,8 +26,7 @@ pub struct LogSink {
 impl LogSink {
     #[must_use]
     pub fn new(file_path: Option<PathBuf>) -> Self {
-        let file = file_path
-            .and_then(|p| File::create(p).map(BufWriter::new).ok());
+        let file = file_path.and_then(|p| File::create(p).map(BufWriter::new).ok());
         Self {
             ring: Mutex::new(VecDeque::with_capacity(RING_CAP)),
             file: Mutex::new(file),
@@ -45,11 +44,12 @@ impl LogSink {
             }
         }
         if let Ok(mut f) = self.file.lock()
-            && let Some(w) = f.as_mut() {
-                let _ = w.write_all(block.as_bytes());
-                let _ = w.write_all(b"\n");
-                let _ = w.flush();
-            }
+            && let Some(w) = f.as_mut()
+        {
+            let _ = w.write_all(block.as_bytes());
+            let _ = w.write_all(b"\n");
+            let _ = w.flush();
+        }
     }
 
     /// Son `n` satırı düz metin olarak döndür (n=0 → tümü).
@@ -59,8 +59,16 @@ impl LogSink {
             Ok(r) => r,
             Err(_) => return String::new(),
         };
-        let start = if n == 0 || n >= ring.len() { 0 } else { ring.len() - n };
-        ring.iter().skip(start).cloned().collect::<Vec<_>>().join("\n")
+        let start = if n == 0 || n >= ring.len() {
+            0
+        } else {
+            ring.len() - n
+        };
+        ring.iter()
+            .skip(start)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -122,14 +130,18 @@ pub fn format_tick_block(state: &GameState, report: &TickReport, season: u64) ->
                 .and_then(|h| h.last().map(|(_, p)| format!("{p:>8}")))
                 .unwrap_or_else(|| "       -".into());
             let avg5 = state
-                .rolling_avg_price(city, product, 5).map_or_else(|| "       -".into(), |p| format!("{p:>8}"));
+                .rolling_avg_price(city, product, 5)
+                .map_or_else(|| "       -".into(), |p| format!("{p:>8}"));
             let base = state
                 .price_baseline
-                .get(&(city, product)).map_or_else(|| "       -".into(), |p| format!("{p:>8}"));
+                .get(&(city, product))
+                .map_or_else(|| "       -".into(), |p| format!("{p:>8}"));
             let bid = state
-                .best_bid(city, product).map_or_else(|| "       -".into(), |(p, _)| format!("{p:>8}"));
+                .best_bid(city, product)
+                .map_or_else(|| "       -".into(), |(p, _)| format!("{p:>8}"));
             let ask = state
-                .best_ask(city, product).map_or_else(|| "       -".into(), |(p, _)| format!("{p:>8}"));
+                .best_ask(city, product)
+                .map_or_else(|| "       -".into(), |(p, _)| format!("{p:>8}"));
             let spread = match (state.best_bid(city, product), state.best_ask(city, product)) {
                 (Some((b, _)), Some((a, _))) => {
                     format!("{:>6}", a.as_cents().saturating_sub(b.as_cents()))
@@ -140,9 +152,16 @@ pub fn format_tick_block(state: &GameState, report: &TickReport, season: u64) ->
                 .order_book
                 .get(&(city, product))
                 .map_or((0, 0), |book| {
-                    let bq: u32 = book.iter().filter(|o| o.side.is_buy()).map(|o| o.quantity).sum();
-                    let sq: u32 =
-                        book.iter().filter(|o| o.side.is_sell()).map(|o| o.quantity).sum();
+                    let bq: u32 = book
+                        .iter()
+                        .filter(|o| o.side.is_buy())
+                        .map(|o| o.quantity)
+                        .sum();
+                    let sq: u32 = book
+                        .iter()
+                        .filter(|o| o.side.is_sell())
+                        .map(|o| o.quantity)
+                        .sum();
                     (bq, sq)
                 });
             let bucket_label = format!("{}/{}", city.display_name(), product.display_name());

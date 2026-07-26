@@ -354,8 +354,9 @@ impl BalanceAccumulator {
             }
             LogEvent::LoanTaken { principal, .. } => {
                 self.loans_taken += 1;
-                self.loan_principal_cents =
-                    self.loan_principal_cents.saturating_add(principal.as_cents());
+                self.loan_principal_cents = self
+                    .loan_principal_cents
+                    .saturating_add(principal.as_cents());
             }
             LogEvent::LoanDefaulted { unpaid_balance, .. } => {
                 self.loans_defaulted += 1;
@@ -411,9 +412,7 @@ impl BalanceAccumulator {
                     .intrigue
                     .bankrupt
                     .iter()
-                    .filter(|pid| {
-                        state.players.get(pid).and_then(|p| p.npc_kind) == Some(kind)
-                    })
+                    .filter(|pid| state.players.get(pid).and_then(|p| p.npc_kind) == Some(kind))
                     .count();
                 Some(RoleBalance {
                     kind,
@@ -449,7 +448,10 @@ impl BalanceAccumulator {
                 if per_city.is_empty() {
                     return None;
                 }
-                Some((product, per_city.iter().sum::<f64>() / per_city.len() as f64))
+                Some((
+                    product,
+                    per_city.iter().sum::<f64>() / per_city.len() as f64,
+                ))
             })
             .collect();
         margins.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -474,16 +476,16 @@ impl BalanceAccumulator {
                 if ratios.is_empty() {
                     return None;
                 }
-                Some((
-                    product,
-                    ratios.iter().sum::<f64>() / ratios.len() as f64,
-                ))
+                Some((product, ratios.iter().sum::<f64>() / ratios.len() as f64))
             })
             .collect();
         price_drift.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut top_rejects: Vec<(String, u64)> =
-            self.reject_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut top_rejects: Vec<(String, u64)> = self
+            .reject_reasons
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         top_rejects.sort_by(|a, b| b.1.cmp(&a.1));
         top_rejects.truncate(4);
 
@@ -539,13 +541,24 @@ impl BalanceAccumulator {
                 if total == 0 {
                     return None;
                 }
-                let mut buyers: Vec<(NpcKind, u64)> =
-                    per_role.iter().map(|(k, (b, _))| (*k, *b)).filter(|(_, v)| *v > 0).collect();
-                let mut sellers: Vec<(NpcKind, u64)> =
-                    per_role.iter().map(|(k, (_, s))| (*k, *s)).filter(|(_, v)| *v > 0).collect();
+                let mut buyers: Vec<(NpcKind, u64)> = per_role
+                    .iter()
+                    .map(|(k, (b, _))| (*k, *b))
+                    .filter(|(_, v)| *v > 0)
+                    .collect();
+                let mut sellers: Vec<(NpcKind, u64)> = per_role
+                    .iter()
+                    .map(|(k, (_, s))| (*k, *s))
+                    .filter(|(_, v)| *v > 0)
+                    .collect();
                 buyers.sort_by(|a, b| b.1.cmp(&a.1));
                 sellers.sort_by(|a, b| b.1.cmp(&a.1));
-                Some(ProductLedger { product: *p, matched: total, buyers, sellers })
+                Some(ProductLedger {
+                    product: *p,
+                    matched: total,
+                    buyers,
+                    sellers,
+                })
             })
             .collect();
 
@@ -707,7 +720,11 @@ mod tests {
 
     #[test]
     fn fills_per_order_can_exceed_one_on_partial_fills() {
-        let c = FlowCounters { submitted: 2, fills: 5, ..FlowCounters::default() };
+        let c = FlowCounters {
+            submitted: 2,
+            fills: 5,
+            ..FlowCounters::default()
+        };
         assert!((c.fills_per_order() - 2.5).abs() < 1e-9);
     }
 
@@ -802,7 +819,10 @@ mod tests {
 
     #[test]
     fn market_flow_without_supply_is_infinite_shortage() {
-        let f = MarketFlow { demand: 10, ..MarketFlow::default() };
+        let f = MarketFlow {
+            demand: 10,
+            ..MarketFlow::default()
+        };
         assert!(f.demand_supply_ratio().is_infinite());
         assert_eq!(f.supply_clear_rate(), 0.0);
     }

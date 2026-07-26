@@ -57,8 +57,7 @@ impl SeasonArchive {
 
     fn write_file(&self, name: &str, body: impl FnOnce() -> String) {
         let path = self.dir.join(name);
-        let result = std::fs::File::create(&path)
-            .and_then(|mut f| f.write_all(body().as_bytes()));
+        let result = std::fs::File::create(&path).and_then(|mut f| f.write_all(body().as_bytes()));
         match result {
             Ok(()) => tracing::info!(path = %path.display(), "sezon arşivlendi"),
             Err(e) => tracing::warn!(path = %path.display(), error = %e, "arşiv yazılamadı"),
@@ -170,9 +169,7 @@ pub fn render_markdown(season: u64, r: &BalanceReport) -> String {
                 }
                 v.iter()
                     .take(3)
-                    .map(|(k, n)| {
-                        format!("{} %{:.0}", k.label(), *n as f64 / total as f64 * 100.0)
-                    })
+                    .map(|(k, n)| format!("{} %{:.0}", k.label(), *n as f64 / total as f64 * 100.0))
                     .collect::<Vec<_>>()
                     .join(" · ")
             };

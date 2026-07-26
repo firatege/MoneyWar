@@ -8,8 +8,10 @@
 pub mod archive;
 pub mod balance;
 pub mod debuglog;
+pub mod detail;
 pub mod driver;
 pub mod dto;
+pub mod ledger;
 pub mod world;
 
 use moneywar_npc::Difficulty;
