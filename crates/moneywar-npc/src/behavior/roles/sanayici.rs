@@ -419,6 +419,20 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
     // Mamul kervan dispatch — stok yüksekse en pahalı şehre gönder.
     out.extend(enumerate_mamul_dispatch(state, player));
 
+    // Sanayici propose'u **kasten kapalı** (fonksiyon duruyor, çağrılmıyor).
+    //
+    // Stok escrow'u geldikten sonra denendi: kontrat hacmi 19'dan 137/oyuna
+    // fırladı ve breach %1.4'te kaldı, yani mekanik sağlam çalışıyor. Ama
+    // denge bozuldu — adalet makası 3.3× → 4.6×, Sanayici kişi başı PnL
+    // 102K → 94K, Tüccar 267K → 375K. Sebep: üretici mamulünü vadeli sabit
+    // fiyattan bağlayınca artığı alan Tüccar'a devrediyor; kontrat fiyatı
+    // spot beklentisini yansıtmıyor.
+    //
+    // Açmadan önce kontrat fiyatlamasının düzelmesi gerekir (vade primi /
+    // beklenen spot). Tüccar tarafı açık ve orada net kazanç var.
+    // out.extend(enumerate_contract_proposals(state, player));
+    let _ = enumerate_contract_proposals as fn(&GameState, &Player) -> Vec<ActionCandidate>;
+
     out
 }
 

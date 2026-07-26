@@ -130,10 +130,11 @@ fn contract_fulfilled_on_delivery_tick() {
 }
 
 #[test]
-fn contract_breached_when_seller_has_no_stock() {
-    // Satıcı stoksuzsa seller breach, kaporası buyer'a tazminat.
+fn stockless_seller_cannot_open_a_contract() {
+    // Escrow öncesi bu senaryo "satıcı teslimde breach eder"di. Artık mal
+    // öneri anında kilitlendiği için senaryo **imkânsız**: stoksuz satıcı
+    // kontratı hiç açamaz. Taahhüdün karşılığı baştan alınır.
     let mut s = init_state();
-    // Stoku sil.
     s.players
         .get_mut(&PlayerId::new(1))
         .unwrap()
@@ -142,48 +143,30 @@ fn contract_breached_when_seller_has_no_stock() {
         .unwrap();
     let total_cash_before: i64 = s.players.values().map(|p| p.cash.as_cents()).sum();
 
+    let (s1, r1) = advance_tick(&s, &[Command::ProposeContract(proposal(3, 10))]).unwrap();
+
+    assert!(s1.contracts.is_empty(), "stoksuz satıcı kontrat açamamalı");
+    assert_eq!(r1.rejected_count(), 1, "komut reddedilmeli");
+    // Kapora da alınmamalı — hiçbir kısmi uygulama yok.
+    let total_cash_after: i64 = s1.players.values().map(|p| p.cash.as_cents()).sum();
+    assert_eq!(total_cash_before, total_cash_after);
+}
+
+#[test]
+fn proposing_escrows_stock_so_it_cannot_be_sold_elsewhere() {
+    // Escrow'un asıl amacı: satıcı kontrata bağladığı malı arada pazarda
+    // satamaz. Kontrat açıldıktan sonra serbest stok azalmış olmalı.
+    let s = init_state();
+    let free_before = s.players[&PlayerId::new(1)]
+        .inventory
+        .get(CityId::Istanbul, ProductKind::Kumas);
+
     let (s1, _) = advance_tick(&s, &[Command::ProposeContract(proposal(3, 10))]).unwrap();
-    let cid = *s1.contracts.keys().next().unwrap();
-    let (s2, _) = advance_tick(
-        &s1,
-        &[Command::AcceptContract {
-            contract_id: cid,
-            acceptor: PlayerId::new(2),
-        }],
-    )
-    .unwrap();
-    let (s3, r3) = advance_tick(&s2, &[]).unwrap();
-    assert!(!s3.contracts.contains_key(&cid));
 
-    // Seller: kaporasını kaybetti (-200). Stok değişmedi.
-    // 10k - 200 = 9800
-    assert_eq!(
-        s3.players[&PlayerId::new(1)].cash,
-        Money::from_lira(9_800).unwrap()
-    );
-    // Buyer: kendi kaporası iade + seller'ın kaporası tazminat olarak geldi.
-    // 10k - 200 (accept) + 200 (kendi iade) + 200 (tazminat) = 10_200
-    assert_eq!(
-        s3.players[&PlayerId::new(2)].cash,
-        Money::from_lira(10_200).unwrap()
-    );
-
-    let total_cash_after: i64 = s3.players.values().map(|p| p.cash.as_cents()).sum();
-    assert_eq!(
-        total_cash_before, total_cash_after,
-        "breach redistributes, preserves total"
-    );
-
-    let breached = r3.entries.iter().any(|e| {
-        matches!(
-            &e.event,
-            moneywar_engine::LogEvent::ContractSettled {
-                final_state: ContractState::Breached { .. },
-                ..
-            }
-        )
-    });
-    assert!(breached);
+    let free_after = s1.players[&PlayerId::new(1)]
+        .inventory
+        .get(CityId::Istanbul, ProductKind::Kumas);
+    assert_eq!(free_after, free_before - 10, "kontrat malı kilitlenmeli");
 }
 
 #[test]

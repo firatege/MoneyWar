@@ -63,18 +63,43 @@ pub(crate) fn process_propose_contract(
         proposal.buyer_deposit,
     )?;
 
-    // Satıcı kaporasını escrow'a al.
+    // Ön kontroller — hiçbir mutasyondan önce, kısmi uygulama olmasın.
+    let seller_ref = state
+        .players
+        .get(&proposal.seller)
+        .expect("checked above");
+    if seller_ref.cash < proposal.seller_deposit {
+        return Err(EngineError::Domain(DomainError::InsufficientFunds {
+            have: seller_ref.cash,
+            want: proposal.seller_deposit,
+        }));
+    }
+    // Stok escrow'u: satılan mal öneri anında kilitlenir.
+    //
+    // Eskiden stok yalnız **teslim** anında kontrol ediliyordu; satıcı arada
+    // malı pazarda satabildiği için teslimde eli boş kalıyordu. NPC
+    // kontratlarının %78'i böyle breach ile kapanıyor ve bu yüzden NPC
+    // propose tamamen kapatılmıştı. Mal baştan kilitlenince satıcı stok
+    // yüzünden breach *edemez* — kontrat gerçek bir taahhüt olur.
+    let free_stock = seller_ref
+        .inventory
+        .get(proposal.delivery_city, proposal.product);
+    if free_stock < proposal.quantity {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "seller {} has {free_stock} {} at {}, contract needs {}",
+            proposal.seller, proposal.product, proposal.delivery_city, proposal.quantity
+        ))));
+    }
+
     let seller = state
         .players
         .get_mut(&proposal.seller)
         .expect("checked above");
-    if seller.cash < proposal.seller_deposit {
-        return Err(EngineError::Domain(DomainError::InsufficientFunds {
-            have: seller.cash,
-            want: proposal.seller_deposit,
-        }));
-    }
     seller.debit(proposal.seller_deposit)?;
+    seller
+        .inventory
+        .remove(proposal.delivery_city, proposal.product, proposal.quantity)
+        .expect("stok yeterliliği yukarıda doğrulandı");
 
     state.counters.next_contract_id = state.counters.next_contract_id.saturating_add(1);
     state.contracts.insert(contract_id, contract);
@@ -175,11 +200,17 @@ pub(crate) fn process_cancel_contract(
 
     let seller = contract.seller;
     let deposit = contract.seller_deposit;
+    let (city, product, qty) = (
+        contract.delivery_city,
+        contract.product,
+        contract.quantity,
+    );
     state.contracts.remove(&contract_id);
 
-    // Kapora iade.
+    // Kapora + escrow'daki mal iade.
     if let Some(player) = state.players.get_mut(&seller) {
         player.credit(deposit)?;
+        let _ = player.inventory.add(city, product, qty);
     }
 
     report.push(LogEntry::contract_cancelled(
@@ -241,16 +272,14 @@ fn settle_contract(state: &mut GameState, report: &mut TickReport, tick: Tick, c
         return;
     };
 
-    let seller_has_stock = state
-        .players
-        .get(&seller)
-        .is_some_and(|p| p.inventory.get(delivery_city, product) >= qty);
+    // Mal öneri anında escrow'a alındığı için satıcı tarafı garanti; geriye
+    // tek breach sebebi kalır: alıcının nakdi yetmemesi.
     let buyer_has_cash = state
         .players
         .get(&buyer)
         .is_some_and(|p| p.cash >= total_value);
 
-    if seller_has_stock && buyer_has_cash {
+    if buyer_has_cash {
         let final_state = fulfill_contract(
             state,
             seller,
@@ -265,13 +294,16 @@ fn settle_contract(state: &mut GameState, report: &mut TickReport, tick: Tick, c
         state.contracts.remove(&cid);
         report.push(LogEntry::contract_settled(tick, cid, final_state));
     } else {
-        // Breacher: önce stok yokluğu (satıcı), sonra nakit yokluğu (alıcı).
-        let breacher = if seller_has_stock { buyer } else { seller };
+        // Tek kalan breach sebebi alıcının nakitsizliği. Escrow'daki mal
+        // satıcıya geri döner.
+        if let Some(s) = state.players.get_mut(&seller) {
+            let _ = s.inventory.add(delivery_city, product, qty);
+        }
         let final_state = breach_contract(
             state,
             seller,
             buyer,
-            breacher,
+            buyer,
             seller_deposit,
             buyer_deposit,
         );
@@ -292,11 +324,9 @@ fn fulfill_contract(
     seller_deposit: moneywar_domain::Money,
     buyer_deposit: moneywar_domain::Money,
 ) -> ContractState {
-    // Satıcı: stok düş + (satış bedeli + kendi kaporasının iadesi) kredile.
+    // Satıcı: satış bedeli + kendi kaporasının iadesi. Mal zaten öneri
+    // anında escrow'a alınmıştı, burada tekrar düşülmez.
     if let Some(s) = state.players.get_mut(&seller) {
-        s.inventory
-            .remove(delivery_city, product, qty)
-            .expect("pre-flight validated");
         let _ = s.credit(total_value);
         let _ = s.credit(seller_deposit);
     }
@@ -375,6 +405,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
 
         process_propose_contract(
             &mut s,
@@ -456,6 +487,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         add_player(&mut s, 2, 1_000);
 
         process_propose_contract(
@@ -482,6 +514,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         process_propose_contract(
             &mut s,
             &mut r,
@@ -502,6 +535,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         add_player(&mut s, 2, 1_000);
         add_player(&mut s, 3, 1_000);
 
@@ -533,6 +567,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         add_player(&mut s, 2, 50); // < 100
 
         process_propose_contract(
@@ -556,6 +591,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         process_propose_contract(
             &mut s,
             &mut r,
@@ -579,6 +615,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         add_player(&mut s, 2, 1_000);
         process_propose_contract(
             &mut s,
@@ -600,6 +637,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         add_player(&mut s, 2, 1_000);
 
         process_propose_contract(
@@ -623,6 +661,7 @@ mod tests {
         let mut s = state();
         let mut r = TickReport::new(Tick::new(1));
         add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 10); // escrow: satıcının kontrat malı olmalı
         let total_before: i64 = s.players.values().map(|p| p.cash.as_cents()).sum();
 
         process_propose_contract(
@@ -653,5 +692,193 @@ mod tests {
         process_cancel_contract(&mut s, &mut r, Tick::new(1), cid, PlayerId::new(1)).unwrap();
         let total_after: i64 = s.players.values().map(|p| p.cash.as_cents()).sum();
         assert_eq!(total_before, total_after);
+    }
+
+    // ── Stok escrow'u ────────────────────────────────────────────────────────
+    //
+    // Kontrat teslim anında stoğa bakıyor ama öneri anında kilitlemiyordu:
+    // satıcı arada malı pazarda satabiliyor, teslimde eli boş kalıyordu.
+    // Ölçüm: NPC kontratlarının %78'i breach ile kapanıyordu ve bu yüzden
+    // NPC propose tamamen kapatılmıştı. Escrow bunu yapısal olarak çözer —
+    // satıcı stok yüzünden breach *edemez*, mal zaten kilitlidir.
+
+    /// Satıcıya kontrat miktarı kadar stok ver.
+    fn give_stock(s: &mut GameState, id: u64, qty: u32) {
+        s.players
+            .get_mut(&PlayerId::new(id))
+            .unwrap()
+            .inventory
+            .add(CityId::Istanbul, ProductKind::Kumas, qty)
+            .unwrap();
+    }
+
+    fn stock_of(s: &GameState, id: u64) -> u32 {
+        s.players[&PlayerId::new(id)]
+            .inventory
+            .get(CityId::Istanbul, ProductKind::Kumas)
+    }
+
+    #[test]
+    fn propose_escrows_seller_stock() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 30);
+
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+
+        // 30 - 10 (kontrat miktarı) = 20 serbest kaldı.
+        assert_eq!(stock_of(&s, 1), 20, "kontrat malı kilitlenmeli");
+    }
+
+    #[test]
+    fn propose_rejected_without_enough_stock() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 5); // kontrat 10 istiyor
+
+        let res =
+            process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100));
+        assert!(res.is_err(), "stoğu olmayan satıcı kontrat açamamalı");
+        assert!(s.contracts.is_empty());
+        // Kapora da alınmamalı.
+        assert_eq!(s.players[&PlayerId::new(1)].cash, Money::from_lira(1_000).unwrap());
+    }
+
+    #[test]
+    fn escrowed_stock_cannot_be_sold_twice() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 15);
+
+        // İlk kontrat 10 birim kilitler → 5 kalır.
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+        // İkinci kontrat yine 10 istiyor ama serbest stok 5.
+        let res =
+            process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100));
+        assert!(res.is_err(), "kilitli mal ikinci kez satılamaz");
+        assert_eq!(s.contracts.len(), 1);
+    }
+
+    #[test]
+    fn cancel_returns_escrowed_stock() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        give_stock(&mut s, 1, 30);
+
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+        let cid = *s.contracts.keys().next().unwrap();
+        process_cancel_contract(&mut s, &mut r, Tick::new(1), cid, PlayerId::new(1)).unwrap();
+
+        assert_eq!(stock_of(&s, 1), 30, "iptal malı geri vermeli");
+    }
+
+    #[test]
+    fn fulfilled_contract_moves_escrowed_stock_to_buyer() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        add_player(&mut s, 2, 1_000);
+        give_stock(&mut s, 1, 10);
+
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+        let cid = *s.contracts.keys().next().unwrap();
+        process_accept_contract(&mut s, &mut r, Tick::new(2), cid, PlayerId::new(2)).unwrap();
+
+        // Teslim tick'ine gel.
+        advance_contracts(&mut s, &mut r, Tick::new(10));
+
+        assert_eq!(stock_of(&s, 1), 0, "satıcının malı gitti");
+        assert_eq!(stock_of(&s, 2), 10, "alıcı malı aldı");
+        assert!(s.contracts.is_empty());
+    }
+
+    #[test]
+    fn seller_cannot_breach_on_stock_after_escrow() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        add_player(&mut s, 2, 1_000);
+        give_stock(&mut s, 1, 10);
+
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+        let cid = *s.contracts.keys().next().unwrap();
+        process_accept_contract(&mut s, &mut r, Tick::new(2), cid, PlayerId::new(2)).unwrap();
+
+        // Satıcı arada tüm serbest stoğunu boşaltsa bile kontrat malı kilitli:
+        // serbest stok zaten 0, yapacak bir şey yok. Teslim yine de gerçekleşmeli.
+        advance_contracts(&mut s, &mut r, Tick::new(10));
+
+        let settled = r.entries.iter().rev().find_map(|e| match &e.event {
+            crate::LogEvent::ContractSettled { final_state, .. } => Some(*final_state),
+            _ => None,
+        });
+        assert_eq!(
+            settled,
+            Some(ContractState::Fulfilled),
+            "escrow sonrası satıcı stok yüzünden breach edemez"
+        );
+    }
+
+    #[test]
+    fn buyer_breach_returns_escrowed_stock_to_seller() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        add_player(&mut s, 2, 1_000);
+        give_stock(&mut s, 1, 10);
+
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+        let cid = *s.contracts.keys().next().unwrap();
+        process_accept_contract(&mut s, &mut r, Tick::new(2), cid, PlayerId::new(2)).unwrap();
+
+        // Alıcının nakdini sıfırla → teslimde ödeyemez, breach eder.
+        {
+            let b = s.players.get_mut(&PlayerId::new(2)).unwrap();
+            let all = b.cash;
+            b.debit(all).unwrap();
+        }
+        advance_contracts(&mut s, &mut r, Tick::new(10));
+
+        assert_eq!(stock_of(&s, 1), 10, "breach'te mal satıcıya dönmeli");
+        assert_eq!(stock_of(&s, 2), 0);
+    }
+
+    #[test]
+    fn total_stock_is_conserved_across_contract_lifecycle() {
+        let mut s = state();
+        let mut r = TickReport::new(Tick::new(1));
+        add_player(&mut s, 1, 1_000);
+        add_player(&mut s, 2, 1_000);
+        give_stock(&mut s, 1, 25);
+
+        let escrowed = |s: &GameState| -> u64 {
+            s.contracts.values().map(|c| u64::from(c.quantity)).sum()
+        };
+        let visible = |s: &GameState| -> u64 {
+            s.players.values().map(|p| p.inventory.total_units()).sum()
+        };
+        let total = |s: &GameState| visible(s) + escrowed(s);
+        let before = total(&s);
+
+        process_propose_contract(&mut s, &mut r, Tick::new(1), &proposal(1, ListingKind::Public, 100))
+            .unwrap();
+        assert_eq!(total(&s), before, "öneri malı yok etmemeli");
+
+        let cid = *s.contracts.keys().next().unwrap();
+        process_accept_contract(&mut s, &mut r, Tick::new(2), cid, PlayerId::new(2)).unwrap();
+        assert_eq!(total(&s), before, "kabul malı yok etmemeli");
+
+        advance_contracts(&mut s, &mut r, Tick::new(10));
+        assert_eq!(total(&s), before, "teslim malı yok etmemeli");
     }
 }

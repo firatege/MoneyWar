@@ -263,9 +263,11 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         let _ = rich_price;
     }
 
-    // v8.26: NPC kontrat propose kapatıldı (stok escrow eksikliği nedeniyle
-    // %78 breach). İnsan oyuncu manuel propose etsin. NPC accept kalır.
-    // out.extend(enumerate_contract_proposals(state, player));
+    // Kontrat propose v8.26'da kapatılmıştı: stok escrow'u olmadığı için
+    // satıcı malı arada pazarda satıyor, kontratların %78'i breach ile
+    // kapanıyordu. Escrow geldi (mal öneri anında kilitleniyor), satıcı stok
+    // yüzünden artık breach edemez — propose yeniden açıldı.
+    out.extend(enumerate_contract_proposals(state, player));
 
     // v8.25: Sanayici mamul satış kontratlarını kabul et — fab şehrinden
     // mamul al, kervan ile başka şehre götür, market'te sat. İki yönlü
