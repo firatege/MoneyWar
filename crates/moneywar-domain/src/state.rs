@@ -366,6 +366,48 @@ impl GameState {
         self.effective_baseline(city, product)
     }
 
+    /// Bir birim mamul üretmenin **baseline fiyatlarından** maliyeti.
+    ///
+    /// Tarifin tamamı (ana girdi + ek girdiler) seviye-1 batch üzerinden
+    /// fiyatlanır, çıktı birimine bölünür. Ham madde için `None` — tarifi yok.
+    ///
+    /// Neden baseline, piyasa fiyatı değil: bu değer fiyat tabanı olarak
+    /// kullanılacak ve piyasa fiyatından beslenirse geri besleme sarmalı
+    /// kurar (yüksek fill → yüksek ortalama → yüksek taban → daha yüksek
+    /// teklif). Baseline clamp'lı olduğu için sönümlü kalır.
+    ///
+    /// Katman sırası doğal bir DAG'dır: ham → tier-1 → tier-2 → tier-3.
+    /// Ham maddenin tarifi olmadığı için özyineleme değil, tek seviye
+    /// derinlik yeter — girdinin kendi baseline'ı zaten güncel.
+    #[must_use]
+    pub fn recipe_unit_cost(&self, city: CityId, product: ProductKind) -> Option<Money> {
+        let recipe = product.recipe();
+        if recipe.is_empty() {
+            return None;
+        }
+        let batch = i64::from(crate::balance::FACTORY_BATCH_SIZE)
+            * i64::from(product.batch_scale_pct())
+            / 100;
+        let out_units = batch * i64::from(product.output_ratio_pct()) / 100;
+        if out_units <= 0 {
+            return None;
+        }
+
+        let mut total: i64 = 0;
+        for (input, pct) in recipe {
+            let units = batch * i64::from(pct) / 100;
+            if units <= 0 {
+                continue;
+            }
+            let unit_px = self.effective_baseline(city, input)?.as_cents();
+            total = total.saturating_add(unit_px.saturating_mul(units));
+        }
+        if total <= 0 {
+            return None;
+        }
+        Some(Money::from_cents(total / out_units))
+    }
+
     /// Order book'ta `(city, product)` için en yüksek BUY fiyatı + miktarı.
     /// v8.20: Tek doğru kaynak — Tüccar'ın eski lokal `best_bid_in_city`
     /// helper'ı buraya taşındı. NPC pricing (Çiftçi cross, Sanayici cross,
@@ -691,5 +733,90 @@ mod tests {
         }
         // 5 şehir × 3 slot = 15
         assert_eq!(covered.len(), 15);
+    }
+
+    // ── Tarif maliyeti ───────────────────────────────────────────────────────
+
+    fn state_with_prices(prices: &[(ProductKind, i64)]) -> GameState {
+        let mut s = GameState::new(RoomId::new(1), RoomConfig::hizli());
+        for (p, lira) in prices {
+            s.price_baseline
+                .insert((CityId::Istanbul, *p), Money::from_lira(*lira).unwrap());
+        }
+        s
+    }
+
+    #[test]
+    fn raw_material_has_no_recipe_cost() {
+        let s = state_with_prices(&[(ProductKind::Bugday, 5)]);
+        assert!(s.recipe_unit_cost(CityId::Istanbul, ProductKind::Bugday).is_none());
+    }
+
+    #[test]
+    fn single_input_recipe_cost_reflects_yield() {
+        // Un: batch 65 Buğday → %90 verim = 58 Un. 5₺ Buğday ile birim
+        // maliyet = 65×5 / 58 ≈ 5.60₺ — verim kaybı maliyeti yukarı çeker.
+        let s = state_with_prices(&[(ProductKind::Bugday, 5)]);
+        let cost = s
+            .recipe_unit_cost(CityId::Istanbul, ProductKind::Un)
+            .unwrap()
+            .as_cents();
+        assert_eq!(cost, 65 * 500 / 58);
+        assert!(cost > 500, "verim kaybı birim maliyeti girdinin üstüne çıkarmalı");
+    }
+
+    #[test]
+    fn multi_input_recipe_includes_extras_by_percentage() {
+        // Elbise = Kumaş %100 + Boya %40. Ekstra girdi maliyete girmezse
+        // taban eksik hesaplanır.
+        let s = state_with_prices(&[(ProductKind::Kumas, 40), (ProductKind::Boya, 10)]);
+        let with_dye = s
+            .recipe_unit_cost(CityId::Istanbul, ProductKind::Elbise)
+            .unwrap()
+            .as_cents();
+
+        let cheap_dye = state_with_prices(&[(ProductKind::Kumas, 40), (ProductKind::Boya, 1)]);
+        let without = cheap_dye
+            .recipe_unit_cost(CityId::Istanbul, ProductKind::Elbise)
+            .unwrap()
+            .as_cents();
+        assert!(with_dye > without, "ek girdi maliyete yansımalı");
+    }
+
+    #[test]
+    fn recipe_cost_rises_when_inputs_get_more_expensive() {
+        // Tabanın var oluş sebebi: girdi pahalanınca mamul maliyeti artmalı.
+        let cheap = state_with_prices(&[(ProductKind::Bugday, 5)]);
+        let dear = state_with_prices(&[(ProductKind::Bugday, 10)]);
+        let a = cheap.recipe_unit_cost(CityId::Istanbul, ProductKind::Un).unwrap();
+        let b = dear.recipe_unit_cost(CityId::Istanbul, ProductKind::Un).unwrap();
+        assert!(b.as_cents() > a.as_cents() * 19 / 10, "girdi 2× → maliyet ~2×");
+    }
+
+    #[test]
+    fn recipe_cost_is_none_when_an_input_price_is_unknown() {
+        // Ziyafet üç girdili; biri eksikse maliyet uydurulmaz.
+        let s = state_with_prices(&[(ProductKind::Ekmek, 60), (ProductKind::Sarap, 45)]);
+        assert!(s.recipe_unit_cost(CityId::Istanbul, ProductKind::Ziyafet).is_none());
+    }
+
+    #[test]
+    fn deep_chain_cost_accumulates_upward() {
+        // Ziyafet = Ekmek + %50 Şarap + %30 Zeytinyağı. Katalog baz
+        // fiyatlarıyla birim maliyet, katalog satış fiyatının (180₺) altında
+        // kalmalı — yoksa ürün doğuştan zararına.
+        let s = state_with_prices(&[
+            (ProductKind::Ekmek, 60),
+            (ProductKind::Sarap, 45),
+            (ProductKind::Zeytinyagi, 65),
+        ]);
+        let cost = s
+            .recipe_unit_cost(CityId::Istanbul, ProductKind::Ziyafet)
+            .unwrap()
+            .as_cents();
+        let sale = Money::from_lira(ProductKind::Ziyafet.base_price_lira())
+            .unwrap()
+            .as_cents();
+        assert!(cost < sale, "katalog fiyatı maliyeti karşılamalı: {cost} vs {sale}");
     }
 }

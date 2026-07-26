@@ -532,6 +532,36 @@ fn print_balance(outcomes: &[Outcome]) {
         println!("  {line}");
     }
 
+    // ── Üretim marjı ─────────────────────────────────────────────────────────
+    // Mamulün baseline'ı tarif maliyetini karşılıyor mu. Sıfıra yaklaşan ürün
+    // üretilemez hale gelir: fabrikanın girdiye ödeyebileceği tavan çöker,
+    // tüketici girdiyi kapar, zincir orada kopar.
+    let mut margin_rows: std::collections::BTreeMap<&'static str, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    for o in outcomes {
+        for (p, m) in &o.balance.margins {
+            margin_rows.entry(p.display_name()).or_default().push(*m);
+        }
+    }
+    if !margin_rows.is_empty() {
+        let mut rows: Vec<(String, f64)> = margin_rows
+            .into_iter()
+            .map(|(name, v)| {
+                let mean = v.iter().sum::<f64>() / v.len() as f64;
+                (name.to_string(), mean)
+            })
+            .collect();
+        rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        println!("\n  ÜRETİM MARJI (sezon sonu: baseline'ın tarif maliyetini aşma payı)");
+        println!("{:-<95}", "");
+        let line = rows
+            .iter()
+            .map(|(n, m)| format!("{n} %{m:.0}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        println!("  {line}");
+    }
+
     // ── Ürün defteri ─────────────────────────────────────────────────────────
     // Her mal için: kim alıyor, kim satıyor. Zincirin nerede koptuğunu ve
     // ara malın üreticiye mi tüketiciye mi gittiğini gösterir.

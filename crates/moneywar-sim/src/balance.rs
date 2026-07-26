@@ -429,6 +429,31 @@ impl BalanceAccumulator {
             })
             .collect();
 
+        // Üretim marjı: mamulün baseline'ı ile tarif maliyeti arasındaki fark.
+        // Negatife düşen ürün doğuştan zararına — fabrikası girdiyi almaya
+        // gücü yetmez ve zincir orada kopar.
+        let mut margins: Vec<(ProductKind, f64)> = ProductKind::FINISHED_GOODS
+            .iter()
+            .filter_map(|&product| {
+                let per_city: Vec<f64> = moneywar_domain::CityId::ALL
+                    .iter()
+                    .filter_map(|&city| {
+                        let price = state.effective_baseline(city, product)?.as_cents() as f64;
+                        let cost = state.recipe_unit_cost(city, product)?.as_cents() as f64;
+                        if price <= 0.0 {
+                            return None;
+                        }
+                        Some((price - cost) / price * 100.0)
+                    })
+                    .collect();
+                if per_city.is_empty() {
+                    return None;
+                }
+                Some((product, per_city.iter().sum::<f64>() / per_city.len() as f64))
+            })
+            .collect();
+        margins.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
         // Fiyat kayması: ürün başına (sezon sonu / sezon başı) baseline oranı,
         // şehirler üzerinden ortalama.
         let mut price_drift: Vec<(ProductKind, f64)> = ProductKind::ALL
@@ -527,6 +552,7 @@ impl BalanceAccumulator {
         BalanceReport {
             roles,
             product_flow,
+            margins,
             raw_buy_by_role,
             churn_by_role,
             money,
@@ -603,6 +629,9 @@ pub struct BalanceReport {
     pub raw_buy_by_role: Vec<(NpcKind, u64)>,
     /// Ürün başına alıcı/satıcı rol dökümü.
     pub product_flow: Vec<ProductLedger>,
+    /// Mamul → üretim marjı yüzdesi (`(baseline − tarif maliyeti) / baseline`),
+    /// artan sırada. Negatif = ürün doğuştan zararına.
+    pub margins: Vec<(ProductKind, f64)>,
     /// Rol → çevirme oranı: aldığının ne kadarını **aynı pazarda** geri sattı.
     /// 0 = hep dönüştürüyor/taşıyor, 1 = saf aracılık.
     pub churn_by_role: Vec<(NpcKind, f64)>,
@@ -711,6 +740,7 @@ mod tests {
         BalanceReport {
             roles,
             product_flow: Vec::new(),
+            margins: Vec::new(),
             raw_buy_by_role: Vec::new(),
             churn_by_role: Vec::new(),
             money: MoneyFlow::default(),
