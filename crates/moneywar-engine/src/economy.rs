@@ -264,6 +264,62 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
     }
 }
 
+/// Toplanan işlem vergisini hane halkına dağıt — kamu harcaması kanalı.
+///
+/// Vergi `market.rs`'te alıcıdan ek olarak kesiliyor ama satıcıya
+/// verilmiyordu; aradaki fark yok oluyordu (ölçüm: sezonda ~145K₺ sızıntı).
+/// `EconomyTaxRedistributed` olayı tanımlıydı ama hiç yayınlanmıyordu —
+/// yeniden dağıtım tasarlanmış, bağlanmamıştı.
+///
+/// [`distribute_capex_to_households`] ile aynı bölüştürme kuralı: eşit pay,
+/// artan kuruş ilk haneye. Tek fark bu fonksiyonun ayrı bir olay yayması —
+/// vergi geliri ücretten ayrı izlenebilsin.
+pub(crate) fn distribute_tax_to_households(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    amount: Money,
+) {
+    if !amount.is_positive() {
+        return;
+    }
+    let households: Vec<PlayerId> = state
+        .players
+        .iter()
+        .filter(|(_, p)| p.npc_kind == Some(NpcKind::Alici))
+        .map(|(id, _)| *id)
+        .collect();
+    if households.is_empty() {
+        return;
+    }
+    let n = i64::from(u32::try_from(households.len()).unwrap_or(1));
+    let share = amount.as_cents() / n;
+    let mut remainder = amount.as_cents() - share * n;
+    let mut paid: i64 = 0;
+
+    for pid in &households {
+        let mut cents = share;
+        if remainder > 0 {
+            cents += 1;
+            remainder -= 1;
+        }
+        if cents <= 0 {
+            continue;
+        }
+        if let Some(p) = state.players.get_mut(pid) {
+            let _ = p.credit(Money::from_cents(cents));
+            paid = paid.saturating_add(cents);
+        }
+    }
+    if paid > 0 {
+        report.push(LogEntry::economy_tax_redistributed(
+            tick,
+            Money::from_cents(paid),
+            u32::try_from(households.len()).unwrap_or(0),
+        ));
+    }
+}
+
 /// Sermaye harcamasını hane halkına gelir olarak dağıt.
 ///
 /// Fabrika kurmak, yükseltmek, kervan ya da tarla almak gerçek hayatta parayı
@@ -352,7 +408,7 @@ fn consume_alici_inventory(state: &mut GameState, tick: Tick) {
 /// Maintenance — her fab için Sanayici'den maintenance ücreti çekilir,
 /// sistem dışı atılır (amortisman). Anno 1800 inspiration. Aktif/atıl fark
 /// etmez → boş fab kuran cezalı, akıllı kurulum.
-fn charge_factory_maintenance(state: &mut GameState, _report: &mut TickReport, _tick: Tick) {
+fn charge_factory_maintenance(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     let factories_by_owner: std::collections::BTreeMap<PlayerId, u32> = {
         let mut map = std::collections::BTreeMap::new();
         for f in state.factories.values() {
@@ -360,6 +416,7 @@ fn charge_factory_maintenance(state: &mut GameState, _report: &mut TickReport, _
         }
         map
     };
+    let mut pool_cents: i64 = 0;
     for (owner, count) in factories_by_owner {
         let cost_cents = MAINTENANCE_PER_FACTORY_LIRA
             .saturating_mul(i64::from(count))
@@ -368,9 +425,14 @@ fn charge_factory_maintenance(state: &mut GameState, _report: &mut TickReport, _
             let actual = cost_cents.min(p.cash.as_cents());
             if actual > 0 {
                 let _ = p.debit(Money::from_cents(actual));
+                pool_cents = pool_cents.saturating_add(actual);
             }
         }
     }
+
+    // Bakım da bir ödemedir: gerçekte tamir ekibine ve yedek parçaya gider.
+    // "Amortisman" diye yok etmek ekonomiden sezonda ~250K₺ sızdırıyordu.
+    distribute_capex_to_households(state, report, tick, Money::from_cents(pool_cents));
 }
 
 /// Çiftçi NPC'lere periyodik mahsul üretir. **Şehir-tabanlı 2-katmanlı**

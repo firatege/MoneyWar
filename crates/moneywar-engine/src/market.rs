@@ -70,14 +70,28 @@ pub(crate) fn clear_markets(state: &mut GameState, report: &mut TickReport, tick
     // Tek deterministic RNG bütün bucket'lar için — bucket sırası BTreeMap
     // iteration deterministik, RNG state ilerler ama hepsi aynı seed'den.
     let mut rng = crate::rng::rng_for(state.room_id, tick);
+    let mut tax_pool_cents: i64 = 0;
     for key in keys {
-        clear_bucket(state, report, tick, key, threshold, &mut rng);
+        clear_bucket(state, report, &mut tax_pool_cents, tick, key, threshold, &mut rng);
     }
+
+    // Toplanan işlem vergisi hane halkına dağıtılır. Eskiden yok ediliyordu
+    // (sezonda ~145K₺ sızıntı) ve `EconomyTaxRedistributed` olayı tanımlı ama
+    // hiç yayınlanmıyordu — yeniden dağıtım tasarlanmış, bağlanmamıştı.
+    // Gerçek ekonomide vergi kamu harcamasına dönüp talep olarak geri gelir.
+    crate::economy::distribute_tax_to_households(
+        state,
+        report,
+        tick,
+        Money::from_cents(tax_pool_cents),
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn clear_bucket(
     state: &mut GameState,
     report: &mut TickReport,
+    tax_pool_cents: &mut i64,
     tick: Tick,
     key: (CityId, ProductKind),
     threshold: u32,
@@ -110,7 +124,9 @@ fn clear_bucket(
     let matched_qty: u32 = fills.iter().map(|f| f.quantity).sum();
 
     // Settlement: pay-as-bid + saturation half tier.
-    let saturation_qty = settle_fills(state, report, tick, city, product, &fills, threshold);
+    let saturation_qty = settle_fills(
+        state, report, tick, city, product, &fills, threshold, tax_pool_cents,
+    );
 
     // price_history: matched fill'lerin ortalama fiyatı (rolling avg referansı).
     let avg_price = if matched_qty > 0 {
@@ -446,6 +462,7 @@ fn persist_leftover_orders(
 
 /// Fills'i settle et. **Pay-as-bid**: her fill kendi `price`'ında transfer.
 /// Saturation eşik üstü segment yarı fiyatta settle olur (anti-snowball).
+#[allow(clippy::too_many_arguments)]
 fn settle_fills(
     state: &mut GameState,
     report: &mut TickReport,
@@ -454,6 +471,7 @@ fn settle_fills(
     product: ProductKind,
     fills: &[Fill],
     threshold: u32,
+    tax_pool_cents: &mut i64,
 ) -> u32 {
     let mut cum: u32 = 0;
     let mut saturation_qty: u32 = 0;
@@ -466,12 +484,14 @@ fn settle_fills(
         if full_qty > 0 {
             settle_segment(
                 state, report, tick, city, product, fill, full_qty, fill.price,
+                tax_pool_cents,
             );
         }
         if half_qty > 0 {
             let half_price = Money::from_cents(fill.price.as_cents() / 2);
             settle_segment(
                 state, report, tick, city, product, fill, half_qty, half_price,
+                tax_pool_cents,
             );
         }
     }
@@ -510,6 +530,7 @@ fn settle_segment(
     fill: &Fill,
     qty: u32,
     price: Money,
+    tax_pool_cents: &mut i64,
 ) {
     // Toplam değer = qty × price.
     let Ok(total) = price.checked_mul_scalar(i64::from(qty)) else {
@@ -533,6 +554,10 @@ fn settle_segment(
     let city_tax_pct = city.transaction_tax_pct();
     let tax_cents = total.as_cents().saturating_mul(city_tax_pct) / 100;
     let tax = Money::from_cents(tax_cents.max(0));
+    // Vergi yok edilmiyor: tick sonunda hane halkına dağıtılıyor
+    // (`clear_markets`). Kamu harcaması gerçek ekonomide talep olarak geri
+    // döner; burada sızıntı olarak duruyordu.
+    *tax_pool_cents = tax_pool_cents.saturating_add(tax.as_cents().max(0));
     let Ok(total_with_tax) = total.checked_add(tax) else {
         report.push(LogEntry::fill_rejected(
             tick,
