@@ -53,7 +53,7 @@ fn default_employees() -> u32 {
 impl Factory {
     /// Her fabrika tick başına bu kadar ham madde tüketir / bitmiş ürün üretir.
     /// Değer [`crate::balance::FACTORY_BATCH_SIZE`]'tan gelir.
-    pub const BATCH_SIZE: u32 = crate::balance::FACTORY_BATCH_SIZE;
+    pub const BATCH_SIZE: u32 = crate::balance::scaled_output(crate::balance::FACTORY_BATCH_SIZE);
 
     /// Üretim süresi — batch başlatıldıktan kaç tick sonra biter.
     /// Değer [`crate::balance::FACTORY_PRODUCTION_TICKS`]'ten gelir.

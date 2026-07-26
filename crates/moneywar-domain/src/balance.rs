@@ -53,6 +53,32 @@
 /// [`ProductKind::batch_scale_pct`]: crate::ProductKind::batch_scale_pct
 pub const FACTORY_BATCH_SIZE: u32 = 65;
 
+/// **Reel üretim ölçeği** (yüzde). Fabrika batch'i, hasat ve özel çiftlik
+/// çıktısının üçünü birden çarpar. 100 = bugünkü seviye.
+///
+/// # Neden tek bir ölçek
+///
+/// Ekonomi kalıcı kıtlıkta: emir defterinde talep arzın 3-22 katı. Bu
+/// "fiyat ne olsun" oyununu "mal var mı" oyununa çeviriyor — kim önce
+/// davranırsa kapıyor, fabrika girdisini tüketiciye kaptırıyor, zincirin
+/// tepesi hiç dolmuyor (Ziyafet %13 karşılama).
+///
+/// Bu ölçek **yalnız malı** büyütür, parayı değil. Para arzı sabit kaldığı
+/// için mal paraya göre bollaşır: fiyat düşer, bağlayıcı kısıt "stokta
+/// var mı"dan "ne kadar ödemeye razısın"a kayar. Amaç kıtlığı yok etmek
+/// değil, **nadirleştirmek** — asıl olay arz/talep dalgalanması olsun.
+///
+/// Ölçeği tek sabitte tutmak şart: üçü ayrı ayrı büyütülürse zincirin bir
+/// halkası ötekini besleyemez hale gelir.
+pub const PRODUCTION_SCALE_PCT: u32 = 100;
+
+/// Ölçek uygulanmış miktar. Sıfıra yuvarlamayı önler.
+#[must_use]
+pub const fn scaled_output(qty: u32) -> u32 {
+    let out = qty * PRODUCTION_SCALE_PCT / 100;
+    if out == 0 { 1 } else { out }
+}
+
 // =============================================================================
 // Emek
 // =============================================================================
@@ -92,6 +118,21 @@ pub const EMPLOYEES_PER_FACTORY_L3: u32 = 6;
 /// ikiye katlanıyordu ve Sanayici `PnL`'i 102K → 80K'ya düşüyordu.
 /// 60₺ eski toplam yükü gerçekten korur.
 pub const WAGE_PER_EMPLOYEE_LIRA: i64 = 60;
+
+/// Ücretin reel üretim ölçeğine göre düzeltilmiş hali.
+///
+/// [`PRODUCTION_SCALE_PCT`] yalnız malı büyütür. Ücret sabit kalırsa hane
+/// halkı 2× malı aynı parayla almak zorunda kalır ve batar — ölçümde
+/// ölçek ×200'de Alıcı -12K'dan -75K'ya düşmüştü. İşgücü havuzu
+/// [`LABOR_POOL_SIZE`] ile sabit olduğu için istihdam da büyüyemiyor;
+/// tek ayar noktası ücretin kendisi.
+///
+/// Ücret transferdir, basım değil: Sanayici öder, Alıcı alır. Para arzı
+/// değişmez, yalnız üretimle tüketim aynı ölçekte kalır.
+#[must_use]
+pub const fn wage_per_employee_lira() -> i64 {
+    WAGE_PER_EMPLOYEE_LIRA * PRODUCTION_SCALE_PCT as i64 / 100
+}
 
 /// Üreticinin bir batch'ten beklediği asgari kâr marjı (yüzde). Girdi
 /// bütçesi = mamul geliri × `(100 − bu)`.
@@ -263,6 +304,50 @@ pub const SHOCK_MACRO_PCT: u32 = 35;
 
 /// NPC bankasının sabit faiz oranı (§7, basit yüzde).
 pub const LOAN_INTEREST_RATE_PERCENT: u32 = 15;
+
+/// Ham madde başlangıç fiyatı çarpanı (yüzde). 100 = bugünkü seviye.
+///
+/// # Neden ayrı bir çarpan
+///
+/// Ham madde baseline'ları `world::seed_baselines` içinde elle gömülüydü
+/// (uzmanlık şehri 4₺, Buğday 9₺, diğerleri 7₺) ve `base_price_lira()`
+/// ham ürünler için hiç okunmuyordu — ham fiyatını değiştirmeye çalışmak
+/// ekonomiyi zerre etkilemiyordu (dört farklı seviye birebir aynı sonucu
+/// verdi, kablonun kopuk olduğu böyle çıktı).
+///
+/// # Ne işe yarıyor
+///
+/// Marj zincir boyunca ters: tier-1 %70-82, tier-3 %37. Sebep ham maddenin
+/// mamule göre çok ucuz olması — dip bedavaya kâr ediyor, NPC rasyonel
+/// davranıp oraya fabrika kuruyor, zincirin tepesi aç kalıyor.
+///
+/// Merdiveni **tepeden** düzeltmek denendi ve dengeyi yıktı: mamul fiyatını
+/// yükseltmek değeri tüketiciden üreticiye aktarıyordu. Bu çarpan aynı
+/// merdiveni **dipten** düzeltir — mamul fiyatına dokunmaz, dolayısıyla
+/// Alıcı'nın harcaması sabit kalır.
+///
+/// # Denendi: işe yaramadı, 100'de bırakıldı
+///
+/// 30 oyun × 350 tick:
+///
+/// ```text
+///        açlık  makas  Tüccar  Çiftçi  Sanayici  Spekül  Alıcı
+/// ×100     %55   3.1x  239983  135247     91488   89721  -11967
+/// ×150     %56   2.9x  208676  148276     80723   82591  -16790
+/// ×200     %60   3.7x  184285  158212     66279   73180  -30587
+/// ×250     %62   3.9x  155923  162271     54439   66395  -41905
+/// ```
+///
+/// Girdi açlığı **düşmedi, arttı**. Yani "marj ters olduğu için NPC dibe
+/// fabrika kuruyor, tepe aç kalıyor" hipotezi yanlış. Gerçek darboğaz
+/// rekabet: fabrika ara malını tüketiciye kaptırıyor (Alıcı Un'un %81'ini
+/// yiyor, bkz. `chain_probe`). Girdiyi pahalılaştırmak fabrikanın alım
+/// gücünü daha da kısıyor.
+///
+/// Kaldıraç yerinde duruyor — artık gerçekten bağlı ve ölçülebilir; ama
+/// bu sorunun cevabı burada değil, fabrikanın tüketiciye karşı teklif
+/// gücünde (`derived_input_ceiling`).
+pub const RAW_BASELINE_MULT_PCT: i64 = 100;
 
 // =============================================================================
 // Skor

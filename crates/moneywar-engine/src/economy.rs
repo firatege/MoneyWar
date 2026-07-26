@@ -46,7 +46,7 @@ const STORAGE_COST_SANAYICI_CENTS: i64 = 1;
 /// ücret kadroya bağlı: firma işçi tutar, üretimi artar, ama ücret yükü de
 /// artar — satamazsa batar. Seviye-1 kadrosu 3 kişi olduğundan kişi başı
 /// 100₺ eski toplam akışı yaklaşık korur.
-const WAGE_PER_EMPLOYEE_LIRA: i64 = moneywar_domain::balance::WAGE_PER_EMPLOYEE_LIRA;
+const WAGE_PER_EMPLOYEE_LIRA: i64 = moneywar_domain::balance::wage_per_employee_lira();
 
 /// Fab maintenance (işletme gideri) periyodu.
 const MAINTENANCE_PERIOD: u32 = 10;
@@ -503,18 +503,26 @@ fn harvest_ciftci_stock(
                 100
             }
         };
-        let base_qty = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+        // Hasat da reel üretim ölçeğine tabi — fabrika batch'i büyürken
+        // ham madde arzı sabit kalırsa zincir daha da sıkışır.
+        let base_qty = moneywar_domain::balance::scaled_output(
+            rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
+        );
         let prime_qty = (base_qty * price_factor_pct as u32 / 100).max(1);
 
         let secondary = state.city_secondary.get(&city).copied();
         let secondary_qty = secondary.map(|_| {
-            let base = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+            let base = moneywar_domain::balance::scaled_output(
+                rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
+            );
             base / 4
         });
 
         let demand = state.city_demand.get(&city).copied();
         let demand_qty = demand.map(|_| {
-            let base = rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX);
+            let base = moneywar_domain::balance::scaled_output(
+                rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
+            );
             base / 4
         });
 

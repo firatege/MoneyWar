@@ -48,6 +48,13 @@ fn seed_baselines(s: &mut GameState) {
             } else {
                 7
             };
+            // Ham maddeye çarpan uygulanır; mamul fiyatı dokunulmaz kalır.
+            // Merdiveni dipten düzeltmenin tek kaldıracı bu.
+            let lira = if product.is_finished() {
+                lira
+            } else {
+                (lira * moneywar_domain::balance::RAW_BASELINE_MULT_PCT / 100).max(1)
+            };
             let baseline = Money::from_lira(lira).unwrap_or(Money::ZERO);
             s.price_baseline.insert((city, product), baseline);
             s.price_baseline_initial.insert((city, product), baseline);

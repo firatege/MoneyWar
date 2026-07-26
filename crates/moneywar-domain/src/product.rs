@@ -279,14 +279,22 @@ impl ProductKind {
     #[must_use]
     pub const fn alici_consume_pct(self) -> u32 {
         match self {
-            Self::Un => 20,       // temel gıda, hızlı tüketim
-            Self::Kumas => 15,    // eski CONSUME_PCT — stok baskısı Sanayici'yi eziyor
-            Self::Zeytinyagi => 8, // lüks ama çok düşük olunca stok birikti
-            Self::Sarap => 10,
-            // Üst katman: az ama iştahlı talep — kıtlık primi burada doğar.
-            Self::Elbise => 18,
-            Self::Ekmek => 25,
-            Self::Ziyafet => 30,
+            // ── Ara mallar: birinin girdisi ───────────────────────────────
+            // Bunları tüketici **fabrikayla yarışarak** alıyor ve yarışı
+            // tüketici kazanıyor. Ölçüm: sezonda 3.248 Ekmek üretiliyor,
+            // Alıcı 4.240'ını istiyor — Ziyafet fabrikasına hiç kalmıyor,
+            // 1.340 kez girdisiz duruyor ve tepe katman %13 karşılamada.
+            // (bkz. `moneywar-web/tests/chain_probe.rs`)
+            Self::Un => 14,
+            Self::Kumas => 11,
+            Self::Zeytinyagi => 6,
+            Self::Sarap => 7,
+            Self::Ekmek => 18,
+            // ── Nihai mallar: kimsenin girdisi değil ──────────────────────
+            // İştah buraya kaydırıldı; tüketici zincirin ucunu tüketsin,
+            // ortasını değil.
+            Self::Elbise => 24,
+            Self::Ziyafet => 40,
             _ => 0,
         }
     }

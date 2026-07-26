@@ -48,7 +48,7 @@ impl PrivateFarm {
     /// birebir aynı sonucu verdi, kablonun kopuk olduğu böyle çıktı).
     #[must_use]
     pub const fn output_per_tick(&self) -> u32 {
-        let base = crate::balance::PRIVATE_FARM_OUTPUT_PER_TICK;
+        let base = crate::balance::scaled_output(crate::balance::PRIVATE_FARM_OUTPUT_PER_TICK);
         match self.level {
             1 => base,
             2 => base * 7 / 4,
