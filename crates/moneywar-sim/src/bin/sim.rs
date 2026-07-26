@@ -532,6 +532,46 @@ fn print_balance(outcomes: &[Outcome]) {
         println!("  {line}");
     }
 
+    // ── Ürün defteri ─────────────────────────────────────────────────────────
+    // Her mal için: kim alıyor, kim satıyor. Zincirin nerede koptuğunu ve
+    // ara malın üreticiye mi tüketiciye mi gittiğini gösterir.
+    let mut ledger: std::collections::BTreeMap<&'static str, (u64, std::collections::BTreeMap<&'static str, u64>, std::collections::BTreeMap<&'static str, u64>)> =
+        std::collections::BTreeMap::new();
+    for o in outcomes {
+        for pl in &o.balance.product_flow {
+            let e = ledger.entry(pl.product.display_name()).or_default();
+            e.0 += pl.matched;
+            for (k, v) in &pl.buyers {
+                *e.1.entry(k.label()).or_default() += v;
+            }
+            for (k, v) in &pl.sellers {
+                *e.2.entry(k.label()).or_default() += v;
+            }
+        }
+    }
+    if !ledger.is_empty() {
+        println!("\n  ÜRÜN DEFTERİ — kim alıyor, kim satıyor (oyun başına ort. birim)");
+        println!("{:>16}  {:>9}   {:<32} {}", "ürün", "eşleşen", "ALAN %", "SATAN %");
+        println!("{:-<95}", "");
+        let pct = |m: &std::collections::BTreeMap<&'static str, u64>| -> String {
+            let tot: u64 = m.values().sum();
+            if tot == 0 { return "—".into(); }
+            let mut v: Vec<_> = m.iter().collect();
+            v.sort_by(|a, b| b.1.cmp(a.1));
+            v.iter().take(3)
+                .map(|(k, n)| format!("{k} {:.0}", **n as f64 / tot as f64 * 100.0))
+                .collect::<Vec<_>>().join(" · ")
+        };
+        let mut rows: Vec<_> = ledger.into_iter().collect();
+        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        for (name, (matched, buyers, sellers)) in rows {
+            println!(
+                "{:>16}  {:>9.0}   {:<32} {}",
+                name, matched as f64 / n_games, pct(&buyers), pct(&sellers)
+            );
+        }
+    }
+
     // ── Çevirme oranı ────────────────────────────────────────────────────────
     // Aldığının ne kadarını aynı pazarda geri sattı. Üretici için düşük olmalı
     // (aldığı hammaddeyi tüketir), aracı için yüksek. Tüccar'ın kârı taşımadan

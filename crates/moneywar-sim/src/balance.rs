@@ -109,6 +109,9 @@ pub struct BalanceAccumulator {
     /// Rol → (şehir, ürün) → (alınan, satılan). Aynı pazarda hem alıp hem
     /// satmak = çevirme (flip): mal ne dönüştürülüyor ne taşınıyor.
     churn: BTreeMap<NpcKind, ChurnBuckets>,
+    /// Ürün → rol → (alınan, satılan) birim. "Bu malı kim üretip kim
+    /// tüketiyor" defteri — zincirin nerede koptuğunu gösterir.
+    product_flow: BTreeMap<ProductKind, BTreeMap<NpcKind, (u64, u64)>>,
 
     // ── Para akışı (emek piyasası / banka çalışması için zemin) ───────────────
     /// Maaş + ücret olarak dağıtılan toplam (cent). Şu an iki kanal karışık:
@@ -125,6 +128,18 @@ pub struct BalanceAccumulator {
     opex_cents: i64,
     /// Tick örnekleriyle toplam nakit arzı (cent). Deflasyon/enflasyon eğrisi.
     money_samples: Vec<i64>,
+}
+
+/// Bir ürünün alıcı/satıcı dökümü — "kim üretiyor, kim tüketiyor".
+#[derive(Debug, Clone)]
+pub struct ProductLedger {
+    pub product: ProductKind,
+    /// El değiştiren toplam birim.
+    pub matched: u64,
+    /// Rol → alınan birim, azalan.
+    pub buyers: Vec<(NpcKind, u64)>,
+    /// Rol → satılan birim, azalan.
+    pub sellers: Vec<(NpcKind, u64)>,
 }
 
 /// Bir rolün pazar başına (alınan, satılan) miktarı.
@@ -285,6 +300,14 @@ impl BalanceAccumulator {
                         .entry((*city, *product))
                         .or_default()
                         .1 += q;
+                }
+                // Ürün defteri: bu malı kim alıp kim satıyor.
+                let pf = self.product_flow.entry(*product).or_default();
+                if let Some(kind) = kind_of(buyer) {
+                    pf.entry(kind).or_default().0 += q;
+                }
+                if let Some(kind) = kind_of(seller) {
+                    pf.entry(kind).or_default().1 += q;
                 }
             }
             LogEvent::OrderExpired {
@@ -482,8 +505,28 @@ impl BalanceAccumulator {
             opex: self.opex_cents,
         };
 
+        // Ürün defteri: rol payları, akış büyüklüğüne göre sıralı.
+        let product_flow = ProductKind::ALL
+            .iter()
+            .filter_map(|p| {
+                let per_role = self.product_flow.get(p)?;
+                let total: u64 = per_role.values().map(|(b, _)| *b).sum();
+                if total == 0 {
+                    return None;
+                }
+                let mut buyers: Vec<(NpcKind, u64)> =
+                    per_role.iter().map(|(k, (b, _))| (*k, *b)).filter(|(_, v)| *v > 0).collect();
+                let mut sellers: Vec<(NpcKind, u64)> =
+                    per_role.iter().map(|(k, (_, s))| (*k, *s)).filter(|(_, v)| *v > 0).collect();
+                buyers.sort_by(|a, b| b.1.cmp(&a.1));
+                sellers.sort_by(|a, b| b.1.cmp(&a.1));
+                Some(ProductLedger { product: *p, matched: total, buyers, sellers })
+            })
+            .collect();
+
         BalanceReport {
             roles,
+            product_flow,
             raw_buy_by_role,
             churn_by_role,
             money,
@@ -558,6 +601,8 @@ pub struct BalanceReport {
     pub market: Vec<(ProductKind, MarketFlow)>,
     /// Rol → satın alınan ham madde birimi ([`ROLE_ORDER`] sırasında).
     pub raw_buy_by_role: Vec<(NpcKind, u64)>,
+    /// Ürün başına alıcı/satıcı rol dökümü.
+    pub product_flow: Vec<ProductLedger>,
     /// Rol → çevirme oranı: aldığının ne kadarını **aynı pazarda** geri sattı.
     /// 0 = hep dönüştürüyor/taşıyor, 1 = saf aracılık.
     pub churn_by_role: Vec<(NpcKind, f64)>,
@@ -665,6 +710,7 @@ mod tests {
     fn report_of(roles: Vec<RoleBalance>) -> BalanceReport {
         BalanceReport {
             roles,
+            product_flow: Vec::new(),
             raw_buy_by_role: Vec::new(),
             churn_by_role: Vec::new(),
             money: MoneyFlow::default(),
