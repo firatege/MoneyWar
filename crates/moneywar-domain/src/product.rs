@@ -82,6 +82,10 @@ impl NeedTier {
     /// Ekmek bitmişse hane pazarlık etmez; şarap pahalıysa o hafta içmez.
     /// Lüksün sıfır olması fiyat sarmalına karşı da fren: en pahalı mallar
     /// tüketicinin primiyle yukarı çekilemez.
+    ///
+    /// Süpürüldü (40 oyun × 350 tick, rol makası): lüks primi %0 → 3,3× ·
+    /// %5 → 3,6× · %10 → 3,6×. Sıfır hem en dar makas hem en düşük fiyat
+    /// kayması; prim vermek yalnız Tüccar'ı besliyor.
     #[must_use]
     pub const fn max_premium_pct(self) -> i64 {
         match self {
