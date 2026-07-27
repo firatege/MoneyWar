@@ -617,6 +617,28 @@ impl LogEntry {
         }
     }
 
+    #[must_use]
+    pub fn loan_restructured(
+        tick: Tick,
+        borrower: PlayerId,
+        loan_id: LoanId,
+        collected: Money,
+        remaining: Money,
+        new_due_tick: Tick,
+    ) -> Self {
+        Self {
+            tick,
+            actor: Some(borrower),
+            event: LogEvent::LoanRestructured {
+                loan_id,
+                borrower,
+                collected,
+                remaining,
+                new_due_tick,
+            },
+        }
+    }
+
     /// Kontrat durum geçişi (5B — delivery settlement).
     #[must_use]
     pub fn contract_settled(
@@ -1021,6 +1043,17 @@ pub enum LogEvent {
         borrower: PlayerId,
         seized: Money,
         unpaid_balance: Money,
+    },
+
+    /// Kredi yeniden yapılandırıldı — vadesini kaçıran firmadan işletme
+    /// sermayesi üstü nakit tahsil edildi, kalan borç yeni vadeye taşındı.
+    /// Temerrüt **değildir**: firma ayakta, banka alacağını sürdürüyor.
+    LoanRestructured {
+        loan_id: LoanId,
+        borrower: PlayerId,
+        collected: Money,
+        remaining: Money,
+        new_due_tick: Tick,
     },
 
     /// Oyuncu haber tier aboneliği değiştirdi. Recurring fee — tick başına

@@ -25,6 +25,13 @@ pub struct Loan {
     /// (Plan v4 closed loop).
     #[serde(default)]
     pub lender: Option<PlayerId>,
+    /// Kaç kez yeniden yapılandırıldı.
+    ///
+    /// Vadesinde ödeyemeyen firma [`Loan::MAX_RESTRUCTURES`] kez vade uzatımı
+    /// alır: eldeki nakdin işletme sermayesi üstündeki kısmı borca sayılır,
+    /// kalan yeni vadeye devredilir. Ondan sonraki başarısızlık temerrüt.
+    #[serde(default)]
+    pub restructures: u8,
 }
 
 impl Loan {
@@ -56,7 +63,50 @@ impl Loan {
             due_tick,
             repaid: false,
             lender: None,
+            restructures: 0,
         })
+    }
+
+    /// Bir kredi en fazla kaç kez yeniden yapılandırılabilir.
+    ///
+    /// Bir kez: vadesini kaçıran firmaya nefes aldırmak yeterli. Sınırsız
+    /// uzatma "bedelsiz kurtarma"ya geri döner — borç hiç ödenmezdi.
+    pub const MAX_RESTRUCTURES: u8 = 1;
+
+    /// Bu kredi yeniden yapılandırılabilir mi (hakkı kaldı mı)?
+    #[must_use]
+    pub const fn can_restructure(&self) -> bool {
+        self.restructures < Self::MAX_RESTRUCTURES
+    }
+
+    /// Vadesinde ödenemeyen krediyi yeniden yapılandır: kalan borç yeni
+    /// anapara olur, vade `new_due`'ya taşınır, hak bir azalır.
+    ///
+    /// Faiz kalan bakiye üzerinden yeniden işler — gerçek bir yapılandırmada
+    /// olduğu gibi.
+    pub fn restructure(&mut self, remaining: Money, taken_at: Tick, new_due: Tick) -> Result<(), DomainError> {
+        if !self.can_restructure() {
+            return Err(DomainError::InvalidTransition {
+                entity: "loan",
+                from: "Restructured",
+                to: "Restructured (again)",
+            });
+        }
+        if !remaining.is_positive() {
+            return Err(DomainError::Validation(format!(
+                "restructure remaining must be positive, got {remaining}"
+            )));
+        }
+        if !taken_at.is_before(new_due) {
+            return Err(DomainError::Validation(
+                "restructure new_due must be strictly after taken_at".into(),
+            ));
+        }
+        self.principal = remaining;
+        self.take_tick = taken_at;
+        self.due_tick = new_due;
+        self.restructures += 1;
+        Ok(())
     }
 
     /// Builder-style — borç vericiyi (Banka NPC) set eder.

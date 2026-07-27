@@ -68,11 +68,13 @@ fn loan_manual_repay_with_sufficient_funds() {
 }
 
 #[test]
-fn overdue_loan_auto_settles_as_default_when_cash_insufficient() {
+fn overdue_loan_restructures_when_cash_insufficient() {
+    // Cash starter = 100₺. Loan 1000₺ al → cash 1100₺, total_due = 1150₺.
+    // Vadede nakit yetmiyor: eskiden burası doğrudan temerrüttü ve tek
+    // temerrüt firmayı iflasa götürüyordu. Artık ilk kaçırma yapılandırma —
+    // işletme sermayesi tabanı (1000₺) üstündeki 100₺ tahsil edilir, kalan
+    // 1050₺ yeni vadeye taşınır.
     let s0 = init_state();
-    // Cash starter = 100₺. Loan 1000₺ al → cash 1100. Sonra total_due=1150 ama oyuncu parayı harcadı...
-    // Burada basit: principal'ı al, tick geçtikçe nakit artmıyor, due_tick'te
-    // 1150 gerekli ama 1100 var → default.
     let (s1, _) = advance_tick(
         &s0,
         &[Command::TakeLoan {
@@ -89,22 +91,33 @@ fn overdue_loan_auto_settles_as_default_when_cash_insufficient() {
     let s3 = advance_tick(&s2, &[]).unwrap().0;
     let (s4, r4) = advance_tick(&s3, &[]).unwrap();
 
-    assert!(s4.loans.is_empty(), "overdue loan removed");
-    // Cash tümü çekildi → 0.
-    assert_eq!(s4.players[&PlayerId::new(1)].cash, Money::ZERO);
+    assert_eq!(s4.loans.len(), 1, "yapılandırılan kredi açık kalır");
+    assert!(
+        s4.intrigue.loan_defaults.is_empty(),
+        "ilk kaçırma temerrüt sayılmaz"
+    );
+    // Taban firmada kalır — kasası sıfırlanan fabrika girdi alamaz.
+    assert_eq!(
+        s4.players[&PlayerId::new(1)].cash,
+        Money::from_lira(1_000).unwrap()
+    );
 
-    let defaulted = r4.entries.iter().any(|e| match &e.event {
-        moneywar_engine::LogEvent::LoanDefaulted {
-            seized,
-            unpaid_balance,
+    let loan = &s4.loans[&lid];
+    assert_eq!(loan.restructures, 1);
+    assert_eq!(loan.principal, Money::from_lira(1_050).unwrap());
+
+    let restructured = r4.entries.iter().any(|e| match &e.event {
+        moneywar_engine::LogEvent::LoanRestructured {
             loan_id,
+            collected,
+            remaining,
             ..
         } => {
             *loan_id == lid
-                && *seized == Money::from_lira(1_100).unwrap()
-                && *unpaid_balance == Money::from_lira(50).unwrap()
+                && *collected == Money::from_lira(100).unwrap()
+                && *remaining == Money::from_lira(1_050).unwrap()
         }
         _ => false,
     });
-    assert!(defaulted, "expected LoanDefaulted event");
+    assert!(restructured, "expected LoanRestructured event");
 }
