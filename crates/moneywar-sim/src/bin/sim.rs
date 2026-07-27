@@ -56,6 +56,13 @@ struct Config {
     ticks: u32,
     base_seed: u64,
     out_dir: PathBuf,
+    /// Oyun başına tick-by-tick log dosyası yazılsın mı (`--no-log` ile kapanır).
+    ///
+    /// Bir oyunun log'u ~213 bin satır / ~46 MB: her emrin, eşleşmenin ve
+    /// reddin tam debug dökümü. 40 oyunluk bir denge süpürmesi 1,7 GB üretir
+    /// ve süpürmede okunan tek şey özet tablodur. Parametre taraması yaparken
+    /// kapat; tek oyunu incelerken açık bırak.
+    write_log: bool,
 }
 
 fn money_to_lira(m: Money) -> f64 {
@@ -87,7 +94,7 @@ fn main() {
     };
     let elapsed = started.elapsed();
 
-    print_summary(&outcomes, elapsed.as_secs_f64());
+    print_summary(&outcomes, elapsed.as_secs_f64(), cfg.write_log);
 }
 
 /// Oyun `i` (0-tabanlı) için base seed. i=0 + varsayılan taban → frontend oyunu.
@@ -108,7 +115,10 @@ fn run_parallel(cfg: &Config) -> Vec<Outcome> {
             let ticks = cfg.ticks;
             let out_dir = cfg.out_dir.clone();
             let is_frontend = i == 0 && cfg.base_seed == DEFAULT_SEED;
-            thread::spawn(move || run_game_inner(i, seed, ticks, &out_dir, is_frontend))
+            let write_log = cfg.write_log;
+            thread::spawn(move || {
+                run_game_inner(i, seed, ticks, &out_dir, is_frontend, write_log)
+            })
         })
         .collect();
 
@@ -122,12 +132,22 @@ fn run_parallel(cfg: &Config) -> Vec<Outcome> {
 
 fn run_game(i: usize, seed: u64, cfg: &Config) -> Outcome {
     let is_frontend = i == 0 && cfg.base_seed == DEFAULT_SEED;
-    run_game_inner(i, seed, cfg.ticks, &cfg.out_dir, is_frontend)
+    run_game_inner(i, seed, cfg.ticks, &cfg.out_dir, is_frontend, cfg.write_log)
 }
 
 /// Bir oyunu baştan sona koşar: her tick `SimDriver::step` + log bloğu +
 /// istatistik biriktir, sonra log dosyasını yazar ve özet döner.
-fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: bool) -> Outcome {
+///
+/// `write_log` false ise tick blokları hiç biriktirilmez — dosya yazımını
+/// atlamak yetmez, asıl maliyet 46 MB'lık string'i bellekte kurmaktır.
+fn run_game_inner(
+    i: usize,
+    seed: u64,
+    ticks: u32,
+    out_dir: &Path,
+    is_frontend: bool,
+    write_log: bool,
+) -> Outcome {
     let mut driver = SimDriver::new(
         seed,
         ticks,
@@ -148,7 +168,9 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
     for _ in 0..ticks {
         driver.step();
         bal.sample_money(&driver.state);
-        log.push_str(&format_tick_block(&driver.state, &driver.last_report, driver.season));
+        if write_log {
+            log.push_str(&format_tick_block(&driver.state, &driver.last_report, driver.season));
+        }
 
         for entry in &driver.last_report.entries {
             drama.record(entry.tick, &entry.event);
@@ -190,7 +212,9 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
         .collect();
 
     let log_path = out_dir.join(format!("game_{:02}.log", i + 1));
-    if let Err(e) = std::fs::write(&log_path, &log) {
+    if write_log
+        && let Err(e) = std::fs::write(&log_path, &log)
+    {
         eprintln!("log yazılamadı ({}): {e}", log_path.display());
     }
 
@@ -225,7 +249,7 @@ fn run_game_inner(i: usize, seed: u64, ticks: u32, out_dir: &Path, is_frontend: 
     }
 }
 
-fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
+fn print_summary(outcomes: &[Outcome], elapsed_s: f64, write_log: bool) {
     println!("\n{:=<82}", "");
     println!(
         "{:>5}  {:>18}  {:>8}  {:>6}  {:>8}  {:>8}  lider (PnL₺)",
@@ -364,7 +388,7 @@ fn print_summary(outcomes: &[Outcome], elapsed_s: f64) {
         outcomes.len(), ticks, total_matched, elapsed_s,
     );
     println!("HHI: 0–10000 (>2500 yoğun → 10000 monopol) · Gini: 0 eşit → 1 tek elde · ★ = frontend");
-    if let Some(dir) = outcomes.first().and_then(|o| o.log_path.parent()) {
+    if write_log && let Some(dir) = outcomes.first().and_then(|o| o.log_path.parent()) {
         println!("loglar: {}/game_NN.log", dir.display());
     }
 }
@@ -737,11 +761,13 @@ fn parse_args() -> Config {
     let mut ticks: u32 = SEASON_TICKS;
     let mut base_seed: u64 = DEFAULT_SEED;
     let mut out_dir = PathBuf::from("artifacts/sim");
+    let mut write_log = true;
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--parallel" | "-p" => parallel = true,
+            "--no-log" => write_log = false,
             "--games" | "-g" => {
                 games = it.next().and_then(|v| v.parse().ok());
             }
@@ -774,7 +800,7 @@ fn parse_args() -> Config {
     // --parallel verilip --games verilmediyse mantıklı varsayılan: 5 oyun.
     let games = games.unwrap_or(if parallel { 5 } else { 1 }).max(1);
 
-    Config { games, parallel, ticks, base_seed, out_dir }
+    Config { games, parallel, ticks, base_seed, out_dir, write_log }
 }
 
 /// Seed'i ondalık ya da `0x`-önekli hex olarak parse et.
@@ -792,6 +818,7 @@ fn print_help() {
          --ticks <N>    Oyun başına tick (default {SEASON_TICKS})\n\
          --seed <N>     Base seed (ondalık veya 0xHEX)\n\
          --out <DIR>    Log dizini (default artifacts/sim)\n\
+         --no-log       Oyun log'u yazma (süpürmede kullan — oyun başına ~46MB)\n\
          --help,-h      Bu yardım"
     );
 }
