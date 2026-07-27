@@ -19,6 +19,9 @@ export interface PlayerDto {
   /** "EXPAND" | "CORNER" | "PRICE_WAR" | "CONSOLIDATE" | "RETREAT" | null */
   goal: string | null;
   traits: BrainTraitsDto | null;
+  factory_count: number;
+  farm_count: number;
+  employees: number;
 }
 
 export interface PriceCell {
@@ -100,6 +103,8 @@ export interface PrivateFarmDto {
   product: string;
   level: number;
   output_per_tick: number;
+  employees: number;
+  required_employees: number;
 }
 
 export interface RelationDto {

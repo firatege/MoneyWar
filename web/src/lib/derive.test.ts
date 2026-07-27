@@ -120,6 +120,9 @@ describe("appendHistory", () => {
     pnl_lira: pnl,
     is_npc: false,
     goal: null,
+    factory_count: 0,
+    farm_count: 0,
+    employees: 0,
     traits: null,
   });
 

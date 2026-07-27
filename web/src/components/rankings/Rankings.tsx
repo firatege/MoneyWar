@@ -166,6 +166,17 @@ function RankRow({
   onSelect: () => void;
 }) {
   const neg = player.pnl_lira < 0;
+  // Varlık satırı — firmanın ne kurduğu, sıralamada tek bakışta.
+  //
+  // Özel çiftlik uzun süre yalnız haritada bir sayıydı; artık işçi
+  // çalıştırdığı ve sayısı sınırsız olduğu için firmanın stratejisini
+  // anlatıyor: "2 fabrika 5 tarla" dikey bütünleşmeye oynayan bir şirket,
+  // "8 fabrika 1 tarla" pazardan alan bir şirket demek.
+  const parts: string[] = [];
+  if (player.factory_count > 0) parts.push(`${player.factory_count} fabrika`);
+  if (player.farm_count > 0) parts.push(`${player.farm_count} tarla`);
+  if (player.employees > 0) parts.push(`${player.employees} işçi`);
+  const assets = parts.join(" · ");
   return (
     <li>
       <button
@@ -186,7 +197,10 @@ function RankRow({
         <span className="rank__badge" style={{ color: roleInk(player.npc_kind) }}>
           {roleCode(player.npc_kind)}
         </span>
-        <span className="rank__name">{player.name}</span>
+        <span className="rank__id">
+          <span className="rank__name">{player.name}</span>
+          {assets && <span className="rank__assets">{assets}</span>}
+        </span>
         <span className="rank__cash">{compact(player.cash_lira)}</span>
         <span className={`rank__pnl${neg ? " is-neg" : ""}`}>
           {signedCompact(player.pnl_lira)}

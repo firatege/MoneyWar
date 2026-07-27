@@ -4,7 +4,7 @@
 //! olabilir: aday hiç üretilmiyor, komut üretiliyor ama reddediliyor, ya da
 //! aday üretiliyor fakat skorlamada eleniyor. Bu test üçünü ayırt eder.
 
-use moneywar_domain::balance::{PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER};
+use moneywar_domain::balance::PRIVATE_FARM_BUILD_COST_LIRA;
 use moneywar_domain::{Money, NpcKind};
 use moneywar_engine::LogEvent;
 use moneywar_web::driver::SimDriver;
@@ -12,7 +12,7 @@ use moneywar_web::driver::SimDriver;
 #[test]
 #[ignore = "ölçüm aracı — `cargo test -p moneywar-web --test private_farm_probe -- --ignored --nocapture`"]
 fn why_are_private_farms_never_built() {
-    let mut d = SimDriver::new(moneywar_web::DEFAULT_SEED, 350, 3, moneywar_web::DIFFICULTY);
+    let mut d = SimDriver::new(moneywar_web::DEFAULT_SEED, moneywar_web::SEASON_TICKS, 3, moneywar_web::DIFFICULTY);
 
     let build_cost = Money::from_lira(PRIVATE_FARM_BUILD_COST_LIRA).expect("maliyet");
     // NPC'nin aradığı tampon: maliyet × 1.5.
@@ -36,7 +36,7 @@ fn why_are_private_farms_never_built() {
     let mut fab_hist: std::collections::BTreeMap<usize, u64> = Default::default();
     let mut max_fabs = 0usize;
 
-    for _ in 0..350 {
+    for _ in 0..moneywar_web::SEASON_TICKS {
         d.step();
 
         for entry in &d.last_report.entries {
@@ -92,7 +92,7 @@ fn why_are_private_farms_never_built() {
 
     let pct = |n: u64| n as f64 / sanayici_samples.max(1) as f64 * 100.0;
 
-    println!("\n── Özel çiftlik tanısı (350 tick) ─────────────────────────");
+    println!("\n── Özel çiftlik tanısı ({} tick) ─────────────────────────", moneywar_web::SEASON_TICKS);
     println!("kurulan tarla:            {built}");
     println!("reddedilen komut:         {rejected}");
     for (reason, n) in &reject_reasons {
@@ -115,9 +115,9 @@ fn why_are_private_farms_never_built() {
         pct(above_gate)
     );
     println!("en yüksek Sanayici nakdi: {}₺", peak_cash.as_cents() / 100);
-    println!("tarla kotası/sahip:       {PRIVATE_FARM_MAX_PER_OWNER}");
+    println!("kurulum beklemesi:        {} tick", moneywar_domain::balance::PRIVATE_FARM_BUILD_COOLDOWN);
     println!();
-    println!("Sanayici fabrika sayısı dağılımı (aday kapısı: >= 8):");
+    println!("Sanayici fabrika sayısı dağılımı (aday kapısı: >= 5):");
     for (n, count) in &fab_hist {
         let bar = "█".repeat((pct(*count) / 2.0).round() as usize);
         println!("   {n:>2} fabrika  {:>5.1}%  {bar}", pct(*count));
@@ -129,5 +129,35 @@ fn why_are_private_farms_never_built() {
     for (phase, n) in &gate_pass_by_phase {
         println!("   t{phase:>3}-{:>3}  {n}", phase + 49);
     }
+    // Kota mı bağlıyor, kapı mı durduruyor?
+    let mut per_owner: std::collections::BTreeMap<moneywar_domain::PlayerId, u32> =
+        std::collections::BTreeMap::new();
+    for f in d.state.private_farms.values() {
+        *per_owner.entry(f.owner).or_default() += 1;
+    }
+    let sanayici_total = d
+        .state
+        .players
+        .values()
+        .filter(|p| p.npc_kind == Some(moneywar_domain::NpcKind::Sanayici))
+        .count();
+    let max_owned = per_owner.values().copied().max().unwrap_or(0);
+    let farm_staff: u32 = d.state.private_farms.values().map(|f| f.employees).sum();
+    let farm_want: u32 = d
+        .state
+        .private_farms
+        .values()
+        .map(|f| f.required_employees())
+        .sum();
+    println!();
+    println!("Sahip başına tarla (kota yok — bekleme + artan maliyet + kadro):");
+    println!("   toplam Sanayici        {sanayici_total}");
+    println!("   en az 1 tarlası olan   {}", per_owner.len());
+    println!("   en çok tarlası olan    {max_owned}");
+    println!(
+        "   hiç tarlası olmayan    {}",
+        sanayici_total.saturating_sub(per_owner.len())
+    );
+    println!("   tarla ırgadı           {farm_staff}/{farm_want} kadro");
     println!("───────────────────────────────────────────────────────────\n");
 }

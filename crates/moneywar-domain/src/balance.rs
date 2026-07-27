@@ -608,12 +608,37 @@ pub const PRIVATE_FARM_BUILD_COST_LIRA: i64 = 15_000;
 /// "piyasa Çiftçisi ~8-12/tick, özel çiftlik biraz daha az".
 pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 8;
 
-/// Sanayici başına max özel çiftlik sayısı.
+/// Özel çiftliğin kadrosu, seviyeye göre. Tarla da emek ister.
 ///
-/// 6'ydı. On Sanayici × 6 tarla, pazarı atlayan büyük bir ham madde akışı
-/// demek; ölçümde Çiftçi ve Spekülatör'ü çökertiyordu. 2'de dikey
-/// bütünleşme hâlâ mümkün ama pazarın yerini almıyor.
-pub const PRIVATE_FARM_MAX_PER_OWNER: usize = 2;
+/// Tarlalar uzun süre **bedava işçiyle** çalışıyordu: kurulum parası dışında
+/// hiçbir gideri yoktu, ham maddeyi pazarı atlayarak basıyordu. Bu yüzden
+/// sayılarını sınırlamanın tek yolu sert bir kota (2) idi — kaldırınca
+/// ekonomi bozuluyordu (süpürme: kota 2/4/6 → makas 3,7× / 11,8× / 16,2×,
+/// Tüccar 244K → 14K → -58K).
+///
+/// Kadro gelince kota gereksizleşiyor: tarla, fabrikayla **aynı havuzdan**
+/// işçi çeker. Yirmi tarla kuran Sanayici kendi fabrikalarını kadrosuz
+/// bırakır — sınır dışarıdan dayatılmaz, ekonominin kendisinden çıkar.
+///
+/// Fabrikadan az (3/4/6): tarla düşük teknoloji, dönüm başına az adam.
+pub const PRIVATE_FARM_EMPLOYEES_L1: u32 = 2;
+/// Seviye 2 çiftlik kadrosu. Bkz. [`PRIVATE_FARM_EMPLOYEES_L1`].
+pub const PRIVATE_FARM_EMPLOYEES_L2: u32 = 3;
+/// Seviye 3 çiftlik kadrosu. Bkz. [`PRIVATE_FARM_EMPLOYEES_L1`].
+pub const PRIVATE_FARM_EMPLOYEES_L3: u32 = 5;
+
+/// İki çiftlik kurulumu arasındaki bekleme (tick).
+///
+/// Kota yerine geçen iki frenden biri. Sert tavan "18 tarla kuruldu, hepsi
+/// t118-t325 arası, sonra sessizlik" gibi yapay bir doygunluk üretiyordu;
+/// bekleme süresi bunun yerine kademeli büyüme veriyor.
+pub const PRIVATE_FARM_BUILD_COOLDOWN: u32 = 25;
+
+/// Sahip başına her ek çiftliğin kurulum maliyetine eklediği yüzde.
+///
+/// İkinci fren: n'inci tarla `maliyet × (100 + n × bu) / 100`. Büyüme
+/// serbest ama ağırlaşıyor — 6. tarla ilkinin 3,5 katına mal oluyor.
+pub const PRIVATE_FARM_COST_ESCALATION_PCT: i64 = 50;
 
 // =============================================================================
 // Fabrika yükseltme

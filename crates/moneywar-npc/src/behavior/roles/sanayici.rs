@@ -973,8 +973,24 @@ fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate
     //
     // Doğru çözüm kadro tarafında değil: fabrika **zaten** girdisini
     // bulabilseydi kilit hiç oluşmazdı.
+    // Atıl fabrikayı atlama kuralı **emek kıtken** doğru: duran fabrikayı
+    // açmak, tam batch çalışabilecek olandan işçi çalmak demek. Ama havuzda
+    // boşluk varken aynı kural fabrikaları boşuna boş bırakıyor — ölçümde
+    // havuz %65 doluyken 106 fabrikanın 54'ü kadrosuzdu, yani işçi vardı,
+    // işe alan yoktu. Yeni fabrika hiç üretmediği için "atıl" sayılıyor ve
+    // bu yüzden hiç kadro alamıyordu: kilit.
+    let employed: u32 = state
+        .factories
+        .values()
+        .map(|f| f.employees)
+        .sum::<u32>()
+        + state.private_farms.values().map(|f| f.employees).sum::<u32>();
+    let pool_slack = moneywar_domain::balance::labor_pool_at(state.current_tick.value())
+        .saturating_sub(employed);
+    let labor_is_scarce = pool_slack < moneywar_domain::balance::EMPLOYEES_PER_FACTORY_L1;
+
     if let Some(f) = mine()
-        .filter(|f| !f.is_atil(state.current_tick, threshold))
+        .filter(|f| !labor_is_scarce || !f.is_atil(state.current_tick, threshold))
         .find(|f| f.employees < f.required_employees())
     {
         return vec![ActionCandidate::SetStaff {
@@ -1002,24 +1018,33 @@ fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate
 ///
 /// Koşullar: tarla kotası dolmamış + nakit (maliyet × 1.5) + gerçek açık.
 fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
-    use moneywar_domain::balance::{PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER};
+    use moneywar_domain::balance::PRIVATE_FARM_BUILD_COOLDOWN;
     use moneywar_domain::{CityId, ProductKind};
 
-    let owned_farms = state.private_farms.values()
+    let owned_farms = state
+        .private_farms
+        .values()
         .filter(|f| f.owner == player.id)
         .count();
-    if owned_farms >= PRIVATE_FARM_MAX_PER_OWNER {
+
+    // Kurulum beklemesi — motor da aynı kuralı uyguluyor; burada da bakmak
+    // reddedilecek komut üretmemek için (red = boşa geçen aday slotu).
+    let last_built = state
+        .private_farms
+        .values()
+        .filter(|f| f.owner == player.id)
+        .map(|f| f.built_at)
+        .max();
+    if let Some(last) = last_built
+        && state.current_tick.value().saturating_sub(last) < PRIVATE_FARM_BUILD_COOLDOWN
+    {
         return Vec::new();
     }
 
-    let build_cost = moneywar_domain::Money::from_lira(PRIVATE_FARM_BUILD_COST_LIRA)
-        .unwrap_or(moneywar_domain::Money::ZERO);
-    let needed_cash = moneywar_domain::Money::from_cents(
-        build_cost.as_cents().saturating_mul(3) / 2
-    );
-    if player.cash < needed_cash {
-        return Vec::new();
-    }
+    // Nakit kontrolü hedef seçildikten **sonra** yapılır: maliyet hem sahip
+    // olunan tarla sayısıyla hem de hedef slottaki kalabalıkla büyüyor.
+    // Önceden sabit maliyete bakılıyordu ve motor komutu "insufficient
+    // funds" diye reddediyordu — ölçümde sezonda 229 boşa giden aday.
 
     // (şehir, ham) → bir batch'lik açık. Aynı şehirde aynı hammaddeye dayanan
     // birden çok fabrika varsa açıklar toplanır.
@@ -1043,12 +1068,29 @@ fn enumerate_private_farm(state: &GameState, player: &Player) -> Vec<ActionCandi
 
     // En büyük açık. Eşitlikte `max_by_key` sonuncuyu seçer; `BTreeMap`
     // sırası deterministik olduğu için sonuç da deterministik.
-    shortage
+    let Some(((city, product), _)) = shortage
         .into_iter()
         .filter(|(_, gap)| *gap > 0)
         .max_by_key(|(_, gap)| *gap)
-        .map(|((city, product), _)| vec![ActionCandidate::BuildPrivateFarm { city, product }])
-        .unwrap_or_default()
+    else {
+        return Vec::new();
+    };
+
+    let slot_taken = state
+        .private_farms
+        .values()
+        .filter(|f| f.city == city && f.product == product)
+        .count();
+    let build_cost = moneywar_domain::PrivateFarm::build_cost(owned_farms, slot_taken)
+        .unwrap_or(moneywar_domain::Money::ZERO);
+    // Maliyetin 1.5 katı: tarlayı kurup meteliksiz kalmasın.
+    let needed_cash =
+        moneywar_domain::Money::from_cents(build_cost.as_cents().saturating_mul(3) / 2);
+    if player.cash < needed_cash {
+        return Vec::new();
+    }
+
+    vec![ActionCandidate::BuildPrivateFarm { city, product }]
 }
 
 /// Yükseltmeye uygun özel tarlalar — aktif tarla + nakit varsa.

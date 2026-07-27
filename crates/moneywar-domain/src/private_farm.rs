@@ -29,12 +29,23 @@ pub struct PrivateFarm {
     /// Çiftlik seviyesi (1-3). Seviye arttıkça daha fazla üretim.
     #[serde(default = "PrivateFarm::default_level")]
     pub level: u8,
+    /// Tarlada çalışan ırgat sayısı. Fabrikayla **aynı** işgücü havuzundan
+    /// gelir; kadrosuz tarla hasat vermez.
+    #[serde(default)]
+    pub employees: u32,
+    /// Kuruluş tick'i — kurulum beklemesi buradan hesaplanır. Sahibin en
+    /// son kurduğu tarlanın üzerinden [`PRIVATE_FARM_BUILD_COOLDOWN`] tick
+    /// geçmeden yenisi kurulamaz.
+    ///
+    /// [`PRIVATE_FARM_BUILD_COOLDOWN`]: crate::balance::PRIVATE_FARM_BUILD_COOLDOWN
+    #[serde(default)]
+    pub built_at: u32,
 }
 
 impl PrivateFarm {
     #[must_use]
-    pub fn new(id: PrivateFarmId, owner: PlayerId, city: CityId, product: ProductKind) -> Self {
-        Self { id, owner, city, product, level: 1 }
+    pub fn new(id: PrivateFarmId, owner: PlayerId, city: CityId, product: ProductKind, built_at: u32) -> Self {
+        Self { id, owner, city, product, level: 1, employees: 0, built_at }
     }
 
     pub const fn default_level() -> u8 { 1 }
@@ -49,11 +60,57 @@ impl PrivateFarm {
     #[must_use]
     pub const fn output_per_tick(&self) -> u32 {
         let base = crate::balance::scaled_output(crate::balance::PRIVATE_FARM_OUTPUT_PER_TICK);
-        match self.level {
+        let full = match self.level {
             1 => base,
             2 => base * 7 / 4,
             _ => base * 11 / 4, // lv3+
+        };
+        // Kadro doluluğuyla orantılı hasat. Irgatsız tarla ürün vermez —
+        // tohum kendi kendine toplanmıyor.
+        full * self.staffing_pct() / 100
+    }
+
+    /// Seviyeye göre gereken ırgat sayısı.
+    ///
+    /// Seviye atlayan tarla daha çok adam ister; yükseltme yalnız debiyi
+    /// değil emek ihtiyacını da büyütür.
+    #[must_use]
+    pub const fn required_employees(&self) -> u32 {
+        match self.level {
+            1 => crate::balance::PRIVATE_FARM_EMPLOYEES_L1,
+            2 => crate::balance::PRIVATE_FARM_EMPLOYEES_L2,
+            _ => crate::balance::PRIVATE_FARM_EMPLOYEES_L3,
         }
+    }
+
+    /// Kadro doluluğu (0–100). Eksik kadro hasadı orantılı düşürür, fazla
+    /// ırgat fayda vermez.
+    #[must_use]
+    pub const fn staffing_pct(&self) -> u32 {
+        let need = self.required_employees();
+        if need == 0 {
+            return 100;
+        }
+        let pct = self.employees * 100 / need;
+        if pct > 100 { 100 } else { pct }
+    }
+
+    /// n'inci tarlanın kurulum maliyeti (`owned` = hâlihazırda sahip olunan).
+    ///
+    /// Sert kotanın yerini alan iki frenden biri: her ek tarla
+    /// [`PRIVATE_FARM_COST_ESCALATION_PCT`] kadar pahalanır. Büyüme serbest
+    /// ama ağırlaşıyor.
+    ///
+    /// [`PRIVATE_FARM_COST_ESCALATION_PCT`]: crate::balance::PRIVATE_FARM_COST_ESCALATION_PCT
+    #[must_use]
+    pub fn build_cost(owned: usize, slot_taken: usize) -> Option<crate::Money> {
+        let base = crate::balance::PRIVATE_FARM_BUILD_COST_LIRA;
+        let owner_mult =
+            100 + i64::try_from(owned).unwrap_or(0) * crate::balance::PRIVATE_FARM_COST_ESCALATION_PCT;
+        // Aynı (şehir, ürün) slotunda tarla varsa ayrıca +%50 — tarla yeri
+        // kıymetli, herkes aynı ovaya üşüşmesin.
+        let slot_mult = 100 + i64::try_from(slot_taken).unwrap_or(0) * 50;
+        crate::Money::from_lira(base * owner_mult / 100 * slot_mult / 100).ok()
     }
 
     /// Bir üst seviyeye yükseltme maliyeti.

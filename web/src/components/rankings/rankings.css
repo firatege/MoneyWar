@@ -154,6 +154,25 @@
   text-align: right;
 }
 
+/* Ad + varlık satırı tek hücrede istiflenir; ızgara sütun sayısı değişmez,
+   böylece başlık satırıyla hizası bozulmaz. */
+.rank__id {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.05rem;
+  line-height: 1.2;
+}
+
+.rank__assets {
+  overflow: hidden;
+  color: var(--ink-faint, var(--text-faint));
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rank__list {
   flex: 1;
   min-height: 0;

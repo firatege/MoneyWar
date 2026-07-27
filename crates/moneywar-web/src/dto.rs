@@ -116,6 +116,14 @@ pub struct PlayerDto {
     pub goal: Option<String>,
     /// Kişilik trait vektörü [0,1] — sadece NPC'ler için.
     pub traits: Option<BrainTraitsDto>,
+    /// Sahip olunan fabrika sayısı.
+    pub factory_count: u32,
+    /// Sahip olunan özel çiftlik sayısı. Tarla artık işçi çalıştırıyor ve
+    /// sayısı sınırsız; kaç tane kurulduğu firmanın stratejisini anlatan
+    /// bir bilgi — sıralamada görünmesi gerekiyordu.
+    pub farm_count: u32,
+    /// Fabrika + tarla toplam istihdamı.
+    pub employees: u32,
 }
 
 /// NPC ajan kişilik trait özeti.
@@ -183,6 +191,9 @@ pub struct PrivateFarmDto {
     pub product: String,
     pub level: u8,
     pub output_per_tick: u32,
+    /// Tarladaki ırgat sayısı ve seviyenin istediği kadro.
+    pub employees: u32,
+    pub required_employees: u32,
 }
 
 /// Kervan durum kartı.
@@ -420,6 +431,34 @@ fn build_leaderboard(state: &GameState, brains: &BrainPool) -> Vec<PlayerDto> {
                 is_npc: player.is_npc,
                 goal,
                 traits,
+                factory_count: u32::try_from(
+                    state
+                        .factories
+                        .values()
+                        .filter(|f| f.owner == score.player_id)
+                        .count(),
+                )
+                .unwrap_or(0),
+                farm_count: u32::try_from(
+                    state
+                        .private_farms
+                        .values()
+                        .filter(|f| f.owner == score.player_id)
+                        .count(),
+                )
+                .unwrap_or(0),
+                employees: state
+                    .factories
+                    .values()
+                    .filter(|f| f.owner == score.player_id)
+                    .map(|f| f.employees)
+                    .sum::<u32>()
+                    + state
+                        .private_farms
+                        .values()
+                        .filter(|f| f.owner == score.player_id)
+                        .map(|f| f.employees)
+                        .sum::<u32>(),
             })
         })
         .collect()
@@ -493,7 +532,10 @@ fn build_economy(state: &GameState) -> EconomyDto {
         money_supply_lira: lira(moneywar_domain::Money::from_cents(
             state.players.values().map(|p| p.cash.as_cents()).sum(),
         )),
-        employed: state.factories.values().map(|f| f.employees).sum(),
+        // Tarla ırgadı da aynı havuzdan çıkıyor; saymazsak "havuz doluluğu"
+        // yanlış görünür.
+        employed: state.factories.values().map(|f| f.employees).sum::<u32>()
+            + state.private_farms.values().map(|f| f.employees).sum::<u32>(),
         labor_pool: moneywar_domain::balance::labor_pool_at(state.current_tick.value()),
         factories_active: active,
         factories_idle: idle,
@@ -599,6 +641,8 @@ fn build_private_farms(state: &GameState) -> Vec<PrivateFarmDto> {
             product: product_slug(f.product).to_string(),
             level: f.level,
             output_per_tick: f.output_per_tick(),
+            employees: f.employees,
+            required_employees: f.required_employees(),
         })
         .collect()
 }

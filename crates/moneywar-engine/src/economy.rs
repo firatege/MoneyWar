@@ -235,12 +235,31 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
 /// Wages — Sanayici fabrikalarından ücret keser, Alıcı'lara eşit dağıtır.
 /// Closed loop: Alıcı'nın geliri Sanayici cebinden gelir (eski sabit maaş yerine).
 /// Vic3 inspiration: building wages → pop income.
+/// Dünyadaki toplam istihdam — fabrika **ve** tarla.
+///
+/// Tarlalar uzun süre bedava işçiyle çalışıyordu ve havuz muhasebesinde
+/// görünmüyorlardı. Aynı havuzdan çekmeleri, tarla sayısına sert kota
+/// koymayı gereksizleştiren şey: yirmi tarla kuran Sanayici kendi
+/// fabrikalarını kadrosuz bırakır.
+#[must_use]
+pub(crate) fn total_employed(state: &GameState) -> u32 {
+    let factories: u32 = state.factories.values().map(|f| f.employees).sum();
+    let farms: u32 = state.private_farms.values().map(|f| f.employees).sum();
+    factories.saturating_add(farms)
+}
+
 fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     // Her Sanayici NPC'si kaç fab'a sahip → o kadar wage öder.
     let factories_by_owner: std::collections::BTreeMap<PlayerId, u32> = {
         let mut map = std::collections::BTreeMap::new();
         for f in state.factories.values() {
             *map.entry(f.owner).or_insert(0) += 1;
+        }
+        // Tarla ırgadı da maaş alır. Tarlayı bedava işgücüyle çalıştırmak,
+        // ham maddeyi hem pazarı hem emek piyasasını atlayarak üretmek
+        // demekti — iki kere haksız avantaj.
+        for f in state.private_farms.values() {
+            map.entry(f.owner).or_insert(0);
         }
         map
     };
@@ -268,12 +287,19 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
         // Ücret **çalışan başına** ödenir; atıl fabrikanın da kadrosu varsa
         // ücreti çıkar (işçi çalışmasa da maaşını alır — firma ya işçiyi
         // çıkarır ya yükü taşır). Kadro = 0 olan fabrika ücret doğurmaz.
-        let headcount: i64 = state
+        let factory_heads: i64 = state
             .factories
             .values()
             .filter(|f| f.owner == *owner)
             .map(|f| i64::from(f.employees))
             .sum();
+        let farm_heads: i64 = state
+            .private_farms
+            .values()
+            .filter(|f| f.owner == *owner)
+            .map(|f| i64::from(f.employees))
+            .sum();
+        let headcount = factory_heads.saturating_add(farm_heads);
         if headcount == 0 {
             continue;
         }

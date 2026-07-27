@@ -16,7 +16,7 @@
 use moneywar_domain::{
     CityId, DomainError, Factory, FactoryBatch, FactoryId, GameState, Money, PlayerId,
     PrivateFarm, PrivateFarmId, ProductKind, Role, Tick,
-    balance::{FACTORY_MAX_LEVEL, PRIVATE_FARM_BUILD_COST_LIRA, PRIVATE_FARM_MAX_PER_OWNER},
+    balance::{FACTORY_MAX_LEVEL, PRIVATE_FARM_BUILD_COOLDOWN},
 };
 
 use crate::{
@@ -87,13 +87,41 @@ const DEMOLISH_REFUND_PCT: i64 = 50;
 
 /// Özel çiftlikleri ilerlet — her tick sahibinin envanterine ham madde ekle.
 /// Üretim miktarı seviyeye göre değişir: lv1=20, lv2=35, lv3=55
-pub(crate) fn advance_private_farms(state: &mut GameState, _tick: Tick) {
+pub(crate) fn advance_private_farms(state: &mut GameState, tick: Tick) {
     let farm_ids: Vec<PrivateFarmId> = state.private_farms.keys().copied().collect();
+
+    // Önce kadro: tarla her tick havuzdan ırgat toplamaya çalışır. Havuz
+    // boşsa eksik kadroyla çalışır ve hasadı orantılı düşer — bu, tarla
+    // sayısının kendi kendini sınırlaması demek. Fabrika kadrosu NPC
+    // komutuyla geliyor; tarla otomatik, çünkü ırgat mevsimlik, kararı
+    // yönetim kurulu vermiyor.
+    for fid in &farm_ids {
+        let (need, have) = {
+            let f = &state.private_farms[fid];
+            (f.required_employees(), f.employees)
+        };
+        if have >= need {
+            continue;
+        }
+        let free = moneywar_domain::balance::labor_pool_at(tick.value())
+            .saturating_sub(crate::economy::total_employed(state));
+        if free == 0 {
+            continue;
+        }
+        let hired = (need - have).min(free);
+        if let Some(f) = state.private_farms.get_mut(fid) {
+            f.employees += hired;
+        }
+    }
+
     for fid in farm_ids {
         let (owner, city, product, output) = {
             let f = &state.private_farms[&fid];
             (f.owner, f.city, f.product, f.output_per_tick())
         };
+        if output == 0 {
+            continue;
+        }
         if let Some(player) = state.players.get_mut(&owner) {
             let _ = player.inventory.add(city, product, output);
         }
@@ -153,19 +181,35 @@ pub(crate) fn process_build_private_farm(
             "PrivateFarm only produces raw materials".into(),
         )));
     }
+    // Sert kota kaldırıldı (v0.15). Yerine üç doğal fren:
+    //   1. kurulum beklemesi — arka arkaya tarla dikilemez
+    //   2. artan maliyet     — n'inci tarla belirgin pahalı
+    //   3. **kadro**         — tarla fabrikayla aynı havuzdan işçi çeker
+    // Üçüncüsü asıl olan: çok tarla kuran kendi fabrikasını kadrosuz
+    // bırakır. Sınır dışarıdan dayatılmıyor, ekonomiden çıkıyor.
     let owned = state.private_farms.values().filter(|f| f.owner == owner).count();
-    if owned >= PRIVATE_FARM_MAX_PER_OWNER {
+    let last_built = state
+        .private_farms
+        .values()
+        .filter(|f| f.owner == owner)
+        .map(|f| f.built_at)
+        .max();
+    if let Some(last) = last_built
+        && tick.value().saturating_sub(last) < PRIVATE_FARM_BUILD_COOLDOWN
+    {
         return Err(EngineError::Domain(DomainError::Validation(format!(
-            "max private farms ({PRIVATE_FARM_MAX_PER_OWNER}) reached"
+            "private farm cooldown: {} tick left",
+            PRIVATE_FARM_BUILD_COOLDOWN - (tick.value().saturating_sub(last))
         ))));
     }
-    // Aynı (city, product) slot'unda başka tarla varsa 1.5× maliyet.
-    // Her ek tarla için +%50 daha pahalı → tarla yeri kıymetli.
-    let existing_in_slot = state.private_farms.values()
+    let existing_in_slot = state
+        .private_farms
+        .values()
         .filter(|f| f.city == city && f.product == product)
-        .count() as i64;
-    let cost_lira = PRIVATE_FARM_BUILD_COST_LIRA + existing_in_slot * PRIVATE_FARM_BUILD_COST_LIRA / 2;
-    let cost = Money::from_lira(cost_lira).map_err(EngineError::Domain)?;
+        .count();
+    let cost = PrivateFarm::build_cost(owned, existing_in_slot).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation("farm cost overflow".into()))
+    })?;
     let player_mut = state.players.get_mut(&owner).expect("validated");
     if player_mut.cash < cost {
         return Err(EngineError::Domain(DomainError::InsufficientFunds {
@@ -179,7 +223,10 @@ pub(crate) fn process_build_private_farm(
 
     let fid = PrivateFarmId::new(state.counters.next_private_farm_id);
     state.counters.next_private_farm_id = state.counters.next_private_farm_id.saturating_add(1);
-    state.private_farms.insert(fid, PrivateFarm::new(fid, owner, city, product));
+    state.private_farms.insert(
+        fid,
+        PrivateFarm::new(fid, owner, city, product, tick.value()),
+    );
 
     report.push(LogEntry::private_farm_built(tick, owner, fid, city, product, cost));
     Ok(())
@@ -218,7 +265,7 @@ pub(crate) fn process_set_factory_staff(
         return Ok(());
     }
 
-    let employed: u32 = state.factories.values().map(|f| f.employees).sum();
+    let employed: u32 = crate::economy::total_employed(state);
     // Havuz sezonla büyür — nüfus sabit değil.
     let pool = moneywar_domain::balance::labor_pool_at(tick.value());
     let free = pool.saturating_sub(employed);
@@ -237,7 +284,7 @@ pub(crate) fn process_set_factory_staff(
     let factory = state.factories.get_mut(&factory_id).expect("checked above");
     factory.employees = applied;
 
-    let employed_after: u32 = state.factories.values().map(|f| f.employees).sum();
+    let employed_after: u32 = crate::economy::total_employed(state);
     report.push(LogEntry {
         tick,
         actor: Some(owner),
