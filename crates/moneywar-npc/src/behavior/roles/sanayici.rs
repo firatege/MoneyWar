@@ -65,6 +65,7 @@ fn lowest_ask_of(
         .min()
 }
 
+
 /// Brain ile birlikte enumerate — Goal-bilinçli fabrika seçimi.
 #[must_use]
 pub fn enumerate_with_brain(state: &GameState, player: &Player, brain: Option<&crate::behavior::brain::AgentBrain>) -> Vec<ActionCandidate> {
@@ -103,6 +104,26 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         let min_reserve_cents = (owned as i64 + 1) * reserve_per_owned * 100;
         let reserve_ok = player.cash.as_cents() >= next_cost.as_cents() + min_reserve_cents;
 
+        // NOT — buraya "kadro bulabilecek misin" kapısı koymak denendi ve
+        // **zarar verdi**. Gerekçe makuldü: işgücü havuzu t210'dan sonra
+        // %100 dolu, t350'de 89 fabrikanın 33'ü tek işçisiz duruyor
+        // (`moneywar-web/tests/labor_probe.rs`) ve komut tarafında 16.672
+        // "no free labor" reddi birikiyor. Kadrosuz fabrika parası ödenmiş,
+        // bakımı kesiliyor, ürettiği sıfır.
+        //
+        // Ölçüldü (20 oyun × 350 tick):
+        //
+        //   kapı                          batch  girdi-yok  Tüccar  makas  iflas
+        //   yok (mevcut)                   3757       %52  369.306   2,4×    0,6
+        //   havuzda tam kadro varsa        3122       %56  304.675   2,4×    0,8
+        //   havuzda yarım kadro varsa      3278       %55  304.314   2,3×    0,8
+        //   + kendi kadrosuzun varsa dur   2414       %63  301.461   2,2×    1,1
+        //
+        // Üçü de üretimi kısıyor ve Tüccar'ı %18'e varan oranda vuruyor.
+        // Sebep: kadro fabrikalar arasında dönüyor — boş bina israf değil,
+        // kapasite yedeği. Talep kaydığında hazır fabrika olan üretiyor,
+        // kapı konunca o esneklik gidiyor. Makastaki 0,1-0,2 iyileşme
+        // gürültü (n=20'de metrik 2,2-2,6 arası salınıyor).
         if reserve_ok
             && let Some((city, product)) = pick_factory_target(state, player, brain) {
                 out.push(ActionCandidate::BuildFactory { city, product });
