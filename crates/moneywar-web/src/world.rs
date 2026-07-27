@@ -55,7 +55,19 @@ fn seed_baselines(s: &mut GameState) {
             } else {
                 (lira * moneywar_domain::balance::RAW_BASELINE_MULT_PCT / 100).max(1)
             };
-            let baseline = Money::from_lira(lira).unwrap_or(Money::ZERO);
+            // Üretim ölçeği fiyatın **tersine** uygulanır.
+            //
+            // Ölçek yalnız malı büyütüyor, parayı değil. Fiyat sabit kalırsa
+            // 10× mal aynı parayla alınamaz: mal satılmadan yığılır, Çiftçi
+            // "zengin" görünür (skoru stok değeri) ama nakit dönmez. Ölçümde
+            // ×1000'de Çiftçi 869K'ya fırlarken Alıcı -61K'ya iniyordu.
+            //
+            // Fiyatı ölçekle bölünce işlem *tutarı* korunur; değişen yalnız
+            // birimin büyüklüğü olur — izlemesi kolay adetler, aynı ekonomi.
+            // Clamp `[%60,%160]` de bu yeni çapaya göre çalışır.
+            let scale = i64::from(moneywar_domain::balance::PRODUCTION_SCALE_PCT).max(1);
+            let cents = (lira * 100 * 100 / scale).max(1);
+            let baseline = Money::from_cents(cents);
             s.price_baseline.insert((city, product), baseline);
             s.price_baseline_initial.insert((city, product), baseline);
         }

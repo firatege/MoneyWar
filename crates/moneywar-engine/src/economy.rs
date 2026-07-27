@@ -32,8 +32,23 @@ const WAGE_PERIOD: u32 = 5;
 /// Depolama maliyeti periyodu — her N tick'te stok ücreti kesilir.
 const STORAGE_PERIOD: u32 = 10;
 /// Ücretsiz stok eşiği (birim) — bu miktarın altı ücretlendirilmez.
-/// Sanayici'nin çalışma stoğunu (`BATCH_SIZE=100`) korur.
-const STORAGE_FREE_UNITS: u32 = 25;
+/// Sanayici'nin çalışma stoğunu korur.
+///
+/// **Ölçeğe bağlı.** Depolama birim başına mutlak fiyatlanmış; üretim
+/// ölçeği büyüyünce mal adedi artıyor ama para sabit kalıyor ve gider
+/// dolaşımdaki parayı yiyor. Ölçüm (20 oyun × 350 tick):
+///
+/// ```text
+///   ölçek  depolama gideri  para arzı
+///   ×100         128.809₺      -6.1%
+///   ×1000        480.904₺     -35.9%
+/// ```
+///
+/// Eşik ölçekle büyüyünce "çalışma stoğu bedava" kuralı ölçekten bağımsız
+/// hale geliyor; gider stok/ölçek oranına bakıyor, mutlak adede değil.
+fn storage_free_units() -> u32 {
+    moneywar_domain::balance::scaled_output(25)
+}
 /// Standart depolama maliyeti (cents/birim/periyot) — Tüccar, Spek, Çiftçi.
 const STORAGE_COST_CENTS: i64 = 6;
 /// Sanayici depolama maliyeti — fabrika deposu var, daha ucuz.
@@ -149,11 +164,16 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
             .players
             .get(&pid)
             .is_some_and(|p| p.npc_kind == Some(NpcKind::Sanayici));
-        let cost_per_unit = if is_sanayici {
+        // Birim maliyeti de ölçeğe bölünür. Eşiği büyütmek tek başına
+        // yetmiyor: eşik üstü miktar da ölçekle büyüdüğü için toplam gider
+        // yine ölçekle çarpılırdı.
+        let scale = i64::from(moneywar_domain::balance::PRODUCTION_SCALE_PCT).max(1);
+        let base = if is_sanayici {
             STORAGE_COST_SANAYICI_CENTS
         } else {
             STORAGE_COST_CENTS
         };
+        let cost_per_unit = (base * 100 / scale).max(1);
 
         let mut total_cost_cents: i64 = 0;
         for city in moneywar_domain::CityId::ALL {
@@ -162,7 +182,7 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
                     .players
                     .get(&pid)
                     .map_or(0, |p| p.inventory.get(city, product));
-                let chargeable = i64::from(qty.saturating_sub(STORAGE_FREE_UNITS));
+                let chargeable = i64::from(qty.saturating_sub(storage_free_units()));
                 if chargeable > 0 {
                     total_cost_cents += chargeable * cost_per_unit;
                 }
@@ -537,9 +557,19 @@ fn harvest_ciftci_stock(
             // Vic3 ilhamı: tohum/işçilik maliyeti. Para yetmiyorsa mahsul
             // orantılı azalır (kısmi hasat). Sıfır cash ise mahsul yok →
             // Çiftçi satmadan geri dönemez (closed loop).
+            // Tohum maliyeti ölçeğe bölünür. Hasat miktarı üretim ölçeğiyle
+            // büyüyor; birim maliyet sabit kalırsa gider de ölçekle çarpılıp
+            // dolaşımdaki parayı yiyor. Ölçümde ×1000'de para arzı -28.7%'ye
+            // düşüyordu ve sızıntının bu ayağı depolamadan büyüktü.
+            //
+            // Maliyet Çiftçi'nin cebinden çıkıp **kimseye gitmiyor** (sink);
+            // o yüzden mutlak değil, üretimin oranı olarak tanımlanmalı.
+            let scale = i64::from(moneywar_domain::balance::PRODUCTION_SCALE_PCT).max(1);
             let want_cost_cents = i64::from(total_qty)
                 .saturating_mul(SEED_COST_PER_RAW_LIRA)
-                .saturating_mul(100);
+                .saturating_mul(100)
+                .saturating_mul(100)
+                / scale;
             let have_cents = p.cash.as_cents();
             let actual_cost_cents = want_cost_cents.min(have_cents);
             let scale_num = actual_cost_cents.max(0);

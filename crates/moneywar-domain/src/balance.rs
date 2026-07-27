@@ -70,6 +70,39 @@ pub const FACTORY_BATCH_SIZE: u32 = 65;
 ///
 /// Ölçeği tek sabitte tutmak şart: üçü ayrı ayrı büyütülürse zincirin bir
 /// halkası ötekini besleyemez hale gelir.
+///
+/// # Durum: kaldıraç bağlı ama henüz kullanılabilir değil
+///
+/// Ölçek büyütmenin **izlenebilirliği gerçekten düzelttiği** ölçüldü —
+/// 350 tick, eşleşme büyüklüğü dağılımı:
+///
+/// ```text
+///                  ×100    ×1000
+///   1 birim       %15.3     %6.8
+///   10-24 birim   %26.8    %33.7
+///   Sanayici doluluk %29     %60
+/// ```
+///
+/// Alıcı'nın emir **sayısı** ölçekle artmıyor (41.996 → 41.371): tavan
+/// şehir × ürün ile sabit, ölçekle ilgisi yok.
+///
+/// Ölçeği kaldırmak için üç sızıntı kapatıldı ve hepsi gerçek hataydı
+/// (ölçek 100'de zaten etkisizler):
+///   1. depolama gideri birim başına mutlaktı → ölçekle çarpılıyordu
+///      (×1000'de 480.904₺, para arzı -35.9%)
+///   2. tohum maliyeti hasat miktarıyla çarpılıyordu → aynı sorun
+///   3. Alıcı'nın istediği miktar 10'da sabitti → ölçek büyüdükçe tüketici
+///      yuvarlama hatasına dönüşüyordu
+///
+/// Bunlardan sonra para arzı ×1000'de bile -6.9%'da kaldı. Ama denge hâlâ
+/// bozuluyor: fiyat de ölçekle bölününce (world.rs) bu sefer üretici
+/// eziliyor (×1000'de Sanayici -53K, Alıcı +64K).
+///
+/// Kalan engel: ekonomide **onlarca mutlak lira sabiti** var — ücret,
+/// fabrika kurulum maliyeti, kredi anaparası, iflas eşiği, başlangıç
+/// nakdi. Gerçek bir birim değişimi hepsini birlikte ölçeklemeyi
+/// gerektiriyor; biri atlanınca denge kayıyor. Bu, tek sabitle çözülecek
+/// bir iş değil, para birimini baştan tanımlamak.
 pub const PRODUCTION_SCALE_PCT: u32 = 100;
 
 /// Ölçek uygulanmış miktar. Sıfıra yuvarlamayı önler.

@@ -115,7 +115,16 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             // kaybeder. Fabrikanın teklifini yükseltmek de denenmiş ve
             // fiyat sarmalı yaratmıştı (`pricing::derived_input_ceiling`).
             // Gerçek çözüm o tavanın sarmal kurmadan ileri bakmasında.
-            let quantity = affordable_qty(bucket_cash, unit_price, 10);
+            // İstek üretim ölçeğine bağlı. Sabit 10 kalırsa ölçek
+            // büyüdükçe tüketici yuvarlama hatasına dönüşüyor: üretici 10×
+            // mal basıyor, tüketici hâlâ 10 birim istiyor. Ölçümde ×1000'de
+            // Çiftçi 749K'ya fırlarken Alıcı -64K'ya iniyordu.
+            //
+            // Oran korunuyor — fabrika zaten batch kadar (ölçekli) ister,
+            // tüketici onun yanında küçük kalır. Değişen yalnız birimin
+            // büyüklüğü, taraflar arasındaki denge değil.
+            let want = moneywar_domain::balance::scaled_output(10);
+            let quantity = affordable_qty(bucket_cash, unit_price, want);
             if quantity == 0 {
                 continue;
             }
