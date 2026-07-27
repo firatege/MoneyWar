@@ -219,7 +219,7 @@ mod tests {
     use super::*;
 
     fn stepped(ticks: u32) -> SimDriver {
-        let mut d = SimDriver::new(crate::DEFAULT_SEED, 350, 3, crate::DIFFICULTY);
+        let mut d = SimDriver::new(crate::DEFAULT_SEED, crate::SEASON_TICKS, 3, crate::DIFFICULTY);
         for _ in 0..ticks {
             d.step();
         }

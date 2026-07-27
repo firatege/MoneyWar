@@ -83,7 +83,7 @@ fn private_farms_actually_get_built() {
     // hiçbir Sanayici 5'i geçemiyordu, dolayısıyla sezon boyunca 0 tarla
     // kuruluyordu ve **tek bir red bile loglanmıyordu** (komut hiç
     // üretilmiyordu). Sessiz ölüm; ancak sayarak yakalanır.
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     assert!(
         s.farms_built > 0,
         "sezon boyunca hiç özel çiftlik kurulmadı — kurma kapısı yine \
@@ -97,7 +97,7 @@ fn every_finished_good_gets_produced() {
     // (yedek yol `find()` ile ilk boş slotu seçiyordu), listenin sonundaki
     // Ziyafet neredeyse hiç üretilmiyordu. Her mamulün üretilmesi, dağılımın
     // sıralamaya değil ekonomiye bakmasının en basit kanıtı.
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     for p in ProductKind::FINISHED_GOODS {
         assert!(
             s.produced.get(&p).copied().unwrap_or(0) > 0,
@@ -113,7 +113,7 @@ fn factories_are_not_left_permanently_unstaffed() {
     // atıl fabrikaya işçi vermiyor → fabrika bir daha açılamıyor. Kilit
     // tamamen kapanırsa fabrikaların tamamı kadrosuz kalır; bu test o uç
     // hâli yakalar.
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     let total = s.driver.state.factories.len();
     let unstaffed = s
         .driver
@@ -138,7 +138,7 @@ fn factories_are_not_left_permanently_unstaffed() {
 fn merchant_buys_what_it_sells() {
     // Tüccar'ın sezona verilen stoğu var. Aracılık ediyor mu, yoksa yalnız
     // o stoğu mu eritiyor? Aldığı, sattığının belirgin bir kısmı olmalı.
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     let (bought, sold) = s.trade.get(&NpcKind::Tuccar).copied().unwrap_or((0, 0));
     assert!(sold > 0, "Tüccar hiç satmadı");
     assert!(
@@ -153,7 +153,7 @@ fn merchant_buys_what_it_sells() {
 fn caravans_actually_move() {
     // Kervanlar bir dönem yalnız satın alınıyordu; `DispatchCaravan` hiç
     // çıkmasa da ekonomi "çalışıyor" görünürdü. Taşıma gerçekten olmalı.
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     assert!(
         s.caravans_dispatched > 0,
         "sezon boyunca hiç kervan yola çıkmadı — şehirler arası taşıma ölü"
@@ -213,7 +213,7 @@ fn bank_actually_lends() {
     // geçiyordu (denendi, test ısırmadı). Ölçümde yalnız kurtarma varken
     // sezon başına 0-3 kredi açılıyor, yatırım kredisiyle ~30.
     const MIN_LOANS: u32 = 10;
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     assert!(
         s.loans_taken >= MIN_LOANS,
         "sezonda yalnız {} kredi açıldı (en az {MIN_LOANS} bekleniyor) — \
@@ -233,7 +233,7 @@ fn cartels_actually_form() {
     // ama onu emit eden tek satır kod yoktu. Denetimde "kartel 0/0" olarak
     // görünüyordu ve bu bir denge sorunu sanılıyordu — oysa yazılmamış
     // özellikti. Aynı sessiz ölüm tekrarlanmasın.
-    let s = run_season(350);
+    let s = run_season(moneywar_web::SEASON_TICKS);
     assert!(
         s.cartels_formed > 0,
         "sezon boyunca hiç kartel kurulmadı — tespit edici yine ölü olabilir"
