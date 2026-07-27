@@ -264,10 +264,19 @@ export interface RelationsSummary {
   fiercest_rivalry: [ActorRef, ActorRef] | null;
 }
 
+export interface RoleFlowDto {
+  from_role: string;
+  to_role: string;
+  units: number;
+  value_lira: number;
+  top_products: string[];
+}
+
 export interface RelationsGraph {
   tick: number;
   window_from_tick: number | null;
   nodes: GraphNodeDto[];
   edges: GraphEdgeDto[];
+  role_flows: RoleFlowDto[];
   summary: RelationsSummary;
 }

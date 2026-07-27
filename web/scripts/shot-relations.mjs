@@ -19,10 +19,8 @@ await page.locator("button", { hasText: "ilişkiler" }).first().click();
 await page.waitForTimeout(2500);
 await page.screenshot({ path: `${OUT}/rel-1-overview.png` });
 
-// Bir firmaya odaklan.
-// Tıklama hedefi görünmez daire; `<g>`nin sınırlayıcı kutusu
-// döndürülmüş etiketi de kapsadığı için merkezi boşluğa düşüyor.
-const node = page.locator(".rel__hit").first();
+// Bir firmaya odaklan — husumet kartındaki ilk isme tıkla.
+const node = page.locator(".rel__card-who button, .rel__bond-pair button").first();
 if (await node.count()) {
   await node.click();
   await page.waitForTimeout(900);
@@ -33,7 +31,7 @@ const problems = await page.evaluate(() => {
   const out = [];
   const de = document.documentElement;
   if (de.scrollWidth > de.clientWidth + 1) out.push(`yatay taşma ${de.scrollWidth}>${de.clientWidth}`);
-  for (const el of document.querySelectorAll(".rel__layout *")) {
+  for (const el of document.querySelectorAll(".dt__body *")) {
     const cs = getComputedStyle(el);
     const clipped = el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2;
     const scrollable = /auto|scroll/.test(cs.overflowX + cs.overflowY);

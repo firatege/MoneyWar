@@ -1,71 +1,55 @@
 import { useMemo, useState } from "react";
 import { useDetail } from "../hooks/useDetail";
-import type { GraphEdgeDto, RelationsGraph } from "../types-detail";
+import type { RelationsGraph } from "../types-detail";
 import { compact, tickLabel } from "../lib/format";
 import { roleColor, roleInk } from "../lib/roles";
 import { Block, DetailShell, Stat } from "./DetailShell";
 import "./relations.css";
 
 /**
- * İlişki ağı sayfası — kim kiminle çalışıyor, kim kime düşman.
+ * İlişki sayfası — kim kiminle çalışıyor, kim kime düşman.
  *
- * # Neden akış yetmiyordu
+ * # Çember graf denendi ve okunmadı
  *
- * İlişki motorda iki yönlü işliyor: olay ilişkiyi doğuruyor (fiyat kırma →
- * kin) ve ilişki olayı etkiliyor (güven → daha yüksek teklif). Ama akışta
- * yalnız tek tek satırlar geçiyordu; "KİN" yazan bir satır görünüp
- * kayboluyor, kimin kime ne yaptığı hiç toplanmıyordu.
+ * İlk sürüm klasik bir chord/çember grafiydi: 36 firma çember üzerinde,
+ * aralarındaki 226 bağ merkeze kavislenen yaylar. Teoride doğru, pratikte
+ * hiçbir şey seçilmiyordu — yaylar ortada yumak oluyor, isimler radyal
+ * döndüğü için okunmuyor, iki firmanın bağlı olup olmadığı ancak tıklayıp
+ * filtreleyerek anlaşılıyordu.
  *
- * # Neden bu biçim
+ * # Yerine ne kondu
  *
- * Kuvvet-yönlendirmeli (force-directed) graf her açılışta farklı yerleşir —
- * izleyici aynı firmayı iki kez aynı yerde bulamaz. Burada düğümler
- * **role göre gruplanmış sabit bir çember** üzerinde: aynı rolün firmaları
- * yan yana, konum tick'ten tick'e değişmiyor. Kenarlar merkeze doğru
- * kavislenen yaylar — düz çizgide 121 kenar birbirini kesip okunmaz hale
- * geliyordu.
+ * Sayfa okunur katmanlara ayrıldı ve **hiçbirinde çapraz çizgi yok**:
  *
- * Fizik motoru ya da dış kütüphane yok: yerleşim tamamen deterministik.
+ *   1. **Ekonominin akışı** — rolden role. Firma-firma çifti gürültü
+ *      (226 kenar); role indirgeyince on satır kalıyor ve yapı görünüyor:
+ *      Çiftçi ham çıkarır, Tüccar taşır, Sanayici işler, Alıcı tüketir.
+ *   2. **Husumetler** — her çekişme bir kart: kim, kime, ne, ne zamandan beri.
+ *   3. **En güçlü bağlar** — sıralı çubuk listesi, tıklanır.
+ *
+ * Firma seçilince en üstte o firmanın bütün ilişkileri tek tabloda açılıyor.
  */
-
-const R = 158;
-/**
- * Odaklanılmadığında çizilen en güçlü ticaret bağı sayısı.
- *
- * Tüm bağları çizmek denendi ve okunmaz çıktı: 287 kenar merkeze doğru
- * kavislenince yumak oluyor, hiçbir ilişki seçilemiyor. Husumetler her
- * zaman tam gösteriliyor (zaten az ve asıl merak edilen); ticaret bağları
- * en güçlüden kırpılıyor. "hepsi" filtresi sınırı kaldırır.
- */
-const TOP_TRADE_EDGES = 28;
-const NODE_R_MIN = 5;
-const NODE_R_MAX = 13;
 
 /** Kenar türlerinin görsel kimliği ve okunur adı. */
-const EDGE_KINDS: Record<string, { label: string; color: string; note: string }> = {
-  ticaret: {
-    label: "ticaret",
-    color: "var(--gain-dim)",
-    note: "birlikte iş yapıyorlar — kalınlık dönen paraya göre",
-  },
-  kin: {
-    label: "kin",
-    color: "var(--role-spekulator)",
-    note: "zarar gören, zarar vereni hatırlıyor",
-  },
-  savas: {
-    label: "fiyat savaşı",
-    color: "var(--loss)",
-    note: "karşılıklı fiyat kırma sürüyor",
-  },
-  bogma: {
-    label: "tedarik boğma",
-    color: "var(--role-alici)",
-    note: "rakibin girdisi piyasadan çekiliyor",
-  },
+const EDGE_KINDS: Record<string, { label: string; color: string }> = {
+  ticaret: { label: "ticaret", color: "var(--gain-dim)" },
+  kin: { label: "kin", color: "var(--role-spekulator)" },
+  savas: { label: "fiyat savaşı", color: "var(--loss)" },
+  bogma: { label: "tedarik boğma", color: "var(--role-alici)" },
 };
 
-type Filter = "hepsi" | "ticaret" | "husumet";
+/**
+ * Rolün üretim zincirindeki yeri. Akış oku bunu izler: zincirin yönünde
+ * giden akış dolu, geri dönen soluk çizilir.
+ */
+const ROLE_STAGE: Record<string, number> = {
+  Çiftçi: 0,
+  Spekülatör: 1,
+  Tüccar: 1,
+  Sanayici: 2,
+  Alıcı: 3,
+  Banka: 4,
+};
 
 interface Props {
   tick: number;
@@ -75,68 +59,43 @@ interface Props {
 
 export function RelationsPanel({ tick, onClose, onSelectFirm }: Props) {
   const { data, error, loading } = useDetail<RelationsGraph>("/api/relations", tick);
-  const [filter, setFilter] = useState<Filter>("hepsi");
   const [focused, setFocused] = useState<number | null>(null);
 
-  /** Düğümler role göre gruplu, çember üzerinde sabit konumda. */
-  const layout = useMemo(() => {
-    const nodes = [...(data?.nodes ?? [])].sort((a, b) => {
-      const r = (a.role ?? "").localeCompare(b.role ?? "", "tr");
-      return r !== 0 ? r : a.id - b.id;
-    });
-    const maxFab = Math.max(1, ...nodes.map((n) => n.factories));
-    const pos = new Map<number, { x: number; y: number; r: number; a: number }>();
-    nodes.forEach((n, i) => {
-      const a = (-90 + (360 / Math.max(1, nodes.length)) * i) * (Math.PI / 180);
-      pos.set(n.id, {
-        x: R * Math.cos(a),
-        y: R * Math.sin(a),
-        r: NODE_R_MIN + (n.factories / maxFab) * (NODE_R_MAX - NODE_R_MIN),
-        a,
-      });
-    });
-    return { nodes, pos };
-  }, [data]);
+  const nameOf = (id: number) => data?.nodes.find((n) => n.id === id)?.name ?? `#${id}`;
+  const roleOf = (id: number) => data?.nodes.find((n) => n.id === id)?.role ?? null;
 
-  const edges = useMemo(() => {
-    const all = data?.edges ?? [];
-    // Odaklanılan firma varsa yalnız ona değen kenarlar — yüzlerce kenarda
-    // tek firmayı izlemek başka türlü mümkün değil.
-    if (focused != null) {
-      return all.filter((e) => e.from === focused || e.to === focused);
-    }
-    const conflicts = all.filter((e) => e.kind !== "ticaret");
-    const trades = [...all.filter((e) => e.kind === "ticaret")].sort(
-      (a, b) => b.strength - a.strength,
-    );
-    if (filter === "husumet") return conflicts;
-    // Husumet her zaman tam; ticaret en güçlüden kırpılıyor.
-    const shownTrades = filter === "ticaret" ? trades : trades.slice(0, TOP_TRADE_EDGES);
-    return filter === "ticaret" ? shownTrades : [...shownTrades, ...conflicts];
-  }, [data, filter, focused]);
+  const conflicts = useMemo(
+    () => (data?.edges ?? []).filter((e) => e.kind !== "ticaret"),
+    [data],
+  );
 
-  /** Odaklanılan firmanın ilişkileri, açıklamalı liste hâlinde. */
+  const topTrades = useMemo(
+    () =>
+      [...(data?.edges ?? []).filter((e) => e.kind === "ticaret")]
+        .sort((a, b) => (b.value_lira ?? 0) - (a.value_lira ?? 0))
+        .slice(0, 12),
+    [data],
+  );
+
   const focusedRows = useMemo(() => {
     if (focused == null || !data) return [];
-    const nameOf = (id: number) => data.nodes.find((n) => n.id === id)?.name ?? `#${id}`;
-    const roleOf = (id: number) => data.nodes.find((n) => n.id === id)?.role ?? null;
     return data.edges
       .filter((e) => e.from === focused || e.to === focused)
-      .map((e) => {
-        const other = e.from === focused ? e.to : e.from;
-        return { edge: e, other, name: nameOf(other), role: roleOf(other) };
-      })
+      .map((e) => ({ edge: e, other: e.from === focused ? e.to : e.from }))
       .sort((a, b) => {
-        if (a.edge.kind === b.edge.kind) return b.edge.strength - a.edge.strength;
-        return a.edge.kind === "ticaret" ? 1 : -1; // husumet üstte
+        // Husumet üstte — az ve önemli.
+        if (a.edge.kind === b.edge.kind) return (b.edge.value_lira ?? 0) - (a.edge.value_lira ?? 0);
+        return a.edge.kind === "ticaret" ? 1 : -1;
       });
   }, [data, focused]);
 
   const focusedNode = data?.nodes.find((n) => n.id === focused) ?? null;
+  const maxFlow = Math.max(1, ...(data?.role_flows ?? []).map((f) => f.value_lira));
+  const maxTrade = Math.max(1, ...topTrades.map((t) => t.value_lira ?? 0));
 
   return (
     <DetailShell
-      eyebrow="İlişki ağı"
+      eyebrow="İlişkiler"
       title={focusedNode ? focusedNode.name : "Kim kiminle"}
       meta={
         data?.window_from_tick != null && (
@@ -168,265 +127,213 @@ export function RelationsPanel({ tick, onClose, onSelectFirm }: Props) {
             />
           </div>
 
-          <div className="rel__layout">
-            {/* ── Graf ────────────────────────────────────────────────── */}
-            <div className="rel__graph">
-              <div className="rel__toolbar">
-                <div className="rel__filters" role="group" aria-label="İlişki türü">
-                  {(["hepsi", "ticaret", "husumet"] as Filter[]).map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      className={`rel__filter${filter === f ? " is-on" : ""}`}
-                      aria-pressed={filter === f}
-                      onClick={() => setFilter(f)}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-                {focused != null && (
-                  <button type="button" className="rel__clear" onClick={() => setFocused(null)}>
-                    ← tüm ağ
-                  </button>
-                )}
-              </div>
-
-              <svg
-                className="rel__svg"
-                viewBox="-236 -222 472 468"
-                role="group"
-                aria-label="Firmalar arası ilişki ağı"
-              >
-                {/* Kenarlar — merkeze doğru kavisli yay. Düz çizgide
-                    yüzden fazla kenar birbirini kesip okunmaz oluyordu. */}
-                <g className="rel__edges">
-                  {edges.map((e, i) => {
-                    const a = layout.pos.get(e.from);
-                    const b = layout.pos.get(e.to);
-                    if (!a || !b) return null;
-                    const style = EDGE_KINDS[e.kind] ?? EDGE_KINDS.ticaret;
-                    const isTrade = e.kind === "ticaret";
-                    return (
-                      <path
-                        key={`${e.kind}-${e.from}-${e.to}-${i}`}
-                        d={`M ${a.x} ${a.y} Q 0 0 ${b.x} ${b.y}`}
-                        className={`rel__edge rel__edge--${e.kind}`}
-                        stroke={style.color}
-                        strokeWidth={isTrade ? 0.4 + e.strength * 2.2 : 1.6}
-                        strokeOpacity={focused == null && isTrade ? 0.35 : 0.9}
-                      >
-                        <title>{e.label}</title>
-                      </path>
-                    );
-                  })}
-                </g>
-
-                {/* Düğümler */}
-                {layout.nodes.map((n) => {
-                  const p = layout.pos.get(n.id);
-                  if (!p) return null;
-                  const sel = focused === n.id;
-                  // Etiket çemberin dışında ve **teğet doğrultuda döndürülmüş**.
-                  // Yatay yazıda 34 isim, özellikle sol yayda üst üste
-                  // biniyordu; radyal dizilim isimleri birbirinden ayırıyor.
-                  const deg = (p.a * 180) / Math.PI;
-                  const flip = deg > 90 || deg < -90;
-                  const lr = p.r + 8;
-                  return (
-                    <g
-                      key={n.id}
-                      className={`rel__node${sel ? " is-sel" : ""}`}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`${n.name}: ${n.partners} ortak, ${n.rivals} husumet`}
-                      onClick={() => setFocused(sel ? null : n.id)}
-                      onKeyDown={(ev) => {
-                        if (ev.key === "Enter" || ev.key === " ") {
-                          ev.preventDefault();
-                          setFocused(sel ? null : n.id);
-                        }
-                      }}
-                    >
-                      {/* Görünmez tıklama alanı. Daire 5-13px; hem parmakla
-                          hem fareyle isabet ettirmek için hedef büyütülüyor.
-                          Grubun kendisine güvenmek olmuyordu: etiket çemberin
-                          dışında olduğu için grubun sınırlayıcı kutusu kocaman
-                          çıkıyor ve merkezi boşluğa düşüyor. */}
-                      <circle cx={p.x} cy={p.y} r={Math.max(p.r + 6, 11)} className="rel__hit" />
-                      <circle cx={p.x} cy={p.y} r={p.r} className="rel__disc" fill={roleColor(n.role)} />
-                      {n.monopolies > 0 && (
-                        <circle cx={p.x} cy={p.y} r={p.r + 3} className="rel__crown" />
-                      )}
-                      <text
-                        className="rel__label"
-                        fill={sel ? "var(--text)" : "var(--text-faint)"}
-                        // Sıra önemli: önce düğüme git, sonra yarıçap
-                        // doğrultusuna dön, sonra **dışarı** kay. Sol yarıda
-                        // yazı ters okunmasın diye 180° çevrilir; kaydırma
-                        // yine dışarı doğru olmalı — negatif yazınca etiket
-                        // dairenin içine düşüyordu.
-                        transform={
-                          `translate(${p.x} ${p.y}) rotate(${deg}) translate(${lr} 0)` +
-                          (flip ? " rotate(180)" : "")
-                        }
-                        textAnchor={flip ? "end" : "start"}
-                        dominantBaseline="middle"
-                      >
-                        {n.name.length > 16 ? `${n.name.slice(0, 15)}…` : n.name}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-
-              <ul className="rel__legend">
-                {Object.entries(EDGE_KINDS).map(([k, v]) => (
-                  <li key={k}>
-                    <i style={{ background: v.color }} />
-                    <b>{v.label}</b> — {v.note}
-                  </li>
-                ))}
-              </ul>
-              <p className="rel__hint">
-                Daire büyüklüğü fabrika sayısı · halka tekel · firmaya tıkla, yalnız onun
-                ilişkileri kalsın
-              </p>
-            </div>
-
-            {/* ── Açıklamalı liste ─────────────────────────────────────── */}
-            <div className="rel__side">
-              {focusedNode ? (
-                <Block
-                  title={focusedNode.name}
-                  note={`${focusedNode.partners} ortak · ${focusedNode.rivals} husumet`}
+          {/* Seçili firmanın bütün ilişkileri — en üstte, tek tabloda. */}
+          {focusedNode && (
+            <Block
+              title={focusedNode.name}
+              note={`${focusedNode.partners} ortak · ${focusedNode.rivals} husumet`}
+              wide
+            >
+              <p className="rel__who">
+                <span style={{ color: roleInk(focusedNode.role) }}>{focusedNode.role ?? "—"}</span>
+                <span className="dt__muted">
+                  {" · "}
+                  {focusedNode.factories} fabrika · {compact(focusedNode.pnl_lira)}₺
+                </span>
+                <button
+                  type="button"
+                  className="dt__linkbtn rel__open"
+                  onClick={() => onSelectFirm(focusedNode.id)}
                 >
-                  <p className="rel__who">
-                    <span style={{ color: roleInk(focusedNode.role) }}>
-                      {focusedNode.role ?? "—"}
+                  firma sayfası →
+                </button>
+                <button type="button" className="rel__clear" onClick={() => setFocused(null)}>
+                  ← herkes
+                </button>
+              </p>
+              <div className="dt__scroll">
+                <table className="dt__table">
+                  <thead>
+                    <tr>
+                      <th>ilişki</th>
+                      <th>karşı taraf</th>
+                      <th>ne oluyor</th>
+                      <th className="num">hacim</th>
+                      <th className="num">güven</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {focusedRows.map(({ edge, other }, i) => {
+                      const st = EDGE_KINDS[edge.kind] ?? EDGE_KINDS.ticaret;
+                      return (
+                        <tr key={`${edge.kind}-${other}-${i}`}>
+                          <td>
+                            <span
+                              className="rel__tag"
+                              style={{ borderColor: st.color, color: st.color }}
+                            >
+                              {st.label}
+                            </span>
+                          </td>
+                          <td className="name">
+                            <button
+                              type="button"
+                              className="dt__linkbtn"
+                              style={{ color: roleInk(roleOf(other)) }}
+                              onClick={() => setFocused(other)}
+                            >
+                              {nameOf(other)}
+                            </button>
+                          </td>
+                          <td>{edge.label}</td>
+                          <td className="num">
+                            {edge.value_lira != null ? `${compact(edge.value_lira)}₺` : "—"}
+                          </td>
+                          <td className="num">{edge.trust != null ? edge.trust.toFixed(2) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                    {focusedRows.length === 0 && (
+                      <tr>
+                        <td colSpan={5}>bu firmanın kayıtlı ilişkisi yok</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Block>
+          )}
+
+          {/* ── 1. Ekonominin akışı ─────────────────────────────────────── */}
+          <Block title="Ekonominin akışı" note="rolden role · dönen para" wide>
+            <p className="rel__intro">
+              Firma-firma bağı çok ve gürültülü. Role indirgeyince ekonominin şekli
+              görünüyor: <b>Çiftçi</b> ham madde çıkarır, <b>Tüccar</b> şehirler arası
+              taşır, <b>Sanayici</b> işler, <b>Alıcı</b> tüketir. <b>Spekülatör</b> araya
+              girip stok tutar. Dolu çubuk zincirin yönünde, soluk olan geri akış.
+            </p>
+            <ul className="rel__flows">
+              {data.role_flows.map((f) => {
+                const forward = (ROLE_STAGE[f.to_role] ?? 9) >= (ROLE_STAGE[f.from_role] ?? 9);
+                return (
+                  <li key={`${f.from_role}-${f.to_role}`} className="rel__flow">
+                    <span className="rel__flow-pair">
+                      <span style={{ color: roleInk(f.from_role) }}>{f.from_role}</span>
+                      <span className="rel__flow-arrow" aria-hidden="true">
+                        {forward ? "→" : "↩"}
+                      </span>
+                      <span style={{ color: roleInk(f.to_role) }}>{f.to_role}</span>
                     </span>
-                    <span className="dt__muted">
-                      {" · "}
-                      {focusedNode.factories} fabrika · {compact(focusedNode.pnl_lira)}₺
+                    <span className="rel__flow-track" aria-hidden="true">
+                      <span
+                        className={`rel__flow-fill${forward ? "" : " is-back"}`}
+                        style={{
+                          width: `${(f.value_lira / maxFlow) * 100}%`,
+                          background: roleColor(f.from_role),
+                        }}
+                      />
                     </span>
-                    <button
-                      type="button"
-                      className="dt__linkbtn rel__open"
-                      onClick={() => onSelectFirm(focusedNode.id)}
-                    >
-                      firma sayfası →
-                    </button>
-                  </p>
-                  <ul className="rel__rows">
-                    {focusedRows.map(({ edge, other, name, role }, i) => (
-                      <li key={`${edge.kind}-${other}-${i}`} className="rel__row">
-                        <span
-                          className="rel__dot"
-                          style={{ background: (EDGE_KINDS[edge.kind] ?? EDGE_KINDS.ticaret).color }}
-                          aria-hidden="true"
-                        />
-                        <span className="rel__row-body">
+                    <span className="rel__flow-val">{compact(f.value_lira)}₺</span>
+                    <span className="rel__flow-what">{f.top_products.join(" · ")}</span>
+                  </li>
+                );
+              })}
+              {data.role_flows.length === 0 && <li className="dt__state">henüz akış yok</li>}
+            </ul>
+          </Block>
+
+          <div className="dt__grid">
+            {/* ── 2. Husumetler ────────────────────────────────────────── */}
+            <Block title="Husumetler" note={`${conflicts.length} aktif`}>
+              {conflicts.length === 0 ? (
+                <p className="dt__state">piyasa sakin — kimse kimseye kin tutmuyor</p>
+              ) : (
+                <ul className="rel__cards">
+                  {conflicts.map((e, i) => {
+                    const st = EDGE_KINDS[e.kind] ?? EDGE_KINDS.ticaret;
+                    return (
+                      <li key={i} className="rel__card" style={{ borderLeftColor: st.color }}>
+                        <span className="rel__card-kind" style={{ color: st.color }}>
+                          {st.label}
+                        </span>
+                        <p className="rel__card-who">
                           <button
                             type="button"
-                            className="dt__linkbtn rel__row-name"
-                            style={{ color: roleInk(role) }}
-                            onClick={() => setFocused(other)}
+                            className="dt__linkbtn"
+                            style={{ color: roleInk(roleOf(e.from)) }}
+                            onClick={() => setFocused(e.from)}
                           >
-                            {name}
+                            {nameOf(e.from)}
                           </button>
-                          <span className="rel__row-label">{edge.label}</span>
-                        </span>
-                        <span className="rel__row-tag">
-                          {(EDGE_KINDS[edge.kind] ?? EDGE_KINDS.ticaret).label}
-                        </span>
+                          <span className="dt__muted"> → </span>
+                          <button
+                            type="button"
+                            className="dt__linkbtn"
+                            style={{ color: roleInk(roleOf(e.to)) }}
+                            onClick={() => setFocused(e.to)}
+                          >
+                            {nameOf(e.to)}
+                          </button>
+                        </p>
+                        <p className="rel__card-what">{e.label}</p>
                       </li>
-                    ))}
-                    {focusedRows.length === 0 && (
-                      <li className="dt__state">bu firmanın kayıtlı ilişkisi yok</li>
-                    )}
-                  </ul>
-                </Block>
-              ) : (
-                <Block title="Ağda ne var" note="bir firmaya tıkla">
-                  <p className="rel__intro">
-                    Her daire bir firma, her çizgi bir ilişki. İlişkiler kendiliğinden
-                    doğuyor: birlikte iş yapmak <b>güven</b> biriktiriyor, fiyatı kırılan
-                    firma <b>kin</b> tutuyor, kin tutan sonraki kararlarında sert
-                    davranıyor. Yani olay ilişkiyi, ilişki de olayı besliyor.
-                  </p>
-                  {data.summary.fiercest_rivalry && (
-                    <p className="rel__intro">
-                      Şu an en sert husumet{" "}
-                      <b>{data.summary.fiercest_rivalry[0].name}</b> ile{" "}
-                      <b>{data.summary.fiercest_rivalry[1].name}</b> arasında.
-                    </p>
-                  )}
-                  <TopEdges edges={data.edges} onFocus={setFocused} nodes={data.nodes} />
-                </Block>
+                    );
+                  })}
+                </ul>
               )}
-            </div>
+              <p className="rel__note">
+                Husumet kendiliğinden doğuyor: fiyatı kırılan firma <b>kin</b> tutuyor,
+                kin tutan sonraki kararlarında sert davranıyor. Yani olay ilişkiyi,
+                ilişki de olayı besliyor.
+              </p>
+            </Block>
+
+            {/* ── 3. En güçlü bağlar ───────────────────────────────────── */}
+            <Block title="En güçlü ticaret bağları" note="dönen paraya göre">
+              <ul className="rel__bonds">
+                {topTrades.map((e, i) => (
+                  <li key={i} className="rel__bond">
+                    <span className="rel__bond-pair">
+                      <button
+                        type="button"
+                        className="dt__linkbtn"
+                        style={{ color: roleInk(roleOf(e.from)) }}
+                        onClick={() => setFocused(e.from)}
+                      >
+                        {nameOf(e.from)}
+                      </button>
+                      <span className="dt__muted"> ↔ </span>
+                      <button
+                        type="button"
+                        className="dt__linkbtn"
+                        style={{ color: roleInk(roleOf(e.to)) }}
+                        onClick={() => setFocused(e.to)}
+                      >
+                        {nameOf(e.to)}
+                      </button>
+                    </span>
+                    <span className="rel__bond-track" aria-hidden="true">
+                      <span
+                        className="rel__bond-fill"
+                        style={{ width: `${((e.value_lira ?? 0) / maxTrade) * 100}%` }}
+                      />
+                    </span>
+                    <span className="rel__bond-val">
+                      {compact(e.value_lira ?? 0)}₺
+                      <span className="dt__muted"> güven {(e.trust ?? 0).toFixed(2)}</span>
+                    </span>
+                  </li>
+                ))}
+                {topTrades.length === 0 && <li className="dt__state">henüz ticaret bağı yok</li>}
+              </ul>
+              <p className="rel__note">
+                Güven işlem sayısıyla birikir ve teklifi yükseltir — tanıdık satıcıya
+                daha fazla ödenir. Firma adına tıkla, bütün ilişkilerini gör.
+              </p>
+            </Block>
           </div>
         </>
       )}
     </DetailShell>
-  );
-}
-
-/** Ağın en güçlü bağları — sayfaya girer girmez bir yere bakılsın. */
-function TopEdges({
-  edges,
-  nodes,
-  onFocus,
-}: {
-  edges: GraphEdgeDto[];
-  nodes: { id: number; name: string; role: string | null }[];
-  onFocus: (id: number) => void;
-}) {
-  const nameOf = (id: number) => nodes.find((n) => n.id === id)?.name ?? `#${id}`;
-  const conflicts = edges.filter((e) => e.kind !== "ticaret").slice(0, 5);
-  const trades = [...edges.filter((e) => e.kind === "ticaret")]
-    .sort((a, b) => b.strength - a.strength)
-    .slice(0, 6);
-
-  return (
-    <>
-      {conflicts.length > 0 && (
-        <>
-          <h4 className="rel__subtitle">Süregelen husumetler</h4>
-          <ul className="rel__rows">
-            {conflicts.map((e, i) => (
-              <li key={i} className="rel__row">
-                <span
-                  className="rel__dot"
-                  style={{ background: (EDGE_KINDS[e.kind] ?? EDGE_KINDS.ticaret).color }}
-                  aria-hidden="true"
-                />
-                <span className="rel__row-body">
-                  <button type="button" className="dt__linkbtn rel__row-name" onClick={() => onFocus(e.from)}>
-                    {nameOf(e.from)} → {nameOf(e.to)}
-                  </button>
-                  <span className="rel__row-label">{e.label}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      <h4 className="rel__subtitle">En güçlü ticaret bağları</h4>
-      <ul className="rel__rows">
-        {trades.map((e, i) => (
-          <li key={i} className="rel__row">
-            <span className="rel__dot" style={{ background: "var(--gain-dim)" }} aria-hidden="true" />
-            <span className="rel__row-body">
-              <button type="button" className="dt__linkbtn rel__row-name" onClick={() => onFocus(e.from)}>
-                {nameOf(e.from)} ↔ {nameOf(e.to)}
-              </button>
-              <span className="rel__row-label">{e.label}</span>
-            </span>
-          </li>
-        ))}
-        {trades.length === 0 && <li className="dt__state">henüz ticaret bağı yok</li>}
-      </ul>
-    </>
   );
 }

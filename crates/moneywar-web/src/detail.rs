@@ -1178,6 +1178,8 @@ pub struct RelationsGraph {
     pub window_from_tick: Option<u32>,
     pub nodes: Vec<GraphNodeDto>,
     pub edges: Vec<GraphEdgeDto>,
+    /// Rolden role akış — sayfanın "büyük resim" katmanı.
+    pub role_flows: Vec<RoleFlowDto>,
     pub summary: RelationsSummary,
 }
 
@@ -1216,6 +1218,21 @@ pub struct GraphEdgeDto {
     pub trust: Option<f64>,
     /// Çatışma kenarı için kalan/geçen tick.
     pub ticks: Option<u32>,
+}
+
+/// Rolden role akış — ekonominin asıl şekli.
+///
+/// Firma-firma çifti çok ve gürültülü (226 kenar); role indirgeyince
+/// yapı görünür oluyor: ham madde Çiftçi'den çıkıyor, Tüccar taşıyor,
+/// Sanayici işliyor, Alıcı tüketiyor.
+#[derive(Debug, Clone, Serialize)]
+pub struct RoleFlowDto {
+    pub from_role: String,
+    pub to_role: String,
+    pub units: u64,
+    pub value_lira: f64,
+    /// En çok akan üç ürün — akışın ne olduğunu söyler.
+    pub top_products: Vec<String>,
 }
 
 /// Ağın tek bakışta özeti.
@@ -1414,8 +1431,52 @@ pub fn relations_graph(state: &GameState, ledger: &Ledger) -> RelationsGraph {
             )
         });
 
+    // ── Rolden role akış ─────────────────────────────────────────────────────
+    /// Bir rol çiftinin biriktirdiği akış: (birim, tutar, ürün dağılımı).
+    type RoleFlowAcc = (u64, i64, BTreeMap<ProductKind, u64>);
+    let mut role_acc: BTreeMap<(NpcKind, NpcKind), RoleFlowAcc> = BTreeMap::new();
+    for t in ledger.trades() {
+        let (Some(sr), Some(br)) = (
+            state.players.get(&t.seller).and_then(|p| p.npc_kind),
+            state.players.get(&t.buyer).and_then(|p| p.npc_kind),
+        ) else {
+            continue;
+        };
+        if sr == br {
+            continue; // rol içi çevirme akışın şeklini anlatmıyor
+        }
+        let e = role_acc.entry((sr, br)).or_default();
+        e.0 += u64::from(t.quantity);
+        e.1 += t.value().as_cents();
+        *e.2.entry(t.product).or_default() += u64::from(t.quantity);
+    }
+    let mut role_flows: Vec<RoleFlowDto> = role_acc
+        .into_iter()
+        .map(|((from, to), (units, value, products))| {
+            let mut top: Vec<(ProductKind, u64)> = products.into_iter().collect();
+            top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+            RoleFlowDto {
+                from_role: from.label().to_string(),
+                to_role: to.label().to_string(),
+                units,
+                value_lira: lira(Money::from_cents(value)),
+                top_products: top
+                    .into_iter()
+                    .take(3)
+                    .map(|(p, _)| p.display_name().to_string())
+                    .collect(),
+            }
+        })
+        .collect();
+    role_flows.sort_by(|a, b| {
+        b.value_lira
+            .partial_cmp(&a.value_lira)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     RelationsGraph {
         tick: state.current_tick.value(),
+        role_flows,
         window_from_tick: ledger.earliest_tick().map(|t| t.value()),
         summary: RelationsSummary {
             trade_edges,
