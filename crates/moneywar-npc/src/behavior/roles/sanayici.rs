@@ -757,6 +757,32 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         return Some(candidates[idx]);
     }
 
+    // # Zincir farkındalığı denendi ve geri alındı
+    //
+    // Skor marja bakıyor, zincire bakmıyor. Canlıda t49'da sonucu şuydu:
+    // **5 Ziyafet fabrikası, 0 Şarap fabrikası**. Ziyafet'in tarifi Şarap
+    // istiyor; kimse üretmediği için beş fabrika da doğuştan ölü. Gerçek
+    // bir firma önce "girdim nereden gelecek" diye sorar.
+    //
+    // Girdi tedarik edilebilirliği dört ayrı biçimde skora bağlandı
+    // (20 oyun × 350 tick, taban = şimdiki hâli):
+    //
+    //   varyant                        makas  Sanayici   Alıcı  Ziyafet  Ekmek
+    //   taban (marj + jitter)           3.8x     90668  -18313     %84   %138
+    //   orantılı çarpan (ham dahil)     4.0x     82725  -30774     %73   %121
+    //   orantılı çarpan (yalnız mamul)  4.4x     83476  -25992     %47   %102
+    //   sert kapı (hepsi tedariksizse)  3.8x     90668  -18313     %84   %138  ← hiç ateşlenmedi
+    //   sert kapı (biri tedariksizse)   4.5x     97022  -28930     %75   %112
+    //
+    // Dördü de tabanın altında. Sebep: **erken kurmak, doğru kurmaktan
+    // değerli**. Ölü fabrikanın maliyeti 8.000₺ ve o para hane halkına
+    // dönüyor (capex dağıtımı); zinciri bekleyip geç kurmanın maliyeti ise
+    // kaybedilen üretim tick'leri. Açgözlü kurucu, ölü fabrika kursa bile
+    // toplamda kazanıyor.
+    //
+    // Kurulamayan zincirin gerçek çözümü kurma kararında değil, girdinin
+    // bulunabilirliğinde — fabrika girdisini bulabilseydi ölmezdi.
+    //
     // Sonraki fab — multi-faktör skorlama + player_id jitter.
     //   1. Margin (mamul - raw fiyatı)         → ağırlık +
     //   2. Rakip fab sayısı                     → ağırlık -
