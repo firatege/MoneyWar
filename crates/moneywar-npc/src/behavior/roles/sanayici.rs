@@ -735,11 +735,39 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         //   skorlamalı, açık ağ. 10  %64   3.7x     85285  -12853
         //
         // Marj tek başına yanlış sinyal (ham ucuz olduğu için dibi ödüllendirir),
-        // kıtlık sinyali de tek başına yanlış (tepeye yığar). Doğrusu **akış
-        // dengesi**: bir Un fabrikası ~1.5 Ekmek fabrikasını, bir Ekmek
-        // fabrikası ~1.4 Ziyafet fabrikasını besler. Skorun bu oranı hedeflemesi
-        // gerekiyor — girdi bulunabilirliğine bakan gerçek bir tasarım işi,
-        // tek sabitle çözülmüyor.
+        // kıtlık sinyali de tek başına yanlış (tepeye yığar).
+        //
+        // # Doygunluk cezası da denendi ve geri alındı (2026-07-28)
+        //
+        // "Akış dengesi" fikri şöyle uygulandı: skora **doygunluk cezası**
+        // eklendi (dünyadaki satılmamış stok + o üründe atıl fabrika sayısı) ve
+        // bu yedek yol da aynı skorlamadan geçirildi. Ayrıca jitter ham marja
+        // değil `base_score`'a oranlandı — marja bağlıyken cezadan geçmiyor,
+        // Ziyafet'in büyük marjı cezalı skoru eziyordu.
+        //
+        // Zincir dağılımı **gerçekten düzeldi** (350 tick, tek oyun):
+        //   Kumaş 36 fab (9 atıl) → 11 (1) · karşılama %415 → %356
+        //   Ziyafet 5 fab (0 atıl) → 26 (4) · karşılama %76 → %173
+        //   toplam atıl 12 → 13 · girdi-yok olayı ~5.809 → ~5.887
+        //
+        // Ve fiziksel üretim arttı (40 oyun × 500 tick): batch 8.169 → 9.815,
+        // eşleşen birim 21,2M → 24,9M (+%18).
+        //
+        // Ama dağılım çöktü — 40 oyun × 500 tick, taban vs doygunluk:
+        //   Alıcı     51.293 →  2.897   (10 haneden 4,9'u zararda)
+        //   Spekülatör 133.484 → 67.519
+        //   Çiftçi    755.962 → 568.957
+        //   makas        6,8x →   12,6x
+        //
+        // Sebep yapısal: zincirin tepesi (Ziyafet, lüks) hane halkıyla **aynı
+        // ara malları** için yarışıyor ve fabrika haneyi fiyatta yeniyor.
+        // Ziyafet fabrikası çoğaldıkça Ekmek'i kapıyor, hane ekmek alamıyor.
+        // Yukarıdaki iki denemede de imza aynıydı: Alıcı -9.112 / -12.853.
+        //
+        // Yani sorun skorun sinyalinde değil: üst katman fabrikası kurmak
+        // **hane halkının pahasına** kârlı. Bunu çözmek için zincirin tepesinin
+        // hane ile aynı mala talip olmaması gerekir (tarif ayrımı) ya da
+        // hanenin fiyatta yarışabilmesi. Skorlamayla çözülmüyor — altı deneme.
         //
         // Tüm 9 dolmuş — kendi sahibi olmadığı bir kombinasyon (overlap)
         let own_taken: std::collections::BTreeSet<(CityId, ProductKind)> = state
