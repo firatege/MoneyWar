@@ -14,7 +14,7 @@ use moneywar_domain::{
     CityId, GameState, MarketOrder, Money, NpcKind, OrderId, OrderSide, PlayerId, ProductKind,
     Tick,
     balance::{
-        NPC_BASE_PRICE_FINISHED_LIRA, SEED_COST_PER_RAW_LIRA, WORLD_FAB_PERIOD,
+        npc_base_price_finished_lira, SEED_COST_PER_RAW_LIRA, WORLD_FAB_PERIOD,
         WORLD_FAB_QTY_PER_PERIOD, WORLD_FAB_SELL_TTL, WORLD_PLAYER_ID_VALUE,
     },
 };
@@ -715,7 +715,7 @@ fn tick_world_factories(state: &mut GameState, _report: &mut TickReport, tick: T
             // Fiyat: effective_baseline × 0.95 — baseline fair-value, %5
             // markdown ile fast match. Baseline yoksa hardcoded fallback.
             let baseline = state.effective_baseline(city, product).unwrap_or_else(|| {
-                Money::from_lira(NPC_BASE_PRICE_FINISHED_LIRA).unwrap_or(Money::ZERO)
+                Money::from_lira(npc_base_price_finished_lira()).unwrap_or(Money::ZERO)
             });
             let unit_price =
                 Money::from_cents(baseline.as_cents().saturating_mul(95).saturating_div(100));

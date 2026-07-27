@@ -102,7 +102,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 }
 
 const fn default_raw_price(_product: ProductKind) -> i64 {
-    moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+    moneywar_domain::balance::npc_base_price_raw_lira()
 }
 
 #[cfg(test)]

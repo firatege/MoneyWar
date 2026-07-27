@@ -135,7 +135,7 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         for city in CityId::ALL {
             let product = city.cheap_raw();
             let reference = state.reference_price(city, product).unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                Money::from_lira(moneywar_domain::balance::npc_base_price_raw_lira())
                     .unwrap_or(Money::ZERO)
             });
             // Pasif tavan: baseline × 1.05 (Çiftçi'nin baz fiyatına yakın).
@@ -308,7 +308,7 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         let quantity = base_qty.saturating_mul(goal_vol_mult).min(200);
 
         let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
-            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
+            Money::from_lira(moneywar_domain::balance::npc_base_price_finished_lira())
                 .unwrap_or(Money::ZERO)
         });
         let cash_lira = player.cash.as_cents() / 100;

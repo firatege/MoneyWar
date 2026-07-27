@@ -42,9 +42,9 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         }
         let reference = state.reference_price(city, product).unwrap_or_else(|| {
             let lira = if product.is_finished() {
-                moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+                moneywar_domain::balance::npc_base_price_finished_lira()
             } else {
-                moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+                moneywar_domain::balance::npc_base_price_raw_lira()
             };
             Money::from_lira(lira).unwrap_or(Money::ZERO)
         });
@@ -86,7 +86,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     for city in CityId::ALL {
         for product in moneywar_domain::ProductKind::RAW_MATERIALS {
             let reference = state.reference_price(city, product).unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA)
+                Money::from_lira(moneywar_domain::balance::npc_base_price_raw_lira())
                     .unwrap_or(Money::ZERO)
             });
             let base_price = scale_pct(reference, 95);
@@ -122,7 +122,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     for city in CityId::ALL {
         for product in ProductKind::FINISHED_GOODS {
             let reference = state.reference_price(city, product).unwrap_or_else(|| {
-                Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA)
+                Money::from_lira(moneywar_domain::balance::npc_base_price_finished_lira())
                     .unwrap_or(Money::ZERO)
             });
             // Toptan fiyat = reference (Sanayici'nin SAT fiyatı). Markdown yok
@@ -218,7 +218,7 @@ mod tests {
         let s = fresh();
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
-        let baseline_cents = moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA * 100;
+        let baseline_cents = moneywar_domain::balance::npc_base_price_raw_lira() * 100;
         let expected = baseline_cents * 95 / 100;
         let lower = expected * 95 / 100;
         let upper = expected * 105 / 100;
@@ -280,7 +280,7 @@ mod tests {
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
         let raw_baseline =
-            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA).unwrap();
+            Money::from_lira(moneywar_domain::balance::npc_base_price_raw_lira()).unwrap();
         for c in &cands {
             if let ActionCandidate::SubmitOrder {
                 side: OrderSide::Buy,
@@ -305,7 +305,7 @@ mod tests {
         let p = esnaf(50_000);
         let cands = enumerate(&s, &p);
         let finished_baseline =
-            Money::from_lira(moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA).unwrap();
+            Money::from_lira(moneywar_domain::balance::npc_base_price_finished_lira()).unwrap();
         let lower = finished_baseline.as_cents() * 95 / 100;
         let upper = finished_baseline.as_cents() * 105 / 100;
         let mut found = false;

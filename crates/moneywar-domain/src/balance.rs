@@ -203,19 +203,28 @@ pub const EMPLOYEES_PER_FACTORY_L3: u32 = 6;
 /// 60₺ eski toplam yükü gerçekten korur.
 pub const WAGE_PER_EMPLOYEE_LIRA: i64 = 60;
 
-/// Ücretin reel üretim ölçeğine göre düzeltilmiş hali.
+/// Ücret ölçekten **bağımsızdır** — ve bu bilinçli.
 ///
-/// [`PRODUCTION_SCALE_PCT`] yalnız malı büyütür. Ücret sabit kalırsa hane
-/// halkı 2× malı aynı parayla almak zorunda kalır ve batar — ölçümde
-/// ölçek ×200'de Alıcı -12K'dan -75K'ya düşmüştü. İşgücü havuzu
-/// [`LABOR_POOL_SIZE`] ile sabit olduğu için istihdam da büyüyemiyor;
-/// tek ayar noktası ücretin kendisi.
+/// Ölçek miktarı büyütürken fiyatı aynı oranda küçültüyor (bkz.
+/// `web/src/world.rs`, baz fiyat ölçeğe bölünür). Yani nominal ciro
+/// değişmez; değişen yalnız birimin büyüklüğüdür. Ücreti ölçekle
+/// çarpmak bu yüzden hata: sabit ciroya 10× maaş bindiriyor.
 ///
-/// Ücret transferdir, basım değil: Sanayici öder, Alıcı alır. Para arzı
-/// değişmez, yalnız üretimle tüketim aynı ölçekte kalır.
+/// Ölçüldü (20 oyun, 350 tick) — ücret ölçekle çarpılırken:
+///
+/// ```text
+///   ölçek   Sanayici    Tüccar     Alıcı   iflas/oyun
+///    ×1      230.599   329.177    25.876      1,8
+///    ×3      -18.677  -134.425    80.167     12,6
+///   ×10      -53.317   -17.436    77.373     19,3
+/// ```
+///
+/// Üretici batıyor, hane zenginleşiyor: maaş 10× ödenip mal sabit
+/// fiyatla satılıyordu. Ücreti sabit bırakınca ölçek nötr bir birim
+/// değişimine dönüşüyor.
 #[must_use]
 pub const fn wage_per_employee_lira() -> i64 {
-    WAGE_PER_EMPLOYEE_LIRA * PRODUCTION_SCALE_PCT as i64 / 100
+    WAGE_PER_EMPLOYEE_LIRA
 }
 
 /// Üreticinin bir batch'ten beklediği asgari kâr marjı (yüzde). Girdi
@@ -517,6 +526,34 @@ pub const NPC_BASE_PRICE_RAW_LIRA: i64 = 6;
 /// Eski 15 → 18: `production_tick=3` ile Sanayici marjı yetmez, sezon sonu
 /// negatif `PnL`. Marj 9 → 12 (%200) ile Sanayici dengeye gelir.
 pub const NPC_BASE_PRICE_FINISHED_LIRA: i64 = 18;
+
+/// Yedek fiyatların ölçeğe bölünmüş hali.
+///
+/// Yukarıdaki iki sabit **her rolün** yedek fiyatı: tarihçe yokken Sanayici
+/// teklifini, Tüccar/Çiftçi/Alıcı emrini ve puanlamanın stok değerlemesini
+/// bunlar belirliyor. Baz fiyat ölçeğe bölünürken (bkz. `web/src/world.rs`)
+/// bunlar mutlak kalırsa ×10'da piyasa 0,60₺ derken NPC 6₺ der — on kat
+/// yanlış çapa, hem tekliflerde hem servet hesabında.
+///
+/// Ölçüldü (20 oyun, 350 tick), yedek fiyat ölçeğe bölünmeden:
+///
+/// ```text
+///   ölçek   Sanayici    Tüccar     Alıcı   iflas/oyun
+///    ×1      230.599   329.177    25.876      1,8
+///   ×10      -36.656   -38.096    56.069     14,5
+/// ```
+#[must_use]
+pub const fn npc_base_price_raw_lira() -> i64 {
+    let v = NPC_BASE_PRICE_RAW_LIRA * 100 / PRODUCTION_SCALE_PCT as i64;
+    if v == 0 { 1 } else { v }
+}
+
+/// Mamul yedek fiyatı, ölçeğe bölünmüş. Bkz. [`npc_base_price_raw_lira`].
+#[must_use]
+pub const fn npc_base_price_finished_lira() -> i64 {
+    let v = NPC_BASE_PRICE_FINISHED_LIRA * 100 / PRODUCTION_SCALE_PCT as i64;
+    if v == 0 { 1 } else { v }
+}
 
 /// `MarketMaker` markup — stok varsa bu yüzdeyle satar (base × 1.1).
 pub const NPC_SELL_MARKUP_PCT: i64 = 110;

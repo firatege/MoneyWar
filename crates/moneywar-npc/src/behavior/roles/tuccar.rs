@@ -548,9 +548,9 @@ fn richest_city(state: &GameState, product: ProductKind) -> Option<(CityId, Mone
 fn baseline_or_default(state: &GameState, city: CityId, product: ProductKind) -> Money {
     state.reference_price(city, product).unwrap_or_else(|| {
         let lira = if product.is_finished() {
-            moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+            moneywar_domain::balance::npc_base_price_finished_lira()
         } else {
-            moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+            moneywar_domain::balance::npc_base_price_raw_lira()
         };
         Money::from_lira(lira).unwrap_or(Money::ZERO)
     })

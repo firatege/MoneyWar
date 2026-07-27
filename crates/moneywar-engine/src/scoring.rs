@@ -113,8 +113,8 @@ pub fn leaderboard(state: &GameState) -> Vec<PlayerScore> {
 }
 
 /// Stok değeri: her (şehir, ürün) için `miktar × son 5 tick ortalama fiyatı`.
-/// Tarihçe yoksa fallback olarak [`balance::NPC_BASE_PRICE_RAW_LIRA`] /
-/// `NPC_BASE_PRICE_FINISHED_LIRA` kullanır — yoksa NPC'nin clearing
+/// Tarihçe yoksa fallback olarak [`balance::npc_base_price_raw_lira()`] /
+/// `npc_base_price_finished_lira()` kullanır — yoksa NPC'nin clearing
 /// olmamış stoğu skorda görünmezdi (UX bug).
 fn compute_stock_value(state: &GameState, player_id: PlayerId) -> Money {
     let Some(player) = state.players.get(&player_id) else {
@@ -139,9 +139,9 @@ fn compute_stock_value(state: &GameState, player_id: PlayerId) -> Money {
 /// Tarihçe olmadığında baz fiyat fallback'i — `balance.rs`'ten gelir.
 fn fallback_price(product: moneywar_domain::ProductKind) -> Money {
     let lira = if product.is_raw() {
-        moneywar_domain::balance::NPC_BASE_PRICE_RAW_LIRA
+        moneywar_domain::balance::npc_base_price_raw_lira()
     } else {
-        moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+        moneywar_domain::balance::npc_base_price_finished_lira()
     };
     Money::from_lira(lira).unwrap_or(Money::ZERO)
 }

@@ -31,9 +31,22 @@ use crate::behavior::pricing::{CrossPolicy, marketable_bid};
 pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     let bucket_cash = bucket_budget(player);
+    let tick = state.current_tick.value();
 
-    for city in moneywar_domain::CityId::ALL {
-        for product in ProductKind::FINISHED_GOODS {
+    for (ci, city) in moneywar_domain::CityId::ALL.into_iter().enumerate() {
+        for (pi, product) in ProductKind::FINISHED_GOODS.into_iter().enumerate() {
+            // Kova fazı — bu kova her tick değil, `BUY_PERIOD` tick'te bir
+            // alır; karşılığında o seferde `BUY_PERIOD` katı ister.
+            //
+            // Talep hızı aynı, emir sayısı 1/4. Faz kovaya *ve* oyuncuya
+            // bağlı olduğu için hepsi aynı tick'te patlamaz: her tick
+            // 15/4 ≈ 4 kova aktif olur, harcama düzgün yayılır.
+            let bucket = ci * ProductKind::FINISHED_GOODS.len() + pi;
+            let phase = (tick as usize + player.id.value() as usize + bucket)
+                % BUY_PERIOD as usize;
+            if phase != 0 {
+                continue;
+            }
             // effective_baseline: Walras clamp'lı referans (initial × [%60,%160]).
             // reference_price (rolling avg) kullanmak Sanayici'de olduğu gibi
             // fiyat spirali yaratıyordu — yüksek fill → avg artar → daha yüksek
@@ -123,7 +136,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             // Oran korunuyor — fabrika zaten batch kadar (ölçekli) ister,
             // tüketici onun yanında küçük kalır. Değişen yalnız birimin
             // büyüklüğü, taraflar arasındaki denge değil.
-            let want = moneywar_domain::balance::scaled_output(10);
+            let want = moneywar_domain::balance::scaled_output(10 * BUY_PERIOD);
             let quantity = affordable_qty(bucket_cash, unit_price, want);
             if quantity == 0 {
                 continue;
@@ -141,6 +154,17 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     out
 }
 
+/// Bir kovanın alışveriş dönemi (tick).
+///
+/// Alıcı emirlerin %64'ünü tek başına veriyordu: 42.000 emir × 5,4 birim.
+/// Diğer roller 30-35 birimlik emir verirken akış tüketicinin serpintisiyle
+/// doluyor, izleyici "herkes 1'er 1'er alıyor" görüyordu (ölçüm:
+/// `moneywar-web/tests/scale_probe.rs`). Ekonomiyi ×10 ölçeklemek bunu
+/// çözmezdi — aynı seli 10× büyütürdü.
+///
+/// Talep miktarı ve harcama hızı korunuyor; değişen yalnız emir ritmi.
+const BUY_PERIOD: u32 = 4;
+
 /// Alıcı cash'inin (şehir × mamul) bucket'a bölünmüş payı.
 /// v0.6.0 Bursa+Konya: hardcoded 9 → dinamik (5 şehir × 3 mamul = 15).
 /// Eski `/9` 3-şehir tasarımındaydı; 5 şehirde Alıcı her turn 1.67× cash
@@ -151,7 +175,11 @@ fn bucket_budget(player: &Player) -> Money {
         .and_then(|n| n.checked_mul(i64::try_from(ProductKind::FINISHED_GOODS.len()).ok()?))
         .filter(|n| *n > 0)
         .unwrap_or(1);
-    let cents = player.cash.as_cents() / buckets;
+    // Kova `BUY_PERIOD` tick'te bir alışveriş yapıyor; o sefer için biriken
+    // bütçe de o kadar. Çarpmazsak seyrek alım = az harcama olur ve talep
+    // gerçekten düşer — amaç talebi kısmak değil, aynı talebi daha az ve
+    // daha büyük emirle vermek.
+    let cents = player.cash.as_cents() * i64::from(BUY_PERIOD) / buckets;
     Money::from_cents(cents.max(0))
 }
 
@@ -195,7 +223,7 @@ fn affordable_qty(cash: Money, unit_price: Money, want: u32) -> u32 {
 }
 
 const fn default_finished_price() -> i64 {
-    moneywar_domain::balance::NPC_BASE_PRICE_FINISHED_LIRA
+    moneywar_domain::balance::npc_base_price_finished_lira()
 }
 
 #[cfg(test)]
@@ -217,11 +245,22 @@ mod tests {
         (s, p)
     }
 
+    /// `BUY_PERIOD` tick boyunca toplanan adaylar. Alıcı artık her kovaya
+    /// her tick emir vermiyor; sözleşme "bir dönemde hepsi bir kez".
+    fn candidates_over_one_period(mut s: GameState, p: &Player) -> Vec<ActionCandidate> {
+        let mut all = Vec::new();
+        for t in 0..BUY_PERIOD {
+            s.current_tick = moneywar_domain::Tick::new(t);
+            all.extend(enumerate(&s, p));
+        }
+        all
+    }
+
     #[test]
     fn rich_alici_emits_buy_candidates_per_city_product() {
         let (s, p) = alici_with_cash(100_000);
-        let cands = enumerate(&s, &p);
-        // Her şehir × her mamul için bir aday (baseline > 0 olmalı).
+        let cands = candidates_over_one_period(s, &p);
+        // Bir dönemde her şehir × her mamul tam bir kez sıraya gelir.
         assert_eq!(
             cands.len(),
             CityId::ALL.len() * ProductKind::FINISHED_GOODS.len()
@@ -339,7 +378,7 @@ mod tests {
     fn city_product_set_covers_all_finished() {
         use std::collections::BTreeSet;
         let (s, p) = alici_with_cash(100_000);
-        let cands = enumerate(&s, &p);
+        let cands = candidates_over_one_period(s, &p);
         let pairs: BTreeSet<(CityId, ProductKind)> = cands
             .iter()
             .filter_map(|c| match c {
@@ -356,6 +395,23 @@ mod tests {
             for product in ProductKind::FINISHED_GOODS {
                 assert!(pairs.contains(&(city, product)));
             }
+        }
+    }
+
+    #[test]
+    fn buying_load_is_spread_across_ticks() {
+        // Fazın amacı: tek tick'te 15 emir yerine her tick birkaç emir.
+        // Hepsi aynı tick'e düşerse emir seli geri gelir ve Alıcı yine
+        // kendi kendine karşı teklif verir.
+        let (mut s, p) = alici_with_cash(100_000);
+        let buckets = CityId::ALL.len() * ProductKind::FINISHED_GOODS.len();
+        for t in 0..BUY_PERIOD {
+            s.current_tick = moneywar_domain::Tick::new(t);
+            let n = enumerate(&s, &p).len();
+            assert!(
+                n < buckets,
+                "tick {t}: {n} emir — yük dağılmamış, tüm kovalar aynı anda"
+            );
         }
     }
 }
