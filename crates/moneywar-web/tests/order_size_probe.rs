@@ -105,9 +105,9 @@ fn how_big_is_each_role_order() {
 
     // Ara mallar en kritik: fabrika ile tüketici burada yarışıyor.
     for product in [
-        ProductKind::Un,
-        ProductKind::Ekmek,
+        ProductKind::Sarap,
         ProductKind::Zeytinyagi,
+        ProductKind::Ekmek,
         ProductKind::Kumas,
     ] {
         let mut rows: Vec<_> = buy
