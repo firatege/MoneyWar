@@ -328,7 +328,7 @@ pub const TRANSACTION_TAX_PCT: i64 = 2;
 /// kadar izin veriyor). Ziyafet'in tabanı 180₺'de kalıp bir birim girdisi
 /// 258₺ tuttuğu için üretim daha başlamadan zararda oluyordu ve fabrika
 /// girdi ihalesini haklı olarak kaybediyordu.
-pub const MARKET_COST_WEIGHT_PCT: i64 = 70;
+pub const MARKET_COST_WEIGHT_PCT: i64 = 100;
 
 pub const PRICE_CLAMP_LOW_PCT: i64 = 10;
 

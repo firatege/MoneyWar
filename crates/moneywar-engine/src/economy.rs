@@ -29,6 +29,13 @@ use crate::report::{LogEntry, TickReport};
 /// daha pürüzsüz akıyor → t40 cliff yumuşaması.
 const WAGE_PERIOD: u32 = 5;
 
+/// Bir kervanın mürettebatı. Tüccar da işçi çalıştırır — kervanı kimse
+/// bedava sürmüyor.
+const CREW_PER_CARAVAN: i64 = 1;
+
+/// Bir Çiftçi'nin tarla ırgadı. Hasat emeksiz olmuyor.
+const CREW_PER_FARMER: i64 = 3;
+
 /// Depolama maliyeti periyodu — her N tick'te stok ücreti kesilir.
 const STORAGE_PERIOD: u32 = 10;
 /// Ücretsiz stok eşiği (birim) — bu miktarın altı ücretlendirilmez.
@@ -266,6 +273,48 @@ fn pay_factory_wages(state: &mut GameState, report: &mut TickReport, tick: Tick)
             }
         }
     }
+    // ── Tüccar ve Çiftçi de işçi çalıştırır ──────────────────────────────
+    //
+    // Ücreti uzun süre **yalnız Sanayici** ödüyordu; Tüccar'ın kervancısı,
+    // Çiftçi'nin ırgatı bedava çalışıyordu. Bu, hane halkı gelirini
+    // yükseltmeyi imkânsız kılıyordu: maaş artırılınca fatura tek başına
+    // Sanayici'ye biniyor, ama tüketici o parayla ağırlıkla **Tüccar'dan**
+    // alışveriş yaptığı için para aracıya gidiyordu.
+    //
+    // Ölçüm (maaş 60 → 240): Sanayici 90.668 → 18.246 çökerken Tüccar
+    // 236.106 → 302.611'e, Spekülatör 70.232 → 129.136'ya çıkıyordu.
+    // Yani ücret artışı emeğe değil aracıya yarıyordu.
+    //
+    // Artık her rol istihdam ettiği kadar öder: Tüccar kervan başına
+    // mürettebat, Çiftçi tarla başına ırgat.
+    for (id, player) in state
+        .players
+        .iter()
+        .map(|(id, p)| (*id, p.npc_kind))
+        .collect::<Vec<_>>()
+    {
+        let headcount: i64 = match player {
+            Some(NpcKind::Tuccar) => {
+                let caravans = state.caravans.values().filter(|c| c.owner == id).count();
+                i64::try_from(caravans).unwrap_or(0) * CREW_PER_CARAVAN
+            }
+            Some(NpcKind::Ciftci) => CREW_PER_FARMER,
+            _ => 0,
+        };
+        if headcount == 0 {
+            continue;
+        }
+        let owed = WAGE_PER_EMPLOYEE_LIRA
+            .saturating_mul(headcount)
+            .saturating_mul(100);
+        if let Some(p) = state.players.get_mut(&id) {
+            let actual = owed.min(p.cash.as_cents());
+            if actual > 0 && p.debit(Money::from_cents(actual)).is_ok() {
+                wage_pool_cents = wage_pool_cents.saturating_add(actual);
+            }
+        }
+    }
+
     if wage_pool_cents == 0 {
         return;
     }
