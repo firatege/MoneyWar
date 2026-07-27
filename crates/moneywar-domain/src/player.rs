@@ -170,6 +170,21 @@ impl NpcKind {
             Self::Banka => "Banka",
         }
     }
+
+    /// Servet için **yarışan** roller — kâr amacı güden firmalar.
+    ///
+    /// Alıcı hane halkı: mal alıp tüketir, `PnL`'i servet birikimini değil
+    /// tüketim dengesini ölçer. Banka likidite sağlayıcı, kâr kovalamaz.
+    /// İkisi de sıralamanın ve eşitsizlik ölçüsünün öznesi değil — Gini'ye
+    /// karıştıklarında "firmalar arası uçurum" sorusunu değil "hane ile
+    /// firma arasındaki doğal fark"ı ölçüyorlar ve sayı hep şişik çıkıyor.
+    ///
+    /// `moneywar-web`'deki `PROFIT_ROLES` ile aynı ayrım; makas oranı zaten
+    /// bu kümeyi kullanıyordu, Gini kullanmıyordu.
+    #[must_use]
+    pub const fn is_competitor(self) -> bool {
+        !matches!(self, Self::Alici | Self::Banka)
+    }
 }
 
 /// Oyuncu (insan veya NPC).

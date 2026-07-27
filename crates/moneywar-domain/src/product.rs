@@ -536,6 +536,22 @@ mod tests {
         assert_eq!(luks, 0, "lüks prim ödememeli — fiyat sarmalı freni");
     }
 
+    /// Hane halkı ve banka servet yarışının öznesi değil.
+    #[test]
+    fn households_and_banks_are_not_competitors() {
+        use crate::NpcKind;
+        assert!(!NpcKind::Alici.is_competitor());
+        assert!(!NpcKind::Banka.is_competitor());
+        for kind in [
+            NpcKind::Tuccar,
+            NpcKind::Sanayici,
+            NpcKind::Spekulator,
+            NpcKind::Ciftci,
+        ] {
+            assert!(kind.is_competitor(), "{kind:?} kâr rolü, yarışıyor");
+        }
+    }
+
     #[test]
     fn tier_order_is_ascending_by_priority() {
         assert_eq!(

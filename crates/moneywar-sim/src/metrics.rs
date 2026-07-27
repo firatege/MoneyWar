@@ -216,7 +216,19 @@ impl MetricsAccumulator {
         // ── Ortak ───────────────────────────────────────────────────────────
 
         let scores = leaderboard(state);
-        let wealth: Vec<f64> = scores.iter().map(|s| s.total.as_cents() as f64).collect();
+        // Gini yalnız **yarışan** roller arasında: hane halkı ve banka
+        // dahilken sayı firmalar arası uçurumu değil rol farkını ölçüyordu.
+        let wealth: Vec<f64> = scores
+            .iter()
+            .filter(|s| {
+                state
+                    .players
+                    .get(&s.player_id)
+                    .and_then(|p| p.npc_kind)
+                    .is_none_or(NpcKind::is_competitor)
+            })
+            .map(|s| s.total.as_cents() as f64)
+            .collect();
         let wealth_gini = gini(&wealth);
 
         // Rol bazlı toplam PnL.

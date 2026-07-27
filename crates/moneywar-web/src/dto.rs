@@ -517,7 +517,21 @@ fn build_prices(state: &GameState) -> Vec<PriceCell> {
 /// Ekonomi özeti — snapshot'ın hero göstergeleri.
 fn build_economy(state: &GameState) -> EconomyDto {
     let scores = leaderboard(state);
-    let wealth: Vec<f64> = scores.iter().map(|s| s.total.as_cents() as f64).collect();
+    // Gini yalnız **yarışan** roller arasında. Hane halkı ve banka dahilken
+    // gösterge "firmalar arası uçurum" sorusunu değil "hane ile firma
+    // arasındaki doğal fark"ı ölçüyor ve hep şişik çıkıyordu. Makas oranı
+    // (`balance::PROFIT_ROLES`) zaten bu ayrımı yapıyordu, Gini yapmıyordu.
+    let wealth: Vec<f64> = scores
+        .iter()
+        .filter(|s| {
+            state
+                .players
+                .get(&s.player_id)
+                .and_then(|p| p.npc_kind)
+                .is_none_or(moneywar_domain::NpcKind::is_competitor)
+        })
+        .map(|s| s.total.as_cents() as f64)
+        .collect();
     let idle_threshold = moneywar_engine::IDLE_FACTORY_THRESHOLD;
     let (mut active, mut idle) = (0u32, 0u32);
     for f in state.factories.values() {
