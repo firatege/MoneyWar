@@ -9,6 +9,7 @@ import { CityPanel } from "./CityPanel";
 import { FirmPanel } from "./FirmPanel";
 import { FactoryPanel } from "./FactoryPanel";
 import { RelationsPanel } from "./RelationsPanel";
+import { MarketGridPanel } from "./MarketGridPanel";
 import { Footer } from "../components/footer/Footer";
 import { HelpOverlay } from "../components/help/HelpOverlay";
 import "../app.css";
@@ -26,7 +27,8 @@ export type Focus =
   | { kind: "city"; slug: string }
   | { kind: "firm"; id: number }
   | { kind: "factory"; id: number }
-  | { kind: "relations" };
+  | { kind: "relations" }
+  | { kind: "grid" };
 
 export function DashboardPage() {
   const { snapshot, prev, feed, status, market, history, bucketHistory, seasons, resetSeason } =
@@ -64,6 +66,7 @@ export function DashboardPage() {
         status={status}
         onHelp={() => setShowHelp(true)}
         onRelations={() => setFocus({ kind: "relations" })}
+        onGrid={() => setFocus({ kind: "grid" })}
         seasons={seasons}
         onReset={resetSeason}
       />
@@ -119,6 +122,13 @@ export function DashboardPage() {
               tick={tick}
               onClose={() => setFocus({ kind: "none" })}
               onSelectFirm={(id) => setFocus({ kind: "firm", id })}
+            />
+          )}
+          {focus.kind === "grid" && (
+            <MarketGridPanel
+              snapshot={snapshot}
+              bucketHistory={bucketHistory}
+              onClose={() => setFocus({ kind: "none" })}
             />
           )}
           {focus.kind === "relations" && (

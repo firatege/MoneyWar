@@ -51,6 +51,11 @@ export function FirmPanel({
     1,
     ...flow.map((f) => Math.max(f.buy_value_lira, f.sell_value_lira)),
   );
+  // Pazar kontrolü: gürültüyü kes — payı %1'in altında olan pazar
+  // "kontrol" değil, tek seferlik satış.
+  const grip = (data?.market_grip ?? []).filter((g) => g.share_pct >= 1).slice(0, 12);
+  const monopolies = grip.filter((g) => g.is_monopolist).length;
+
   /** Marj yalnız iki yön de varsa anlamlı (tüccar arbitrajı). */
   const marginOf = (f: { avg_buy_lira: number | null; avg_sell_lira: number | null }) =>
     f.avg_buy_lira != null && f.avg_sell_lira != null && f.avg_buy_lira > 0
@@ -109,6 +114,56 @@ export function FirmPanel({
                   {tickLabel(pnlHistory[0].tick)} → {tickLabel(pnlHistory[pnlHistory.length - 1].tick)}
                   {" · "}sıfır çizgisi başa baş
                 </span>
+              </p>
+            </Block>
+          )}
+
+          {/* Pazar kontrolü — "nerede güçlüyüm" sorusu.
+              Fabrika listesi nerede *ürettiğini* söyler; bu, pazarı kimin
+              **tuttuğunu**. İkisi aynı şey değil: tesisi olmadığın pazarda
+              da satıyor olabilirsin (alıp sattığın mal). */}
+          {grip.length > 0 && (
+            <Block
+              title="Pazar kontrolü"
+              note={`${monopolies} tekel · ${grip.length} pazarda satıyor`}
+              wide
+            >
+              <ul className="dt__grip">
+                {grip.map((g) => (
+                  <li
+                    key={`${g.city}-${g.product}`}
+                    className={g.is_monopolist ? "dt__grip-row is-mono" : "dt__grip-row"}
+                  >
+                    <span className="dt__grip-name">
+                      {g.product_label}
+                      <span className="dt__grip-city">{g.city_label}</span>
+                    </span>
+                    {/* Çubuk: dolu kısım firmanın payı, çentik en yakın
+                        rakibin payı. Tekel olup olmadığı çentiğin nerede
+                        durduğundan okunuyor — tek sayı yerine yarış. */}
+                    <span className="dt__grip-bar" aria-hidden="true">
+                      <span className="dt__grip-fill" style={{ width: `${g.share_pct}%` }} />
+                      {g.runner_up_pct > 0 && (
+                        <span
+                          className="dt__grip-rival"
+                          style={{ left: `${Math.min(g.runner_up_pct, 100)}%` }}
+                        />
+                      )}
+                    </span>
+                    <span className="dt__grip-pct">
+                      %{g.share_pct}
+                      {g.is_monopolist && <span className="dt__grip-flag">tekel</span>}
+                    </span>
+                    <span className="dt__grip-meta">
+                      {g.units} br
+                      {g.factories > 0 && ` · ${g.factories} tesis`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="dt__note">
+                Dolu çubuk firmanın payı, ince çizgi en yakın rakibin payı.
+                Rakip çizgisi ne kadar geride, tutuş o kadar sağlam.
               </p>
             </Block>
           )}

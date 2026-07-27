@@ -10,6 +10,8 @@ interface Props {
   onHelp: () => void;
   /** İlişki ağı sayfasını açar. */
   onRelations?: () => void;
+  /** Fiyat ızgarası sayfasını aç. */
+  onGrid?: () => void;
   seasons?: SeasonSummary[];
   onReset?: () => Promise<void>;
 }
@@ -25,6 +27,7 @@ export function SeasonHeader({
   status,
   onHelp,
   onRelations,
+  onGrid,
   seasons = [],
   onReset,
 }: Props) {
@@ -56,6 +59,15 @@ export function SeasonHeader({
           <button className="hdr__help" onClick={onHelp} title="nasıl çalışır">
             nasıl çalışır?
           </button>
+          {onGrid && (
+            <button
+              className="hdr__help"
+              onClick={onGrid}
+              title="şehir × ürün fiyat ızgarası"
+            >
+              ızgara
+            </button>
+          )}
           {onRelations && (
             <button
               className="hdr__help"

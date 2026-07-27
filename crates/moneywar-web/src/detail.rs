@@ -387,6 +387,35 @@ pub struct FirmDetail {
     pub partners: Vec<PartnerDto>,
     /// Ürün bazlı alım/satım dengesi.
     pub flow: Vec<FirmProductFlowDto>,
+    /// Pazar kontrolü — hangi (şehir, ürün) pazarında ne kadar pay.
+    pub market_grip: Vec<MarketGripDto>,
+}
+
+/// Firmanın bir pazardaki tutuşu.
+///
+/// "Kim nerede güçlü" sorusu firma sayfasında hiç cevaplanmıyordu: fabrika
+/// listesi nerede *üretim* yaptığını söylüyor ama pazarı kimin **kontrol
+/// ettiğini** söylemiyor. Tekel verisi motorda zaten vardı
+/// (`IntrigueState::monopolist` ve `window_shares`), sadece dışarı
+/// çıkmıyordu.
+#[derive(Debug, Clone, Serialize)]
+pub struct MarketGripDto {
+    pub city: String,
+    pub city_label: String,
+    pub product: String,
+    pub product_label: String,
+    /// Firmanın son pencerede sattığı birim.
+    pub units: u64,
+    /// Pazarın toplam satışı — payın paydası.
+    pub market_units: u64,
+    /// Pay yüzdesi (0-100).
+    pub share_pct: u32,
+    /// Motor bu pazarda firmayı tekel ilan etmiş mi.
+    pub is_monopolist: bool,
+    /// En yakın rakibin payı — tutuşun ne kadar sağlam olduğu.
+    pub runner_up_pct: u32,
+    /// Firmanın bu pazardaki tesis sayısı.
+    pub factories: u32,
 }
 
 /// Firmanın bir fabrikası — sayfadan fabrika sayfasına geçiş noktası.
@@ -588,6 +617,54 @@ pub fn firm_detail(state: &GameState, ledger: &Ledger, id: PlayerId) -> Option<F
         .collect();
     flow.sort_by(|a, b| (b.bought_units + b.sold_units).cmp(&(a.bought_units + a.sold_units)));
 
+    // ── Pazar kontrolü ───────────────────────────────────────────────────────
+    //
+    // Motorun tekel dedektörü `sales_window` üzerinden çalışıyor; aynı
+    // pencereyi burada okuyoruz ki sayfadaki pay ile akıştaki "tekel kurdu"
+    // manşeti aynı gerçeği anlatsın.
+    let mut market_grip: Vec<MarketGripDto> = Vec::new();
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            let (shares, total) = state.intrigue.window_shares(city, product);
+            let units = shares.get(&id).copied().unwrap_or(0);
+            if units == 0 {
+                continue;
+            }
+            let runner_up = shares
+                .iter()
+                .filter(|(pid, _)| **pid != id)
+                .map(|(_, q)| *q)
+                .max()
+                .unwrap_or(0);
+            let pct = |q: u64| {
+                u32::try_from(q.saturating_mul(100) / total.max(1)).unwrap_or(0)
+            };
+            market_grip.push(MarketGripDto {
+                city: city_slug(city).to_string(),
+                city_label: city.display_name().to_string(),
+                product: product_slug(product).to_string(),
+                product_label: product.display_name().to_string(),
+                units,
+                market_units: total,
+                share_pct: pct(units),
+                is_monopolist: state.intrigue.is_monopolist(id, city, product),
+                runner_up_pct: pct(runner_up),
+                factories: u32::try_from(
+                    state
+                        .factories
+                        .values()
+                        .filter(|f| f.owner == id && f.city == city && f.product == product)
+                        .count(),
+                )
+                .unwrap_or(0),
+            });
+        }
+    }
+    // Önce tekeller, sonra büyük paylar — "nerede güçlüyüm" sırası.
+    market_grip.sort_by(|a, b| {
+        (b.is_monopolist, b.share_pct, b.units).cmp(&(a.is_monopolist, a.share_pct, a.units))
+    });
+
     Some(FirmDetail {
         actor: actor_ref(state, id),
         tick: state.current_tick.value(),
@@ -602,6 +679,7 @@ pub fn firm_detail(state: &GameState, ledger: &Ledger, id: PlayerId) -> Option<F
         recent_trades: recent_rows(state, trades.iter().copied()),
         partners,
         flow,
+        market_grip,
     })
 }
 

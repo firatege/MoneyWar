@@ -1,0 +1,125 @@
+.pg {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pg__table {
+  display: grid;
+  /* köşe + 6 ürün kolonu */
+  /* Sütun sayısı katalogdan (--pg-cols) gelir; ürün eklenince otomatik uyar. */
+  grid-template-columns: 6rem repeat(var(--pg-cols, 6), minmax(5.5rem, 1fr));
+  /* 12 ürün dar sütuna sığmaz — ezmek yerine kaydır. */
+  overflow-x: auto;
+  flex: 1;
+}
+
+.pg__corner {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 2;
+}
+.pg__col-head {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line-soft);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: var(--text-xs);
+  letter-spacing: 0.1em;
+  color: var(--text-ghost);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.3rem;
+  text-align: center;
+}
+.pg__row-head {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0.55rem;
+  text-align: right;
+  line-height: 1.2;
+}
+
+/* --- Hücre --- */
+.pg__cell {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.4rem 0.5rem 0.3rem;
+  border-bottom: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+  position: relative;
+  min-height: 3.4rem;
+}
+.pg__cell:hover {
+  background: var(--surface-2);
+}
+.pg__cell--active {
+  background: var(--surface-hi) !important;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.pg__cell--empty {
+  background: var(--bg-deep);
+  cursor: default;
+  min-height: 3.4rem;
+}
+
+.pg__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+.pg__price {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+.pg__pct {
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+}
+.pg__cell--up .pg__pct {
+  color: var(--gain-dim);
+}
+.pg__cell--down .pg__pct {
+  color: var(--loss-dim);
+}
+.pg__cell--flat .pg__pct {
+  color: var(--text-ghost);
+}
+
+/* Hücre sparkline'ı */
+.pg__spark {
+  display: block;
+  width: 100%;
+  height: 26px;
+}
+.spark {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

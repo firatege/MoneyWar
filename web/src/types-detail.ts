@@ -168,6 +168,21 @@ export interface FirmDetail {
   recent_trades: TradeRowDto[];
   partners: PartnerDto[];
   flow: FirmProductFlowDto[];
+  market_grip: MarketGripDto[];
+}
+
+/** Firmanın bir pazardaki tutuşu — pay, tekel durumu, en yakın rakip. */
+export interface MarketGripDto {
+  city: string;
+  city_label: string;
+  product: string;
+  product_label: string;
+  units: number;
+  market_units: number;
+  share_pct: number;
+  is_monopolist: boolean;
+  runner_up_pct: number;
+  factories: number;
 }
 
 // ── Fabrika ─────────────────────────────────────────────────────────────────

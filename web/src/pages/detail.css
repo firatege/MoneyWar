@@ -725,3 +725,106 @@
   width: 100%;
   height: 100%;
 }
+
+/* ── Pazar kontrolü ──────────────────────────────────────────────────────
+   Satır: ürün · yarış çubuğu · yüzde · ayrıntı. Çubuk tek sayı yerine
+   yarışı gösteriyor — dolu kısım firmanın payı, ince çizgi en yakın
+   rakibinki. "Tekel" rozeti motorun ilanı, çubuk ise gerekçesi. */
+.dt__grip {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  gap: 0.28rem;
+  list-style: none;
+}
+
+.dt__grip-row {
+  display: grid;
+  align-items: center;
+  padding: 0.22rem 0.35rem;
+  border-radius: 4px;
+  gap: 0.6rem;
+  grid-template-columns: minmax(7rem, 1.1fr) minmax(0, 2fr) 4.6rem minmax(5rem, auto);
+}
+
+.dt__grip-row.is-mono {
+  background: color-mix(in oklch, var(--accent-warn, #c98a2e) 14%, transparent);
+}
+
+.dt__grip-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.dt__grip-city {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.dt__grip-bar {
+  position: relative;
+  overflow: hidden;
+  height: 0.55rem;
+  border-radius: 3px;
+  background: var(--line-soft);
+}
+
+.dt__grip-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 3px;
+  background: var(--role-sanayici, currentColor);
+}
+
+/* Rakip çentiği: çubuğun içinde durur, dolu kısmın üstüne binebilir —
+   üstüne bindiğinde "rakip beni geçmiş" demektir ve bu okunur olmalı. */
+.dt__grip-rival {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text);
+  opacity: 0.75;
+}
+
+.dt__grip-pct {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dt__grip-flag {
+  padding: 0.05rem 0.28rem;
+  border-radius: 3px;
+  background: var(--accent-warn, #c98a2e);
+  color: var(--bg, #12100e);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+}
+
+.dt__grip-meta {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .dt__grip-row {
+    grid-template-columns: minmax(6rem, 1fr) minmax(0, 1.4fr) 4rem;
+  }
+
+  .dt__grip-meta {
+    display: none;
+  }
+}
