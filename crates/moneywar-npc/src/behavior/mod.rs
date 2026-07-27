@@ -138,6 +138,9 @@ pub fn decide_behavior(
                     // Yükseltme de filtreli — yüksek sabit skor.
                     // Yükseltme kârlıdır (ROI 4-7×) — fabrika kurmaktan öncelikli.
                     ActionCandidate::UpgradeFactory { .. } => 0.95,
+                    // Devralma kurmaktan ucuz ve rakibi zayıflatıyor —
+                    // fabrika kurmanın (1.0) hemen üstünde.
+                    ActionCandidate::AcquireFactory { .. } => 1.05,
                     // Kadro kararı ucuz ve doğrudan üretimi etkiler — üst sırada.
                     ActionCandidate::SetStaff { .. } => 0.93,
                     ActionCandidate::ProposeContract(_)
@@ -298,6 +301,10 @@ fn candidate_to_command(
             owner: pid,
             factory_id,
             employees,
+        }),
+        ActionCandidate::AcquireFactory { factory_id } => Some(Command::AcquireFactory {
+            owner: pid,
+            factory_id,
         }),
         ActionCandidate::UpgradeFactory { factory_id } => Some(Command::UpgradeFactory {
             owner: pid,

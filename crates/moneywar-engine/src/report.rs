@@ -71,6 +71,19 @@ pub struct LogEntry {
     pub event: LogEvent,
 }
 
+/// Bir devralmanın parametreleri — `factory_acquired` için.
+#[derive(Debug, Clone, Copy)]
+pub struct Acquisition {
+    pub factory_id: moneywar_domain::FactoryId,
+    pub buyer: PlayerId,
+    pub seller: PlayerId,
+    pub city: moneywar_domain::CityId,
+    pub product: moneywar_domain::ProductKind,
+    pub price: Money,
+    /// Devralmadan sonra alıcının bu (şehir, ürün) pazarındaki tesis sayısı.
+    pub buyer_factories_here: u32,
+}
+
 impl LogEntry {
     #[must_use]
     pub fn command_accepted(tick: Tick, actor: PlayerId, command: Command) -> Self {
@@ -159,6 +172,24 @@ impl LogEntry {
     }
 
     /// Yeni fabrika kuruldu.
+    /// Devralma kaydı.
+    #[must_use]
+    pub fn factory_acquired(tick: Tick, a: Acquisition) -> Self {
+        Self {
+            tick,
+            actor: Some(a.buyer),
+            event: LogEvent::FactoryAcquired {
+                factory_id: a.factory_id,
+                buyer: a.buyer,
+                seller: a.seller,
+                city: a.city,
+                product: a.product,
+                price: a.price,
+                buyer_factories_here: a.buyer_factories_here,
+            },
+        }
+    }
+
     #[must_use]
     pub fn factory_built(
         tick: Tick,
@@ -819,6 +850,18 @@ pub enum LogEvent {
     },
 
     /// Oyuncu yeni fabrika kurdu. Sanayici tekeli.
+    /// Bir firma rakibinin zorda kalmış fabrikasını satın aldı.
+    FactoryAcquired {
+        factory_id: moneywar_domain::FactoryId,
+        buyer: PlayerId,
+        seller: PlayerId,
+        city: moneywar_domain::CityId,
+        product: moneywar_domain::ProductKind,
+        price: Money,
+        /// Devralmadan sonra alıcının bu (şehir, ürün) pazarındaki fabrika sayısı.
+        buyer_factories_here: u32,
+    },
+
     FactoryBuilt {
         factory_id: FactoryId,
         owner: PlayerId,

@@ -769,6 +769,7 @@ const fn story_kind(event: &LogEvent) -> &'static str {
         LogEvent::FirmBankrupt { .. } => "bankrupt",
         LogEvent::GrudgeFormed { .. } => "grudge",
         LogEvent::SupplyChoke { .. } => "supply_choke",
+        LogEvent::FactoryAcquired { .. } => "acquisition",
         LogEvent::CartelFormed { .. } => "cartel",
         LogEvent::CartelBetrayed { .. } => "cartel_betrayed",
         _ => "other",

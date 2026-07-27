@@ -29,6 +29,9 @@ const LANDMARK = new Set([
   "bankrupt",
   "cartel",
   "cartel_betrayed",
+  // Devralma sezonun hikâyesini değiştirir: bir firma tesisini kaybeder,
+  // rakibi o pazarda yoğunlaşır.
+  "acquisition",
   "price_war_won",
 ]);
 

@@ -32,6 +32,8 @@ pub struct DramaScorecard {
     pub bankruptcies: u64,
     pub grudges_formed: u64,
     pub supply_chokes: u64,
+    /// Zorda kalmış rakipten devralınan fabrika sayısı.
+    pub factories_acquired: u64,
     pub cartels_formed: u64,
     pub cartels_betrayed: u64,
     /// Manşetlik olayların ham kaydı (tick + olay), en fazla `HEADLINE_CAP`.
@@ -64,6 +66,7 @@ impl DramaScorecard {
             LogEvent::FirmBankrupt { .. } => self.bankruptcies += 1,
             LogEvent::GrudgeFormed { .. } => self.grudges_formed += 1,
             LogEvent::SupplyChoke { .. } => self.supply_chokes += 1,
+            LogEvent::FactoryAcquired { .. } => self.factories_acquired += 1,
             LogEvent::CartelFormed { .. } => self.cartels_formed += 1,
             LogEvent::CartelBetrayed { .. } => self.cartels_betrayed += 1,
             _ => {}
@@ -82,6 +85,7 @@ impl DramaScorecard {
             + self.price_wars_won
             + self.bankruptcies
             + self.supply_chokes
+            + self.factories_acquired
             + self.cartels_formed
             + self.cartels_betrayed
     }
@@ -101,7 +105,7 @@ impl DramaScorecard {
     #[must_use]
     pub fn summary_line(&self) -> String {
         format!(
-            "tekel {}↑/{}↓ · undercut {} · savaş {}⚔/{}🏳 · iflas {} · boğma {} · kartel {}/{}kin{}",
+            "tekel {}↑/{}↓ · undercut {} · savaş {}⚔/{}🏳 · iflas {} · boğma {} · devir {} · kartel {}/{}kin{}",
             self.monopolies_formed,
             self.monopolies_broken,
             self.undercut_campaigns,
@@ -109,6 +113,7 @@ impl DramaScorecard {
             self.price_wars_won,
             self.bankruptcies,
             self.supply_chokes,
+            self.factories_acquired,
             self.cartels_formed,
             self.cartels_betrayed,
             if self.grudges_formed > 0 {

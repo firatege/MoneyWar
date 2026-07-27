@@ -49,6 +49,7 @@ pub const fn is_story_event(event: &LogEvent) -> bool {
             | LogEvent::SupplyChoke { .. }
             | LogEvent::CartelFormed { .. }
             | LogEvent::CartelBetrayed { .. }
+            | LogEvent::FactoryAcquired { .. }
     )
 }
 
@@ -149,6 +150,32 @@ pub fn story_headline(state: &GameState, event: &LogEvent) -> Option<String> {
             who(*victim),
             market(*city, *product),
         ),
+        LogEvent::FactoryAcquired {
+            buyer,
+            seller,
+            city,
+            product,
+            price,
+            buyer_factories_here,
+            ..
+        } => {
+            // İkinci tesisten itibaren yoğunlaşma vurgulanır — izleyici
+            // "kim büyüyor" sorusunu sayıdan takip edebilsin.
+            let grip = if *buyer_factories_here >= 2 {
+                format!(" — o pazarda artık {buyer_factories_here} tesisi var")
+            } else {
+                String::new()
+            };
+            format!(
+                "{} battı denmeden {} fabrikasını {} kaptı: {} ({}){}",
+                who(*seller),
+                market(*city, *product),
+                who(*buyer),
+                lira(*price),
+                market(*city, *product),
+                grip,
+            )
+        }
         LogEvent::CartelFormed { city, product, a, b } => format!(
             "{} ile {}, {} pazarında el sıkıştı",
             who(*a),
@@ -798,8 +825,37 @@ fn detect_bankruptcies(state: &mut GameState, report: &mut TickReport, tick: Tic
 /// nakdi sıfırlanır. Arzın kaybolması rakipler için fırsat, tüketiciler için
 /// fiyat baskısıdır — ölümün piyasada gerçek bir izi olur.
 fn liquidate(state: &mut GameState, firm: PlayerId) {
-    state.factories.retain(|_, f| f.owner != firm);
-    state.private_farms.retain(|_, f| f.owner != firm);
+    // Fabrikalar **yok olmuyor, el değiştiriyor**.
+    //
+    // Eskiden batan firmanın tesisleri siliniyordu: bina, makine, birikmiş
+    // sermaye buharlaşıyordu. Gerçekte iflas masası varlıkları satar ve
+    // rakip onları kapar — "izlenen kurnaz şirketler" temasının da tam
+    // istediği şey: bir firmanın ölümü diğerinin büyümesi olmalı.
+    //
+    // Alıcı: en çok nakdi olan Sanayici. Bedelsiz devir çünkü tasfiye —
+    // batan firmanın nakdi zaten sıfırlanıyor, ödeme yapacak muhatap yok.
+    // Yoğunlaşma bedava geliyor ama fabrikaların kadrosu sıfırlanıyor,
+    // yani devralanın onları çalıştırması için işçi bulması gerek.
+    let heir = state
+        .players
+        .iter()
+        .filter(|(id, p)| **id != firm && matches!(p.role, moneywar_domain::Role::Sanayici))
+        .max_by_key(|(id, p)| (p.cash.as_cents(), id.value()))
+        .map(|(id, _)| *id);
+
+    if let Some(heir) = heir {
+        for f in state.factories.values_mut().filter(|f| f.owner == firm) {
+            f.owner = heir;
+            f.employees = 0;
+        }
+        for f in state.private_farms.values_mut().filter(|f| f.owner == firm) {
+            f.owner = heir;
+            f.employees = 0;
+        }
+    } else {
+        state.factories.retain(|_, f| f.owner != firm);
+        state.private_farms.retain(|_, f| f.owner != firm);
+    }
     state.caravans.retain(|_, c| c.owner != firm);
     if let Some(player) = state.players.get_mut(&firm) {
         player.inventory = moneywar_domain::Inventory::default();

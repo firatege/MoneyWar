@@ -104,6 +104,22 @@ pub enum Command {
         factory_id: crate::FactoryId,
     },
 
+    /// Zor durumdaki bir rakipten fabrika satın al — düşmanca devralma.
+    ///
+    /// Batan firmanın fabrikaları eskiden buharlaşıyordu (tasfiyede
+    /// siliniyorlardı) ve zorda olan bir firmanın atıl fabrikası hiçbir işe
+    /// yaramadan duruyordu. İkisi de tema için kayıptı: "izlenen kurnaz
+    /// şirketler" oyununda güçlünün zayıfı yutması olayın kendisi.
+    ///
+    /// Kapılar motorda: hedef gerçekten sıkıntıda olmalı (uzun süredir atıl
+    /// **ve** sahibi nakitsiz), alıcı da parayı ödemeli. Bedel satıcıya
+    /// gider — batan firma sıfırlanmak yerine nakit bulup toparlanabilir.
+    AcquireFactory {
+        /// Devralan.
+        owner: PlayerId,
+        factory_id: crate::FactoryId,
+    },
+
     /// Fabrikanın kadrosunu ayarla — işe al ya da çıkar.
     ///
     /// `employees` **hedef** kadrodur, delta değil. Motor dünya emek
@@ -135,6 +151,7 @@ impl Command {
             Self::BuildFactory { owner, .. }
             | Self::BuyCaravan { owner, .. }
             | Self::DemolishFactory { owner, .. }
+            | Self::AcquireFactory { owner, .. }
             | Self::UpgradeFactory { owner, .. }
             | Self::BuildPrivateFarm { owner, .. }
             | Self::UpgradeFarm { owner, .. } => *owner,

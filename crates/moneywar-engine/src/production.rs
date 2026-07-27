@@ -81,6 +81,160 @@ pub(crate) fn process_build_factory(
     Ok(())
 }
 
+/// `AcquireFactory` — zorda kalmış rakipten fabrika devral.
+///
+/// Üç kapı, üçü de "gerçekten sıkıntıda mı" sorusunu soruyor:
+///   1. alıcı hedefin sahibi olamaz (kendi malını alamaz)
+///   2. fabrika en az [`ACQUISITION_IDLE_TICKS`] tick atıl olmalı
+///   3. sahibinin nakdi [`ACQUISITION_DISTRESS_CASH_LIRA`] altında olmalı
+///
+/// Bedel kuruluş maliyetinin [`ACQUISITION_PRICE_PCT`]'i ve **satıcıya**
+/// gider. Batan firma böylece sıfırlanmak yerine nakit buluyor: fabrikayı
+/// kaybediyor ama oyunda kalıyor, borcunu kapatıp yeniden deneyebiliyor.
+/// Alıcı kurmaktan ucuza kapasite alıyor ve pazarda yoğunlaşıyor.
+///
+/// [`ACQUISITION_IDLE_TICKS`]: moneywar_domain::balance::ACQUISITION_IDLE_TICKS
+/// [`ACQUISITION_DISTRESS_CASH_LIRA`]: moneywar_domain::balance::ACQUISITION_DISTRESS_CASH_LIRA
+/// [`ACQUISITION_PRICE_PCT`]: moneywar_domain::balance::ACQUISITION_PRICE_PCT
+pub(crate) fn process_acquire_factory(
+    state: &mut GameState,
+    report: &mut TickReport,
+    tick: Tick,
+    buyer: PlayerId,
+    factory_id: FactoryId,
+) -> Result<(), EngineError> {
+    use moneywar_domain::balance::{
+        ACQUISITION_DISTRESS_CASH_LIRA, ACQUISITION_IDLE_TICKS, ACQUISITION_PRICE_PCT,
+    };
+
+    let factory = state.factories.get(&factory_id).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} not found"
+        )))
+    })?;
+    let seller = factory.owner;
+    let (city, product) = (factory.city, factory.product);
+    if seller == buyer {
+        return Err(EngineError::Domain(DomainError::Validation(
+            "cannot acquire your own factory".into(),
+        )));
+    }
+    if !factory.is_atil(tick, ACQUISITION_IDLE_TICKS) {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} is not distressed (still producing)"
+        ))));
+    }
+
+    let buyer_role = state.players.get(&buyer).map(|p| p.role);
+    if !matches!(buyer_role, Some(Role::Sanayici)) {
+        return Err(EngineError::Domain(DomainError::Validation(
+            "AcquireFactory requires Sanayici role".into(),
+        )));
+    }
+    // Kapı 2: tesis gerçekten **sahibinin işine yaramıyor** olmalı.
+    //
+    // İlk sürüm yalnız "sahibi nakitsiz" diyordu ve mekanik hiç ateşlemedi:
+    // ölçümde fabrika-tick'lerin %0,99'unda sahip 12.000₺ altındaydı, iki
+    // kapı birlikte %0,017 (36.311 örnekte 6). Firmalar genelde nakitli;
+    // batmak nadir bir olay.
+    //
+    // Doğru ölçüt varlığın kendisi: **kadrosuz** fabrika sahibinin
+    // çalıştıramadığı tesistir — işgücü havuzu doluyken sezon sonunda
+    // düzinelercesi öyle duruyor. Onu kullanabilecek rakibe geçmesi hem
+    // ekonomik hem dramatik olarak doğru. Nakitsiz sahip yolu da duruyor:
+    // batmak üzere olan, çalışan fabrikasını da satabilir.
+    let seller_cash = state
+        .players
+        .get(&seller)
+        .map_or(Money::ZERO, |p| p.cash)
+        .as_cents();
+    let seller_broke = seller_cash <= ACQUISITION_DISTRESS_CASH_LIRA.saturating_mul(100);
+    let unusable = factory.employees == 0;
+    if !seller_broke && !unusable {
+        return Err(EngineError::Domain(DomainError::Validation(format!(
+            "factory {factory_id} is neither unstaffed nor its owner in distress"
+        ))));
+    }
+
+    // Bedel: alıcının **kendi** sıradaki fabrika maliyetinin bir yüzdesi.
+    // Zaten çok fabrikası olan için devralma da pahalı — yoğunlaşma
+    // bedavaya gelmiyor.
+    let owned = u32::try_from(
+        state
+            .factories
+            .values()
+            .filter(|f| f.owner == buyer)
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+    // Bedel sahiplik sayısıyla büyür — yoğunlaşmanın tek freni bu.
+    //
+    // `Factory::build_cost` kaç fabrikan olursa olsun sabit 8.000₺ döndürüyor
+    // (tablo tek değere doyuyor), yani devralma da sabit ucuz kalıyordu.
+    // Ölçümde tek firma 161 fabrikaya çıktı. Artık n'inci devralma
+    // `ACQUISITION_ESCALATION_PCT` kadar pahalı: büyümek serbest ama
+    // ağırlaşıyor — özel çiftlikteki frenin aynısı.
+    let full = Factory::build_cost(owned).as_cents();
+    let escalation = 100
+        + i64::from(owned)
+            .saturating_mul(moneywar_domain::balance::ACQUISITION_ESCALATION_PCT);
+    let price =
+        Money::from_cents((full * ACQUISITION_PRICE_PCT / 100 * escalation / 100).max(1));
+
+    let buyer_player = state.players.get_mut(&buyer).ok_or_else(|| {
+        EngineError::Domain(DomainError::Validation("buyer not found".into()))
+    })?;
+    if buyer_player.cash < price {
+        return Err(EngineError::Domain(DomainError::InsufficientFunds {
+            have: buyer_player.cash,
+            want: price,
+        }));
+    }
+    buyer_player.debit(price)?;
+    // Bedel satıcıya geçer — para yok olmuyor, el değiştiriyor.
+    if let Some(s) = state.players.get_mut(&seller) {
+        let _ = s.credit(price);
+    }
+
+    // Devir. Kadro sıfırlanır (işçiler havuza döner, yeni sahip kendi
+    // işçisini tutacak) ama **atıllık saati sıfırlanır**.
+    //
+    // Saati sıfırlamazsak fabrika devrin ertesi tick'inde yine "kadrosuz ve
+    // atıl" olur ve bir başkası kapar: ölçümde oyun başına 2113 devir
+    // görüldü — dram değil gürültü, tesis elden ele dolaşıyordu. Saatin
+    // sıfırlanması yeni sahibe kadro kurmak için `ACQUISITION_IDLE_TICKS`
+    // kadar süre tanıyor; kuramazsa tesisi hak etmemiş demektir ve yeniden
+    // hedef olur.
+    if let Some(f) = state.factories.get_mut(&factory_id) {
+        f.owner = buyer;
+        f.employees = 0;
+        f.last_production_tick = Some(tick);
+    }
+
+    let here = u32::try_from(
+        state
+            .factories
+            .values()
+            .filter(|f| f.owner == buyer && f.city == city && f.product == product)
+            .count(),
+    )
+    .unwrap_or(0);
+
+    report.push(LogEntry::factory_acquired(
+        tick,
+        crate::report::Acquisition {
+            factory_id,
+            buyer,
+            seller,
+            city,
+            product,
+            price,
+            buyer_factories_here: here,
+        },
+    ));
+    Ok(())
+}
+
 /// Geri ödeme yüzdesi: kaçıncı fabrika kapatılıyor.
 /// İlk fabrikalar daha pahalı kuruldu ama daha az geri alınır (hızlı kapatma caydırıcı).
 const DEMOLISH_REFUND_PCT: i64 = 50;

@@ -8739,6 +8739,7 @@ fn describe_command_short(cmd: &Command) -> String {
             city_short(o.city),
         ),
         Command::CancelOrder { order_id, .. } => format!("emir iptal #{}", order_id.value()),
+        Command::AcquireFactory { factory_id, .. } => format!("fab devral #{factory_id}"),
         Command::BuildFactory { city, product, .. } => {
             format!("fab kur {} {}", city_short(*city), product)
         }
@@ -8805,6 +8806,7 @@ fn describe_command(cmd: &Command) -> String {
             city_short(o.city)
         ),
         Command::CancelOrder { order_id, .. } => format!("cancel order {order_id}"),
+        Command::AcquireFactory { factory_id, .. } => format!("fabrika devral: {factory_id}"),
         Command::BuildFactory { city, product, .. } => {
             format!("fabrika kur: {} / {}", city_short(*city), product)
         }

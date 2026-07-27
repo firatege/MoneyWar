@@ -625,6 +625,27 @@ pub const PRIVATE_FARM_BUILD_COST_LIRA: i64 = 15_000;
 /// "piyasa Çiftçisi ~8-12/tick, özel çiftlik biraz daha az".
 pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 8;
 
+/// Devralma bedeli, fabrikanın kuruluş maliyetinin yüzdesi.
+///
+/// Zorda satış: sahibi zaten batmak üzere, pazarlık gücü yok. Alıcı için
+/// kurmaktan ucuz olmalı yoksa mekanik hiç kullanılmaz; ama bedava da
+/// olmamalı yoksa devralma tek strateji haline gelir.
+pub const ACQUISITION_PRICE_PCT: i64 = 60;
+
+/// Devralma için fabrikanın kaç tick atıl kalmış olması gerekir.
+pub const ACQUISITION_IDLE_TICKS: u32 = 20;
+
+/// Sahip olunan her fabrikanın devralma bedeline eklediği yüzde.
+///
+/// Yoğunlaşmanın tek freni. `Factory::build_cost` tablosu tek değere
+/// doyduğu için (kaçıncı fabrika olursa olsun 8.000₺) devralma da sabit
+/// ucuz kalıyordu; ölçümde tek firma 161 fabrikaya çıktı.
+pub const ACQUISITION_ESCALATION_PCT: i64 = 60;
+
+/// Sahibin "sıkıntıda" sayılması için nakit tavanı (lira). Bunun altındaki
+/// firma fabrikasını satmaya razı olur.
+pub const ACQUISITION_DISTRESS_CASH_LIRA: i64 = 12_000;
+
 /// Kıtlıkta hasat çarpanının tavanı (yüzde).
 ///
 /// Çiftçi'nin hasadı fiyata tepki verir: referans fiyat baz fiyatın 3 katını

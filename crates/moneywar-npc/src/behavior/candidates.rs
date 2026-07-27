@@ -37,6 +37,8 @@ pub enum ActionCandidate {
     DemolishFactory { factory_id: moneywar_domain::FactoryId },
     /// Fabrika yükselt — kâr eden fabrikayı güçlendir (level 1→2→3).
     UpgradeFactory { factory_id: moneywar_domain::FactoryId },
+    /// Zorda kalmış rakipten fabrika devral — kurmaktan ucuz kapasite.
+    AcquireFactory { factory_id: moneywar_domain::FactoryId },
     /// Fabrika kadrosunu hedef değere ayarla (işe al / çıkar).
     SetStaff { factory_id: moneywar_domain::FactoryId, employees: u32 },
     /// Kervan satın al.
@@ -68,6 +70,7 @@ impl ActionCandidate {
             | Self::UpgradeFarm { .. }
             | Self::DemolishFactory { .. }
             | Self::UpgradeFactory { .. }
+            | Self::AcquireFactory { .. }
             | Self::SetStaff { .. }
             | Self::DispatchCaravan { .. }
             | Self::ProposeContract(_)

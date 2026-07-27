@@ -130,6 +130,16 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
             }
     }
 
+    // 1b) Devralma: zorda kalmış rakibin fabrikasını kap.
+    //
+    // Kurmaktan ucuz (bedelin %60'ı) ve rakibi zayıflatıyor. Kapıları motor
+    // doğruluyor; burada yalnız gerçekten uygun hedef varsa aday üretiyoruz
+    // ki reddedilecek komutla tur harcanmasın.
+    //
+    // Hedef seçimi: kendi ürettiğim ürünlerden başla — aynı pazarda ikinci
+    // fabrika yoğunlaşma demek. Yoksa herhangi bir uygun hedef.
+    out.extend(enumerate_acquisition(state, player));
+
     // 2) Ham madde AL — fab-bazlı talep (gerçek tedarik zinciri).
     //    Her fab'ın raw_input'unu hesapla. Sanayici Ist'te Kumaş fab kurmuşsa
     //    Pamuk her 3 şehirde de arar (Tüccar Ist'ten Ank'a getirebilir).
@@ -1000,6 +1010,75 @@ fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate
     }
 
     Vec::new()
+}
+
+/// Devralınabilir fabrika adayları.
+///
+/// Motor üç kapı uyguluyor: hedef en az `ACQUISITION_IDLE_TICKS` atıl,
+/// sahibi `ACQUISITION_DISTRESS_CASH_LIRA` altında nakitte, alıcı bedeli
+/// ödeyebiliyor. Burada aynı kapılara bakıyoruz — reddedilen komut, o tur
+/// başka bir şey yapılamaması demek.
+///
+/// Sıralama: önce **kendi ürettiğim** ürünün fabrikası (aynı pazarda ikinci
+/// tesis = yoğunlaşma), sonra en ucuz kapasite.
+fn enumerate_acquisition(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::balance::{
+        ACQUISITION_DISTRESS_CASH_LIRA, ACQUISITION_IDLE_TICKS, ACQUISITION_PRICE_PCT,
+    };
+
+    let owned = u32::try_from(
+        state
+            .factories
+            .values()
+            .filter(|f| f.owner == player.id)
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+    // Motorla aynı formül: bedel sahiplik sayısıyla ağırlaşıyor.
+    let escalation = 100
+        + i64::from(owned).saturating_mul(moneywar_domain::balance::ACQUISITION_ESCALATION_PCT);
+    let price_cents = moneywar_domain::Factory::build_cost(owned).as_cents()
+        * ACQUISITION_PRICE_PCT
+        / 100
+        * escalation
+        / 100;
+    // Devralıp meteliksiz kalma: bedelin 1.5 katı nakit iste.
+    if player.cash.as_cents() < price_cents.saturating_mul(3) / 2 {
+        return Vec::new();
+    }
+
+    let my_products: std::collections::BTreeSet<_> = state
+        .factories
+        .values()
+        .filter(|f| f.owner == player.id)
+        .map(|f| f.product)
+        .collect();
+
+    let mut best: Option<(bool, moneywar_domain::FactoryId)> = None;
+    for f in state.factories.values() {
+        if f.owner == player.id || !f.is_atil(state.current_tick, ACQUISITION_IDLE_TICKS) {
+            continue;
+        }
+        // Motorla aynı kapı: kadrosuz tesis ya da nakitsiz sahip.
+        let seller_broke = state.players.get(&f.owner).is_some_and(|p| {
+            p.cash.as_cents() <= ACQUISITION_DISTRESS_CASH_LIRA.saturating_mul(100)
+        });
+        if !seller_broke && f.employees > 0 {
+            continue;
+        }
+        let synergy = my_products.contains(&f.product);
+        // Sinerjili hedef önce; eşitlikte küçük id (deterministik).
+        let better = match best {
+            None => true,
+            Some((s, id)) => (synergy, std::cmp::Reverse(f.id)) > (s, std::cmp::Reverse(id)),
+        };
+        if better {
+            best = Some((synergy, f.id));
+        }
+    }
+
+    best.map(|(_, factory_id)| vec![ActionCandidate::AcquireFactory { factory_id }])
+        .unwrap_or_default()
 }
 
 /// Özel çiftlik kurma adayını listele — dikey entegrasyon hamlesi.

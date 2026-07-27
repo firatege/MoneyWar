@@ -202,6 +202,9 @@ fn dispatch(
         Command::SetFactoryStaff { owner, factory_id, employees } => {
             process_set_factory_staff(state, report, tick, *owner, *factory_id, *employees)
         }
+        Command::AcquireFactory { owner, factory_id } => {
+            crate::production::process_acquire_factory(state, report, tick, *owner, *factory_id)
+        }
         Command::BuildPrivateFarm { owner, city, product } => {
             build_private_farm_impl(state, report, tick, *owner, *city, *product)
         }
