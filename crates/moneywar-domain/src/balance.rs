@@ -269,6 +269,16 @@ pub const TRANSACTION_TAX_PCT: i64 = 2;
 /// Fiyat tabanın %10'unun altına inemez. Ani arz patlamasında manyak dipleri
 /// engeller, ama mevcut Walras tâtonnement baseline'ı kaydırırken clamp'ı
 /// dar tutmamalı. v0.5.1: %25 → %10 (NPC fiyatlama'nın %50-200 marjını boğmasın).
+/// Mamulün fiyat tabanı hesaplanırken girdinin **piyasa** fiyatının ağırlığı
+/// (yüzde). 0 = yalnız baseline (eski davranış), 100 = yalnız piyasa.
+///
+/// Taban baseline'dan hesaplanınca gerçeğin çok altında kalıyordu: Ekmek'in
+/// baseline'ı 60₺ ama piyasada 146₺'ye işlem görüyor (takas clamp'i %1000'e
+/// kadar izin veriyor). Ziyafet'in tabanı 180₺'de kalıp bir birim girdisi
+/// 258₺ tuttuğu için üretim daha başlamadan zararda oluyordu ve fabrika
+/// girdi ihalesini haklı olarak kaybediyordu.
+pub const MARKET_COST_WEIGHT_PCT: i64 = 70;
+
 pub const PRICE_CLAMP_LOW_PCT: i64 = 10;
 
 /// Clearing fiyat clamp üst sınırı — taban fiyatın yüzdesi.

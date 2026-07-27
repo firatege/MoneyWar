@@ -399,7 +399,32 @@ impl GameState {
             if units <= 0 {
                 continue;
             }
-            let unit_px = self.effective_baseline(city, input)?.as_cents();
+            // Girdinin **gerçekte ödenen** fiyatı esas alınır, listedeki
+            // baseline değil.
+            //
+            // Bu maliyet mamulün fiyat tabanını belirliyor (market.rs).
+            // Baseline'dan hesaplanınca taban gerçeğin çok altında kalıyordu:
+            // Ekmek'in baseline'ı 60₺ ama piyasada 146₺'ye işlem görüyor
+            // (takas clamp'i baseline'ın %1000'ine kadar izin veriyor).
+            // Sonuçta Ziyafet'in tabanı 180₺'de kalıyor, oysa bir birim
+            // Ziyafet'in girdisi 258₺ tutuyor — üretim daha başlamadan
+            // zararda ve fabrika girdi ihalesini haklı olarak kaybediyor.
+            //
+            // `reference_price` son takasların yürüyen ortalaması; yoksa
+            // baseline'a düşer. Sarmal riski sınırlı çünkü taban yalnız
+            // baseline'ı *yukarı* iter ve baseline'ın kendisi Walras ile
+            // talep/arz dengesine bağlı.
+            // Piyasa ile baseline karışımı. Saf piyasa tabanı çok sert
+            // itiyor (fiyatlar 2.3×'e çıkıp rol makasını bozuyordu); saf
+            // baseline ise gerçeğin çok altında kalıyor. Ağırlık
+            // `MARKET_COST_WEIGHT_PCT` ile ayarlanır.
+            let market = self.reference_price(city, input).map(Money::as_cents);
+            let base = self.effective_baseline(city, input)?.as_cents();
+            let w = crate::balance::MARKET_COST_WEIGHT_PCT;
+            let unit_px = match market {
+                Some(m) => (m * w + base * (100 - w)) / 100,
+                None => base,
+            };
             total = total.saturating_add(unit_px.saturating_mul(units));
         }
         if total <= 0 {
