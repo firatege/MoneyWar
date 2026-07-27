@@ -32,6 +32,21 @@ pub const MONOPOLY_CONFIRM_TICKS: u32 = 6;
 pub const MONOPOLY_BREAK_CONFIRM_TICKS: u32 = 6;
 /// Art arda bu kadar tick fiyat kırma = `UndercutCampaign` + kin.
 pub const UNDERCUT_CAMPAIGN_TICKS: u32 = 3;
+
+/// İki firmanın kartel sayılması için birlikte tutması gereken pazar payı.
+///
+/// Kartel, birbirini kırabilecekken **kırmayan** iki büyük satıcıdır.
+/// Pazarı ikisi tutuyorsa fiyatı ikisi belirler; birbirlerine dokunmadıkları
+/// sürece fiyat yukarıda kalır ve ikisi de kazanır.
+pub const CARTEL_JOINT_SHARE_PCT: u64 = 55;
+
+/// Kartelin damgalanması için gereken kesintisiz tick.
+/// Tekelde olduğu gibi: tek tick'lik tesadüf haber değildir.
+pub const CARTEL_CONFIRM_TICKS: u32 = 4;
+
+/// Kartel üyesinin fiyatını baseline'ın en az bu yüzdesinde tutması beklenir.
+/// Anlaşmanın gözlemlenebilir imzası bu: ikisi de yüksek fiyat istiyor.
+pub const CARTEL_MIN_ASK_PCT: i64 = 105;
 /// Kampanya bu kadar tick sürerse savaş ilan edilmiş sayılır (`PriceWarDeclared`).
 pub const PRICE_WAR_DECLARE_TICKS: u32 = 5;
 /// Savaş sırasında mağdur bu kadar tick pazara SELL koymazsa çekilmiş sayılır
@@ -114,6 +129,19 @@ pub struct IntrigueState {
     /// sonraki döngüde yeniden kredi alır). Artık iz bırakıyor: banka bir
     /// daha aynı firmaya kredi vermez ve ikinci temerrüt iflastır.
     pub loan_defaults: BTreeMap<PlayerId, u32>,
+
+    /// Aktif karteller: pazar → anlaşan iki firma (`PlayerId` sıralı).
+    ///
+    /// Kartel, birbirini kırabilecekken kırmayan iki büyük satıcıdır.
+    /// Üyelerden biri ötekinin fiyatını kırarsa ihanet damgalanır ve
+    /// kartel dağılır.
+    #[serde(default)]
+    pub cartels: BTreeMap<(CityId, ProductKind), (PlayerId, PlayerId)>,
+
+    /// Kartel adayı: pazar → (ikili, kesintisiz tick). İkili değişirse
+    /// sayaç sıfırlanır.
+    #[serde(default)]
+    pub cartel_candidate: BTreeMap<(CityId, ProductKind), ((PlayerId, PlayerId), u32)>,
 
     /// Süregelen tedarik boğmaları: (boğan, boğulan, şehir, girdi).
     /// Aynı boğma her tick haber olmasın diye tutulur; tekel düşünce temizlenir.

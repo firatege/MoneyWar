@@ -25,7 +25,8 @@ use moneywar_domain::{
     CityId, Command, DEFAULTS_BEFORE_BANKRUPTCY, DOMINANCE_MIN_VOLUME, DOMINANCE_WINDOW_TICKS,
     GRUDGE_TICKS, GameState, INSOLVENCY_CONFIRM_TICKS, INSOLVENT_CASH_CENTS,
     MONOPOLY_BREAK_CONFIRM_TICKS, MONOPOLY_BREAK_PCT, MONOPOLY_CONFIRM_TICKS, MONOPOLY_FORM_PCT,
-    NpcKind, OrderSide, PRICE_WAR_DECLARE_TICKS, PRICE_WAR_FIZZLE_TICKS, PRICE_WAR_RETREAT_TICKS,
+    CARTEL_CONFIRM_TICKS, CARTEL_JOINT_SHARE_PCT, CARTEL_MIN_ASK_PCT, NpcKind, OrderSide,
+    PRICE_WAR_DECLARE_TICKS, PRICE_WAR_FIZZLE_TICKS, PRICE_WAR_RETREAT_TICKS,
     PlayerId, PriceWarTrack, ProductKind, Tick, TickSales, UNDERCUT_CAMPAIGN_TICKS,
 };
 
@@ -181,6 +182,7 @@ pub fn detect_intrigue(state: &mut GameState, report: &mut TickReport, tick: Tic
     detect_monopolies(state, report, tick);
     let undercuts = detect_undercuts(state, report, &asks, tick);
     advance_price_wars(state, report, &asks, &undercuts, tick);
+    detect_cartels(state, report, &asks, &undercuts, tick);
     detect_supply_chokes(state, report, tick);
     decay_grudges(state);
     detect_bankruptcies(state, report, tick);
@@ -190,6 +192,137 @@ pub fn detect_intrigue(state: &mut GameState, report: &mut TickReport, tick: Tic
 /// pazarını başka bir firma tekelinde tutuyor. Boğan taraf bunu bilinçli
 /// yapmış olmak zorunda değil — sonuç aynı: rakibin bandı durdu.
 /// Faz 2'nin çok girdili tarifleri bu olayı mümkün kılan şey.
+/// Kartel: birbirini kırabilecekken **kırmayan** iki büyük satıcı.
+///
+/// # Neden bu ölçüt
+///
+/// Oyunda gizli anlaşma diye bir komut yok; firmalar konuşmuyor. Kartel
+/// bu yüzden niyetten değil **davranıştan** okunur — tıpkı tekelin
+/// paydan, fiyat savaşının ardışık kırmadan okunması gibi:
+///
+/// 1. İki firma pazarın büyük çoğunluğunu birlikte tutuyor
+///    ([`CARTEL_JOINT_SHARE_PCT`]) — yani fiyatı ikisi belirleyebilir.
+/// 2. İkisi de fiyatını baseline'ın üstünde tutuyor
+///    ([`CARTEL_MIN_ASK_PCT`]) — rekabet etselerdi kırarlardı.
+/// 3. Bu hâl [`CARTEL_CONFIRM_TICKS`] tick sürüyor — tesadüf değil.
+///
+/// Üçü birden sağlanınca "el sıkıştılar" demektir.
+///
+/// # İhanet
+///
+/// Kartel kurulduktan sonra üyelerden biri ötekinin fiyatını kırarsa
+/// anlaşma bozulmuş sayılır: `CartelBetrayed` damgalanır, kurban kin
+/// tutar, kartel dağılır. Kırma tespiti zaten `detect_undercuts`'ta
+/// yapılıyor; burada yalnız üyelik kontrol edilir.
+fn detect_cartels(
+    state: &mut GameState,
+    report: &mut TickReport,
+    asks: &BTreeMap<(CityId, ProductKind), BTreeMap<PlayerId, i64>>,
+    undercuts: &BTreeSet<(PlayerId, PlayerId, CityId, ProductKind)>,
+    tick: Tick,
+) {
+    // ── İhanet: mevcut kartelin içinden biri ötekini kırdıysa ────────────
+    let betrayals: Vec<((CityId, ProductKind), PlayerId, PlayerId)> = undercuts
+        .iter()
+        .filter_map(|(attacker, victim, city, product)| {
+            let (a, b) = state.intrigue.cartels.get(&(*city, *product)).copied()?;
+            let inside = (a == *attacker && b == *victim) || (b == *attacker && a == *victim);
+            inside.then_some(((*city, *product), *attacker, *victim))
+        })
+        .collect();
+    for (key, betrayer, victim) in betrayals {
+        state.intrigue.cartels.remove(&key);
+        state.intrigue.cartel_candidate.remove(&key);
+        report.push(LogEntry {
+            tick,
+            actor: Some(betrayer),
+            event: LogEvent::CartelBetrayed {
+                city: key.0,
+                product: key.1,
+                betrayer,
+                victim,
+            },
+        });
+        // İhanet kin doğurur — sırtından bıçaklanan unutmaz.
+        form_grudge(state, report, victim, betrayer, tick);
+    }
+
+    // ── Kuruluş ──────────────────────────────────────────────────────────
+    let keys: Vec<(CityId, ProductKind)> = state.intrigue.sales_window.keys().copied().collect();
+    for key in keys {
+        if state.intrigue.cartels.contains_key(&key) {
+            continue; // zaten kurulu
+        }
+        let (shares, total) = state.intrigue.window_shares(key.0, key.1);
+        if total < DOMINANCE_MIN_VOLUME {
+            state.intrigue.cartel_candidate.remove(&key);
+            continue;
+        }
+        // En büyük iki satıcı.
+        let mut ranked: Vec<(PlayerId, u64)> = shares.iter().map(|(p, q)| (*p, *q)).collect();
+        ranked.sort_by_key(|(p, q)| (std::cmp::Reverse(*q), *p));
+        if ranked.len() < 2 {
+            state.intrigue.cartel_candidate.remove(&key);
+            continue;
+        }
+        let (a, b) = (ranked[0].0.min(ranked[1].0), ranked[0].0.max(ranked[1].0));
+        let joint_pct = (ranked[0].1 + ranked[1].1) * 100 / total;
+        if joint_pct < CARTEL_JOINT_SHARE_PCT {
+            state.intrigue.cartel_candidate.remove(&key);
+            continue;
+        }
+
+        // İkisi de fiyatını yukarıda tutuyor mu? Fiyat vermeyen tick
+        // sayılmaz — susmak anlaşma kanıtı değil.
+        let Some(seller_asks) = asks.get(&key) else {
+            state.intrigue.cartel_candidate.remove(&key);
+            continue;
+        };
+        let Some(baseline) = state.effective_baseline(key.0, key.1) else {
+            continue;
+        };
+        let floor = baseline.as_cents() * CARTEL_MIN_ASK_PCT / 100;
+        let both_high = [a, b]
+            .iter()
+            .all(|p| seller_asks.get(p).is_some_and(|ask| *ask >= floor));
+        // Aralarında kırma varsa anlaşma yok.
+        let hostile = undercuts.iter().any(|(att, vic, c, pr)| {
+            *c == key.0 && *pr == key.1 && ((*att == a && *vic == b) || (*att == b && *vic == a))
+        });
+        if !both_high || hostile {
+            state.intrigue.cartel_candidate.remove(&key);
+            continue;
+        }
+
+        let entry = state
+            .intrigue
+            .cartel_candidate
+            .entry(key)
+            .or_insert(((a, b), 0));
+        if entry.0 == (a, b) {
+            entry.1 += 1;
+        } else {
+            *entry = ((a, b), 1);
+        }
+        if entry.1 < CARTEL_CONFIRM_TICKS {
+            continue;
+        }
+        state.intrigue.cartel_candidate.remove(&key);
+        state.intrigue.cartels.insert(key, (a, b));
+        report.push(LogEntry {
+            tick,
+            actor: Some(a),
+            event: LogEvent::CartelFormed {
+                city: key.0,
+                product: key.1,
+                a,
+                b,
+            },
+        });
+    }
+}
+
+/// Tedarik boğma yardımcısı.
 fn detect_supply_chokes(state: &mut GameState, report: &mut TickReport, tick: Tick) {
     // Bu tick girdi yokluğundan atıl kalan fabrikalar.
     let starved: Vec<(PlayerId, CityId, ProductKind)> = report

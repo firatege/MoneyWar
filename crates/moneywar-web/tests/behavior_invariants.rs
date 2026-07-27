@@ -18,6 +18,7 @@ use moneywar_web::driver::SimDriver;
 /// Tek sezonluk koşu — tüm testler aynı kurulumu paylaşır.
 struct Season {
     driver: SimDriver,
+    cartels_formed: u32,
     farms_built: u32,
     loans_taken: u32,
     caravans_dispatched: u32,
@@ -30,6 +31,7 @@ struct Season {
 fn run_season(ticks: u32) -> Season {
     let mut d = SimDriver::new(moneywar_web::DEFAULT_SEED, ticks, 3, moneywar_web::DIFFICULTY);
     let mut s = Season {
+        cartels_formed: 0,
         farms_built: 0,
         loans_taken: 0,
         caravans_dispatched: 0,
@@ -43,6 +45,7 @@ fn run_season(ticks: u32) -> Season {
         for entry in &d.last_report.entries {
             match &entry.event {
                 LogEvent::PrivateFarmBuilt { .. } => s.farms_built += 1,
+                LogEvent::CartelFormed { .. } => s.cartels_formed += 1,
                 LogEvent::LoanTaken { .. } => s.loans_taken += 1,
                 LogEvent::CaravanDispatched { .. } => s.caravans_dispatched += 1,
                 LogEvent::ProductionCompleted { product, units, .. } => {
@@ -216,5 +219,23 @@ fn bank_actually_lends() {
         "sezonda yalnız {} kredi açıldı (en az {MIN_LOANS} bekleniyor) — \
          Banka'nın yatırım kredisi ölmüş olabilir",
         s.loans_taken
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entrika
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn cartels_actually_form() {
+    // `CartelFormed` uzun süre **hiç üretilmeyen** bir olaydı: tipi tanımlı,
+    // Türkçe manşeti yazılı, akışta ve ilişki sayfasında çizilmeye hazırdı
+    // ama onu emit eden tek satır kod yoktu. Denetimde "kartel 0/0" olarak
+    // görünüyordu ve bu bir denge sorunu sanılıyordu — oysa yazılmamış
+    // özellikti. Aynı sessiz ölüm tekrarlanmasın.
+    let s = run_season(350);
+    assert!(
+        s.cartels_formed > 0,
+        "sezon boyunca hiç kartel kurulmadı — tespit edici yine ölü olabilir"
     );
 }
