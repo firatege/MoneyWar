@@ -896,6 +896,36 @@ fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate
     }
 
     // Sonra çalışan ama eksik kadrolu fabrikayı doldur.
+    //
+    // # Bilinen kilitlenme — ve düzeltmesinin neden geri alındığı
+    //
+    // Buradaki "atıl **olmayan**" koşulu bir kilit yaratıyor:
+    //
+    //   1. fabrika tam kadroyla açılır
+    //   2. girdi bulamaz, `IDLE_FACTORY_THRESHOLD` tick sonra atıl sayılır
+    //   3. yukarıdaki kural "boşa ücret ödeme" deyip kadroyu sıfırlar
+    //   4. bu kural atıl fabrikaya işçi vermez
+    //   5. kadrosuz fabrika üretemez → atıl kalır → bir daha açılamaz
+    //
+    // Canlıda t49'da Ziyafet'in beş fabrikasının beşi de böyle kadrosuz
+    // duruyordu, üstelik havuzda 63 boş işçi varken.
+    //
+    // Koşulu "girdisi varsa yeniden kadrola" diye gevşetmek **denendi ve
+    // toplam üretimi düşürdü** (20 oyun × 350 tick):
+    //
+    //   ürün       şimdiki   koşulsuz aç   havuz boşken aç
+    //   Ziyafet    2966 %84     1936 %57        2450 %77
+    //   Ekmek     11813 %138   10095 %113      10876 %123
+    //   makas         3.8x        4.4x            4.4x
+    //   Alıcı      -18313      -26586          -29331
+    //
+    // Sebep: işçi kıt. Duran fabrikayı açmak, tam batch çalışabilecek
+    // fabrikadan işçi alıp ancak çeyrek batch çalışacak olana vermek
+    // demek. "Aç fabrikayı terk et" davranışı çirkin görünüyor ama kıt
+    // emeği yoğunlaştırdığı için verimli.
+    //
+    // Doğru çözüm kadro tarafında değil: fabrika **zaten** girdisini
+    // bulabilseydi kilit hiç oluşmazdı.
     if let Some(f) = mine()
         .filter(|f| !f.is_atil(state.current_tick, threshold))
         .find(|f| f.employees < f.required_employees())
