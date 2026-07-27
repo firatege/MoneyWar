@@ -85,7 +85,29 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     // Temel: 2. Nakit fazlası yüksekse +1 (bol para → filoya yatır).
     // Sezon ilerlediyse +1 (erken genişle, geç dar kal).
     // Aktif dispatch oranı yüksekse +1 (tüm kervanlar doluysa daha fazla lazım).
-    let caravan_cap_reached = false; // sınırsız — nakit ve arbitraj varsa al
+    // Sınır bilinçli olarak kapalı — ve bu **kırılgan bir bağımlılık**.
+    //
+    // Filo sınırsız büyüyor: canlıda t181'de dört Tüccar 124 kervan almış,
+    // 118'i boşta (%95). Görüntü saçma; nakliye firması 34 araç alıp
+    // 34'ünü park etmez.
+    //
+    // Ama sınır koymak denendi ve ekonomiyi bozdu (20 oyun × 350 tick):
+    //
+    //   taban filo   makas   Tüccar  Sanayici   Alıcı
+    //   sınırsız      3.8x   236106     90668  -18313
+    //   25            4.7x   260020     79118  -53540
+    //   15            6.0x   284584     75807  -52763
+    //    8            6.4x   275023     63712  -64930
+    //    3            7.5x   322149     56315  -64226
+    //
+    // Sebep: kervan alımı `distribute_capex_to_households` ile hane halkına
+    // gelir olarak dönüyor. Filoyu kısmak Tüccar'ı zenginleştirip (kasada
+    // kalan para) Alıcı'yı aç bırakıyor. Yani "ölü sermaye" aslında para
+    // dolaşımının taşıyıcısı.
+    //
+    // Gerçek çözüm hane halkı gelirini sermaye harcamasına bağımlı olmaktan
+    // kurtarmak; o yapılmadan filo sınırı ekonomiyi kırıyor.
+    let caravan_cap_reached = false;
     if any_arbitrage && !caravan_cap_reached && next_cost <= cash_reserve_threshold {
         let starting_city = CityId::ALL[owned_caravans % CityId::ALL.len()];
         out.push(ActionCandidate::BuyCaravan { starting_city });
