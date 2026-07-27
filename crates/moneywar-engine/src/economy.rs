@@ -163,6 +163,7 @@ pub(crate) fn tick_economy(
 /// Depolama maliyeti — eşik üzeri stok için nakit keser, sisteme sink eder.
 /// Sanayici fabrika deposu avantajıyla daha düşük ücret öder.
 fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Tick) {
+    let mut pool_cents: i64 = 0;
     let player_ids: Vec<moneywar_domain::PlayerId> =
         state.players.keys().copied().collect();
 
@@ -205,6 +206,7 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
         );
         if cost.as_cents() > 0 {
             let _ = player.debit(cost);
+            pool_cents = pool_cents.saturating_add(cost.as_cents());
             report.push(LogEntry {
                 tick,
                 actor: Some(pid),
@@ -212,6 +214,22 @@ fn charge_storage_costs(state: &mut GameState, report: &mut TickReport, tick: Ti
             });
         }
     }
+
+    // Depo gideri de bir ödemedir: ambar işçisine, hamala, kiraya gider.
+    // Yok etmek ekonomiden **stokla orantılı** para sızdırıyordu ve stok
+    // sezon boyunca biriktiği için sızıntı hızlanıyordu — sorun ancak uzun
+    // sezonda görünüyordu. Ölçüm (20 oyun, sızıntı açıkken):
+    //
+    //   tick   makas   Sanayici    Tüccar    Alıcı  iflas   para
+    //    350    2,4×    227.521   369.306   61.948    0,6   -6,0%
+    //    420    2,9×    341.391   219.439   -5.309    1,1   -7,8%
+    //    460    5,0×    397.409   -38.353  -27.017    3,0   -8,9%
+    //    500     38×    465.530   -94.784  -37.948    3,8  -10,0%
+    //
+    // En çok stok tutan Tüccar en çok ödüyordu; tüketici parasız kalınca
+    // talep düşüyor, Tüccar satamıyor ama depoyu ödemeye devam ediyordu.
+    // Bakım gideri aynı sebeple daha önce haneye yönlendirilmişti.
+    distribute_capex_to_households(state, report, tick, Money::from_cents(pool_cents));
 }
 
 /// Wages — Sanayici fabrikalarından ücret keser, Alıcı'lara eşit dağıtır.
@@ -518,6 +536,7 @@ fn harvest_ciftci_stock(
     tick: Tick,
 ) {
     let t = tick.value();
+    let mut seed_pool_cents: i64 = 0;
     let ciftci_ids: Vec<PlayerId> = state
         .players
         .iter()
@@ -630,6 +649,7 @@ fn harvest_ciftci_stock(
             };
             if actual_cost_cents > 0 {
                 let _ = p.debit(Money::from_cents(actual_cost_cents));
+                seed_pool_cents = seed_pool_cents.saturating_add(actual_cost_cents);
             }
             if actual_total == 0 {
                 continue;
@@ -683,6 +703,10 @@ fn harvest_ciftci_stock(
                 }
         }
     }
+    // Tohum parası da bir ödemedir: tohumcuya, ırgada, sulamaya gider.
+    // Yok etmek ekonomiden **hasatla orantılı** para sızdırıyordu; depo
+    // gideriyle birlikte uzun sezonu bozan iki sızıntıdan biriydi.
+    distribute_capex_to_households(state, report, tick, Money::from_cents(seed_pool_cents));
 }
 
 /// World Fabrikaları — her (şehir, mamul) için baseline mamul üretim ve

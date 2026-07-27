@@ -177,7 +177,7 @@ pub const LABOR_POOL_SIZE: u32 = 110;
 /// Rol dengesi bozulmadı: makas 3.9× → 3.8× (2. tohum 3.7×), para arzı
 /// -6.0%, Sanayici 85.7K → 90.7K. Bedeli Alıcı'da (-15.4K → -18.3K):
 /// daha çok mal dönüyor, tüketici daha çok harcıyor.
-pub const LABOR_POOL_GROWTH_PER_100_TICKS: u32 = 25;
+pub const LABOR_POOL_GROWTH_PER_100_TICKS: u32 = 60;
 
 /// Bu tick'teki işgücü havuzu. Sezon başında [`LABOR_POOL_SIZE`],
 /// sonra [`LABOR_POOL_GROWTH_PER_100_TICKS`] hızıyla büyür.
