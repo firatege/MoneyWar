@@ -604,7 +604,10 @@ fn harvest_ciftci_stock(
             if ref_price == 0 {
                 100
             } else if ratio > 300 {
-                300 // 3× baseline → 3× üretim (kıtlık agresif baskılansın)
+                // Kıtlık tavanı. Ölçümde bu dal zamanın **%60'ında**
+                // seçiliyordu (bkz. `harvest_probe`): tepki doymuş, kıtlık
+                // sinyali var ama arz artamıyor. Tavan gerçek kısıt.
+                moneywar_domain::balance::HARVEST_SCARCITY_CAP_PCT
             } else if ratio > 150 {
                 200 // 1.5× baseline → 2× üretim
             } else if ratio > 110 {
@@ -622,7 +625,7 @@ fn harvest_ciftci_stock(
         let base_qty = moneywar_domain::balance::scaled_output(
             rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
         );
-        let prime_qty = (base_qty * price_factor_pct as u32 / 100).max(1);
+        let prime_qty = (base_qty * price_factor_pct / 100).max(1);
 
         let secondary = state.city_secondary.get(&city).copied();
         let secondary_qty = secondary.map(|_| {

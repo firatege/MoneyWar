@@ -608,6 +608,27 @@ pub const PRIVATE_FARM_BUILD_COST_LIRA: i64 = 15_000;
 /// "piyasa Çiftçisi ~8-12/tick, özel çiftlik biraz daha az".
 pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 8;
 
+/// Kıtlıkta hasat çarpanının tavanı (yüzde).
+///
+/// Çiftçi'nin hasadı fiyata tepki verir: referans fiyat baz fiyatın 3 katını
+/// aşarsa kıtlık kabul edip daha çok üretir. Ama tepki **doymuştu** — ölçümde
+/// (`moneywar-web/tests/harvest_probe.rs`) zamanın %60'ında en üst dal
+/// seçiliyordu. Kıtlık sinyali sürekli vardı, arz artamıyordu.
+///
+/// Süpürme (20 oyun, 500 tick):
+///
+/// ```text
+///   tavan  makas  Sanayici    Tüccar    Çiftçi   Alıcı  iflas  batch
+///    %300   5,2×   501.247   104.671   317.118  30.098    2,3   7571
+///    %600   3,7×   486.297   287.689   579.127  81.817    1,5   7634
+///   %1000   4,9×   499.241   397.946   937.215 107.663    1,3   8014
+/// ```
+///
+/// %1000'de Çiftçi tek başına zenginleşiyor ve makas yeniden açılıyor.
+/// %600 dengede: kıt olan üründe arz artıyor, bol olanda değişen yok —
+/// sabit hasat artışının aksine yalnız darboğazı besliyor.
+pub const HARVEST_SCARCITY_CAP_PCT: u32 = 600;
+
 /// Özel çiftliğin kadrosu, seviyeye göre. Tarla da emek ister.
 ///
 /// Tarlalar uzun süre **bedava işçiyle** çalışıyordu: kurulum parası dışında
