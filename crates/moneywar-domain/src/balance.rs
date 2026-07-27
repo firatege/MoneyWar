@@ -629,6 +629,14 @@ pub const PRIVATE_FARM_OUTPUT_PER_TICK: u32 = 8;
 /// sabit hasat artışının aksine yalnız darboğazı besliyor.
 pub const HARVEST_SCARCITY_CAP_PCT: u32 = 600;
 
+/// Yan ürün katmanlarında (ikincil + talep) kıtlık tepkisinin tavanı.
+///
+/// Ana üründen ayrı tutuluyor: yan katman zaten `base/4` üretiyor ve her
+/// şehirde farklı bir ham maddeye denk geliyor. Tepkiyi buraya da vermek,
+/// Çiftçi'nin **neyin kıt olduğuna göre ekim kaydırması** demek — ana
+/// ürününü değiştiremez ama yan tarlasını kıt olana ayırabilir.
+pub const HARVEST_SECONDARY_CAP_PCT: u32 = 100;
+
 /// Özel çiftliğin kadrosu, seviyeye göre. Tarla da emek ister.
 ///
 /// Tarlalar uzun süre **bedava işçiyle** çalışıyordu: kurulum parası dışında

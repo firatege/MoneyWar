@@ -595,8 +595,18 @@ fn harvest_ciftci_stock(
         // Dinamik hasat: piyasa fiyatı baseline'ın 2×'inden yüksekse (kıtlık)
         // daha fazla üret, 0.6×'inden düşükse (bolluk) daha az üret.
         // Ekonomiyi kırmadan doğal denge sağlar — Çiftçi de fiyata bakar.
-        let price_factor_pct = {
-            let ref_price = state.reference_price(city, prime)
+        //
+        // Tepki **her üç katmana da** uygulanır (v0.15.2). Eskiden yalnız
+        // şehrin ana ürünü fiyata bakıyordu; ikincil ve talep katmanı sabit
+        // `base/4` idi. Sonuç: bir şehirde ikincil olan ham madde fiyatı üçe
+        // katlansa bile ekimi artmıyordu. Ölçümde Buğday'ın talep/arzı 8×,
+        // Sanayici'nin Buğday doluluğu %16'ydı — kıtlık sinyali vardı,
+        // ekim yanıt vermiyordu.
+        //
+        // Bu, arzı topluca büyütmekten farklı: Çiftçi **neyin kıt olduğuna**
+        // göre ekim kaydırıyor. Bol ürünün ekimi artmıyor.
+        let factor_for = |product: moneywar_domain::ProductKind, cap: u32| -> u32 {
+            let ref_price = state.reference_price(city, product)
                 .map_or(0, moneywar_domain::Money::as_cents);
             let baseline = state.price_baseline.get(&(city, prime))
                 .map_or(1, |m| m.as_cents()).max(1);
@@ -607,7 +617,7 @@ fn harvest_ciftci_stock(
                 // Kıtlık tavanı. Ölçümde bu dal zamanın **%60'ında**
                 // seçiliyordu (bkz. `harvest_probe`): tepki doymuş, kıtlık
                 // sinyali var ama arz artamıyor. Tavan gerçek kısıt.
-                moneywar_domain::balance::HARVEST_SCARCITY_CAP_PCT
+                cap
             } else if ratio > 150 {
                 200 // 1.5× baseline → 2× üretim
             } else if ratio > 110 {
@@ -625,22 +635,22 @@ fn harvest_ciftci_stock(
         let base_qty = moneywar_domain::balance::scaled_output(
             rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
         );
-        let prime_qty = (base_qty * price_factor_pct / 100).max(1);
+        let prime_qty = (base_qty * factor_for(prime, moneywar_domain::balance::HARVEST_SCARCITY_CAP_PCT) / 100).max(1);
 
         let secondary = state.city_secondary.get(&city).copied();
-        let secondary_qty = secondary.map(|_| {
+        let secondary_qty = secondary.map(|sec| {
             let base = moneywar_domain::balance::scaled_output(
                 rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
             );
-            base / 4
+            (base / 4 * factor_for(sec, moneywar_domain::balance::HARVEST_SECONDARY_CAP_PCT) / 100).max(1)
         });
 
         let demand = state.city_demand.get(&city).copied();
-        let demand_qty = demand.map(|_| {
+        let demand_qty = demand.map(|dem| {
             let base = moneywar_domain::balance::scaled_output(
                 rng.random_range(HARVEST_QTY_MIN..=HARVEST_QTY_MAX),
             );
-            base / 4
+            (base / 4 * factor_for(dem, moneywar_domain::balance::HARVEST_SECONDARY_CAP_PCT) / 100).max(1)
         });
 
         // Tek pas — prime + sec + demand için ortak cash debit (tohum maliyeti
