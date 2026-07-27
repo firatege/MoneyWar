@@ -135,6 +135,57 @@ pub const fn scaled_output(qty: u32) -> u32 {
 /// o zaman emek gerçek bir tercih baskısı yaratır.
 pub const LABOR_POOL_SIZE: u32 = 110;
 
+/// İşgücü havuzunun sezon boyunca **büyüme hızı** — 100 tick başına kişi.
+///
+/// # Neden sabit havuz gerçekçi değildi
+///
+/// Havuz 110'da sabitti ve ekonomi büyüdükçe kalıcı olarak doluyordu.
+/// Canlıda t250'de ölçüm: istihdam 110/110, fabrikaların istediği kadro
+/// 206 — yani talebin yarısı karşılanıyor ve **44 fabrikanın 18'i sıfır
+/// kadroyla** duruyordu. Kurulmuş, parası ödenmiş, tek işçisi yok.
+///
+/// Havuzu sabit tutup büyütmek de çözüm değil: 110 → 300 yapınca girdi
+/// açlığı %50'den %63'e çıkıyor, çünkü daha çok kadrolu fabrika aynı
+/// hammaddeye daha çok talep demek. Kapasite bir anda değil, ekonomiyle
+/// birlikte büyümeli.
+///
+/// Nüfus sezon boyunca artar: `LABOR_POOL_SIZE + tick × oran / 100`.
+/// t350'de 110 → 197.
+///
+/// # Ölçüm
+///
+/// Kadrosuz duran fabrika sayısı (sabit havuz → +25):
+///
+/// ```text
+///   tick   fabrika   kadrosuz(sabit)   kadrosuz(+25)
+///   210         41                13               1
+///   280         47                23               7
+///   350         58                30              12
+/// ```
+///
+/// Sabit havuzda sezon sonunda fabrikaların **%52'si sıfır kadroyla**
+/// duruyordu. Üretim de arttı — "batch sayısı düştü" yanıltıcıydı, çünkü
+/// kadro büyüyünce `batch_size` da büyüyor:
+///
+/// ```text
+///   ürün      sabit havuz    +25 büyüme
+///   Ekmek      8842 (%118)   11813 (%138)
+///   Ziyafet    1066  (%38)    2966  (%84)
+///   Elbise     8699  (%96)   11124 (%102)
+/// ```
+///
+/// Rol dengesi bozulmadı: makas 3.9× → 3.8× (2. tohum 3.7×), para arzı
+/// -6.0%, Sanayici 85.7K → 90.7K. Bedeli Alıcı'da (-15.4K → -18.3K):
+/// daha çok mal dönüyor, tüketici daha çok harcıyor.
+pub const LABOR_POOL_GROWTH_PER_100_TICKS: u32 = 25;
+
+/// Bu tick'teki işgücü havuzu. Sezon başında [`LABOR_POOL_SIZE`],
+/// sonra [`LABOR_POOL_GROWTH_PER_100_TICKS`] hızıyla büyür.
+#[must_use]
+pub const fn labor_pool_at(tick: u32) -> u32 {
+    LABOR_POOL_SIZE + tick * LABOR_POOL_GROWTH_PER_100_TICKS / 100
+}
+
 /// Seviye 1 fabrikanın tam kadrosu. Seviye çarpanı [`FACTORY_BATCH_SIZE`]
 /// ile aynı yönde: 1× / 1.5× / 2× → 3 / 4 / 6.
 pub const EMPLOYEES_PER_FACTORY_L1: u32 = 3;

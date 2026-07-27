@@ -494,7 +494,7 @@ fn build_economy(state: &GameState) -> EconomyDto {
             state.players.values().map(|p| p.cash.as_cents()).sum(),
         )),
         employed: state.factories.values().map(|f| f.employees).sum(),
-        labor_pool: moneywar_domain::balance::LABOR_POOL_SIZE,
+        labor_pool: moneywar_domain::balance::labor_pool_at(state.current_tick.value()),
         factories_active: active,
         factories_idle: idle,
     }

@@ -202,7 +202,6 @@ pub(crate) fn process_set_factory_staff(
     factory_id: FactoryId,
     target: u32,
 ) -> Result<(), EngineError> {
-    use moneywar_domain::balance::LABOR_POOL_SIZE;
 
     let factory = state.factories.get(&factory_id).ok_or_else(|| {
         EngineError::Domain(DomainError::Validation(format!(
@@ -220,7 +219,9 @@ pub(crate) fn process_set_factory_staff(
     }
 
     let employed: u32 = state.factories.values().map(|f| f.employees).sum();
-    let free = LABOR_POOL_SIZE.saturating_sub(employed);
+    // Havuz sezonla büyür — nüfus sabit değil.
+    let pool = moneywar_domain::balance::labor_pool_at(tick.value());
+    let free = pool.saturating_sub(employed);
 
     let applied = if target > current {
         current.saturating_add((target - current).min(free))
@@ -229,7 +230,7 @@ pub(crate) fn process_set_factory_staff(
     };
     if applied == current {
         return Err(EngineError::Domain(DomainError::Validation(format!(
-            "no free labor: pool {LABOR_POOL_SIZE} fully employed"
+            "no free labor: pool {pool} fully employed"
         ))));
     }
 
@@ -245,7 +246,7 @@ pub(crate) fn process_set_factory_staff(
             owner,
             employees: applied,
             hired: i64::from(applied) - i64::from(current),
-            pool_left: LABOR_POOL_SIZE.saturating_sub(employed_after),
+            pool_left: pool.saturating_sub(employed_after),
         },
     });
     Ok(())
