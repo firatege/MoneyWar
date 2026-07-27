@@ -93,6 +93,17 @@ function GridCell({
       : null;
   const dir = pct == null ? "flat" : pct > 0.5 ? "up" : pct < -0.5 ? "down" : "flat";
 
+  // Yüzde metni hücreye sığmalı. Ölçümde 60 hücrede fiyat ile yüzde üst üste
+  // biniyordu: "+246.8%" gibi değerler sütun genişliğini aşıyor. Büyük
+  // sapmalarda ondalık bilgi taşımıyor (%246,8 ile %247 arasında izleyici
+  // için fark yok), o yüzden basamak sayısı büyüklüğe göre kısalıyor.
+  const pctText =
+    pct == null
+      ? "—"
+      : Math.abs(pct) >= 1000
+        ? (pct > 0 ? "+" : "−") + "999%"
+        : (pct > 0 ? "+" : "") + pct.toFixed(Math.abs(pct) >= 100 ? 0 : 1) + "%";
+
   return (
     <button
       className={`pg__cell pg__cell--${dir}${active ? " pg__cell--active" : ""}`}
@@ -101,9 +112,7 @@ function GridCell({
     >
       <span className="pg__top">
         <span className="pg__price num">{lira2(cell.last_lira)}</span>
-        <span className="pg__pct">
-          {pct == null ? "—" : (pct > 0 ? "+" : "") + pct.toFixed(1) + "%"}
-        </span>
+        <span className="pg__pct">{pctText}</span>
       </span>
       <span className="pg__spark">
         <Sparkline values={hist} baseline={cell.baseline_lira} />
