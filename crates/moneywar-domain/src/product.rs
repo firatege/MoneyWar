@@ -54,6 +54,44 @@ pub enum ProductClass {
     Finished,
 }
 
+/// Hane halkının ihtiyaç basamağı (Vic3 pop needs).
+///
+/// Tüketici bütçesini yukarı doğru harcar: önce karnını doyurur, sonra
+/// giyinir, en son keyfine bakar. Alttaki basamak açken üsttekinin iştahı
+/// kısılır — ama sıfırlanmaz, yoksa talep yenileme hızına iner.
+///
+/// Basamağın iki etkisi var: **ne kadar ister** (kiler hedefi) ve **ne kadar
+/// öder** ([`NeedTier::max_premium_pct`]). Ekmek için prim ödenir, şarap
+/// pahalıysa vazgeçilir.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum NeedTier {
+    /// Karın doyurur — ilk sırada doyar, en yüksek primi öder.
+    Temel,
+    /// Giyinme ve pişirme — temel doyduktan sonra.
+    Konfor,
+    /// Keyif. Artan bütçenin gittiği yer; miktarı kiler değil **cep** sınırlar.
+    Luks,
+}
+
+impl NeedTier {
+    /// Basamak sırası — küçük olan önce doyar.
+    pub const ORDER: [Self; 3] = [Self::Temel, Self::Konfor, Self::Luks];
+
+    /// Kıtlıkta baseline üstüne ödenecek azami prim (%).
+    ///
+    /// Ekmek bitmişse hane pazarlık etmez; şarap pahalıysa o hafta içmez.
+    /// Lüksün sıfır olması fiyat sarmalına karşı da fren: en pahalı mallar
+    /// tüketicinin primiyle yukarı çekilemez.
+    #[must_use]
+    pub const fn max_premium_pct(self) -> i64 {
+        match self {
+            Self::Temel => 20,
+            Self::Konfor => 10,
+            Self::Luks => 0,
+        }
+    }
+}
+
 /// Bozulma kuralı. `loss_percent == 100` = ürün tamamen yok olur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Perishability {
@@ -299,6 +337,54 @@ impl ProductKind {
         }
     }
 
+    /// Hane halkının bu mala verdiği öncelik.
+    ///
+    /// Tüketici uzun süre yedi mamulü aynı gözle alıyordu: karnını doyuran
+    /// ekmekle sofrayı süsleyen ziyafeti ayırt etmeden, her kovaya sabit
+    /// iştahla. Sıralama olmayınca "gereklilik" diye bir kavram da yoktu.
+    ///
+    /// Sıra [`NeedTier`] belgesinde: temel doyar, sonra konfor, sonra lüks.
+    /// Ham ürünler için `None` — hane ham madde tüketmez.
+    #[must_use]
+    pub const fn need_tier(self) -> Option<NeedTier> {
+        match self {
+            Self::Ekmek | Self::Un | Self::Zeytinyagi => Some(NeedTier::Temel),
+            Self::Elbise | Self::Kumas => Some(NeedTier::Konfor),
+            Self::Sarap | Self::Ziyafet => Some(NeedTier::Luks),
+            _ => None,
+        }
+    }
+
+    /// Hanenin bu maldan tutmak istediği stok — kova (şehir × mamul) başına.
+    ///
+    /// **Kiler, depo değil.** Ara mallar (`Un`, `Kumas`) bilinçli olarak
+    /// düşük: onlar aynı zamanda fırının ve terzinin girdisi. Hane un
+    /// çuvalı yığdıkça fabrika girdisiz kalıyordu (ölçüm: fabrika
+    /// başlatmak isteyip girdi bulamadığı deneme oranı %57).
+    ///
+    /// Lüks tarafındaki hedef yalnızca *fiyat* aciliyetini sürer; lüks
+    /// alımın miktarı kilere değil **cebe** bakar — temel ihtiyaç doyduktan
+    /// sonra artan bütçenin gideceği yer orası. Bu olmadan model talebi
+    /// yenileme hızına indirir ve ekonomiyi küçültür.
+    /// **Seviye ayrı, oran ayrı.** Basamaklar arasındaki oran tasarım —
+    /// fabrikaya girdi bırakan o. Mutlak seviye ise toplam talebi belirler
+    /// ve süpürüldü (10 oyun × 350 tick, rol makası): ×1 → 4,0× ·
+    /// ×2 → 4,5× · ×3 → 3,5× · **×4 → 3,1×** · ×5 → 3,3×. Aşağıdaki
+    /// değerler ×4 noktasıdır. İnce ayar için `LARDER_SCALE_PCT`.
+    #[must_use]
+    pub const fn household_larder(self) -> u32 {
+        match self {
+            Self::Ekmek => 160,
+            Self::Un => 48,
+            Self::Zeytinyagi => 60,
+            Self::Elbise => 100,
+            Self::Kumas => 40,
+            Self::Sarap => 60,
+            Self::Ziyafet => 80,
+            _ => 0,
+        }
+    }
+
     /// v0.4.1: Mamul üretim süresi (tick). Fab batch başlatıldıktan kaç tick
     /// sonra tamamlanır. Reel sanayide farklı: değirmen hızlı, dokuma yavaş.
     /// - `Un`: 2 (değirmen — mevcut default)
@@ -412,6 +498,52 @@ mod tests {
             ProductKind::ALL.len(),
             "ham + mamul tüm kataloğu kapsamalı"
         );
+    }
+
+    /// Her mamulün basamağı ve kiler hedefi tanımlı; ham maddenin ikisi de yok.
+    #[test]
+    fn every_finished_good_has_a_need_tier_and_larder() {
+        for p in ProductKind::FINISHED_GOODS {
+            assert!(p.need_tier().is_some(), "{p:?} basamaksız kalmış");
+            assert!(
+                p.household_larder() > 0,
+                "{p:?} kiler hedefi sıfır — hane hiç almaz"
+            );
+        }
+        for raw in ProductKind::RAW_MATERIALS {
+            assert!(raw.need_tier().is_none(), "{raw:?} hane malı değil");
+            assert_eq!(raw.household_larder(), 0);
+        }
+    }
+
+    /// Ara mallar fabrikanın da girdisi — hane onlardan depo değil kiler tutar.
+    #[test]
+    fn intermediate_goods_have_smaller_larder_than_their_output() {
+        // Un → Ekmek, Kumas → Elbise: girdinin hedefi çıktınınkinden küçük
+        // olmazsa hane fırınla/terziyle girdi için yarışmaya devam eder.
+        assert!(ProductKind::Un.household_larder() < ProductKind::Ekmek.household_larder());
+        assert!(ProductKind::Kumas.household_larder() < ProductKind::Elbise.household_larder());
+    }
+
+    /// Prim basamakla azalır: ekmeğe pazarlık yok, şaraba var.
+    #[test]
+    fn premium_decreases_with_tier() {
+        let temel = NeedTier::Temel.max_premium_pct();
+        let konfor = NeedTier::Konfor.max_premium_pct();
+        let luks = NeedTier::Luks.max_premium_pct();
+        assert!(temel > konfor, "temel {temel} ≤ konfor {konfor}");
+        assert!(konfor > luks, "konfor {konfor} ≤ lüks {luks}");
+        assert_eq!(luks, 0, "lüks prim ödememeli — fiyat sarmalı freni");
+    }
+
+    #[test]
+    fn tier_order_is_ascending_by_priority() {
+        assert_eq!(
+            NeedTier::ORDER,
+            [NeedTier::Temel, NeedTier::Konfor, NeedTier::Luks]
+        );
+        assert!(NeedTier::Temel < NeedTier::Konfor);
+        assert!(NeedTier::Konfor < NeedTier::Luks);
     }
 
     #[test]

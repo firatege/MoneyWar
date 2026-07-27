@@ -1,12 +1,27 @@
-//! Alıcı rol davranışı — tüketici, buy-only mamul.
+//! Alıcı rol davranışı — hane halkı, buy-only mamul.
 //!
-//! Alıcı her `CONSUME_PERIOD` (5) tick'te mamul stoğunun %50'sini tüketir
-//! (Vic3 pop needs). Sürekli alım yapması doğal — yoksa açlık çeker.
+//! Alıcı `CONSUME_PERIOD` tick'te bir mamul stoğunun bir kısmını tüketir
+//! (bkz. `ProductKind::alici_consume_pct`). Sürekli alım yapması doğal —
+//! yoksa açlık çeker.
+//!
+//! # Gereklilik sırası
+//!
+//! Hane bütçesini yukarı doğru harcar ([`NeedTier`]): önce karnını doyurur
+//! (Ekmek/Un/Zeytinyağı), sonra giyinir (Elbise/Kumaş), en son keyfine bakar
+//! (Şarap/Ziyafet). Sıra iki yerde iş görür — **ne kadar ister** (kiler
+//! hedefi) ve **ne kadar öder** (basamak primi).
+//!
+//! Temel ve konfor kiler-sınırlı, lüks **cep**-sınırlı. Bu ayrım modelin bel
+//! kemiği: her basamağı kilerle sınırlamak talebi yenileme hızına indirip
+//! ekonomiyi küçültüyor (ölçüldü: üretim −%15, rol makası 3,0×→4,7×).
+//! Basamak modeli talebi kısmaz, temel doyunca artan bütçeyi **lükse taşır**.
+//! Yan etkisi bilinçli: hane un/kumaş yığmayı bırakınca fabrikaya girdi kalır.
 //!
 //! # Aday üretim kuralı
 //!
-//! Her `(şehir × mamul)` için bir Buy adayı (3 şehir × 3 mamul = 9 aday):
-//! - quantity = `affordable_qty(cash_bucket, price, want=30)` — tax-aware
+//! Her `(şehir × mamul)` için bir Buy adayı:
+//! - quantity = `affordable_qty(cash_bucket, price, want)` — tax-aware,
+//!   `want` gereklilikten türer ve alt basamak açsa kısılır ([`MIN_GATE`])
 //! - `unit_price` = `effective_baseline(city, product)` (clamp etkisi dahil)
 //! - skor → orchestrator hesaplar (Alıcı `Weights`'i ile)
 //!
@@ -20,7 +35,7 @@
 //! - `competition` -0.2 → rakip baskı varsa bekle
 
 use moneywar_domain::{
-    GameState, Money, OrderSide, Player, ProductKind, balance::TRANSACTION_TAX_PCT,
+    GameState, Money, NeedTier, OrderSide, Player, ProductKind, balance::TRANSACTION_TAX_PCT,
 };
 
 use crate::behavior::candidates::ActionCandidate;
@@ -32,6 +47,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     let mut out = Vec::new();
     let bucket_cash = bucket_budget(player);
     let tick = state.current_tick.value();
+    let satisfaction = tier_satisfaction(player);
 
     for (ci, city) in moneywar_domain::CityId::ALL.into_iter().enumerate() {
         for (pi, product) in ProductKind::FINISHED_GOODS.into_iter().enumerate() {
@@ -47,6 +63,12 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             if phase != 0 {
                 continue;
             }
+            // Hane malı olmayan bir mamul varsa (katalog büyürse) atla.
+            let Some(tier) = product.need_tier() else {
+                continue;
+            };
+            // Bu basamağın kapısı: altındaki basamakların doyumu.
+            let gate = lower_tier_gate(tier, &satisfaction);
             // effective_baseline: Walras clamp'lı referans (initial × [%60,%160]).
             // reference_price (rolling avg) kullanmak Sanayici'de olduğu gibi
             // fiyat spirali yaratıyordu — yüksek fill → avg artar → daha yüksek
@@ -102,41 +124,53 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             ) else {
                 continue;
             };
-            // NOT — buradaki düz `10` bilinen bir sorun.
-            //
-            // Alıcı her ürüne, her tick, her şehirde 10 birim talip oluyor:
-            // yiyeceği ekmekle bir fırının ihtiyacı olan unu ayırt etmeden.
-            // Ölçüm (bkz. `moneywar-web/tests/order_size_probe.rs`):
+            // Uzun süre buradaki istek düz bir sayıydı: Alıcı her ürüne, her
+            // şehirde aynı miktarda talip oluyordu — yiyeceği ekmekle bir
+            // fırının ihtiyacı olan unu ayırt etmeden. Ölçüm (bkz.
+            // `moneywar-web/tests/order_size_probe.rs`):
             //
             //   Ekmek · Sanayici    825 emir × 40.8 birim = 33.660
             //   Ekmek · Alıcı     7.085 emir ×  5.9 birim = 41.800
             //
-            // Emir *başına* oran doğru (tüketici 6, fabrika 41); tüketici
-            // **adetçe** eziyor ve fabrika girdisini bulamıyor.
+            // Emir *başına* oran doğruydu (tüketici 6, fabrika 41); tüketici
+            // **adetçe** eziyor ve fabrika girdisini bulamıyordu.
             //
-            // Denendi, hiçbiri net kazanç vermedi (30 oyun × 350 tick):
-            //   · miktarı iştah yüzdesine bağlamak  → ekonomi küçüldü,
-            //     herkes fakirleşti (makas 3.4x → 4.3x)
-            //   · ara mal / nihai mal ayrımı (4 vs 30 birim) → açlık %54→%50
-            //     ama Ziyafet üretimi 708 → 235'e düştü
-            //   · tüketicinin ara mal teklifini kısmak (%90/%80/%70)
-            //     → makas 5.0x'e kadar bozuldu
+            // Miktarı kısarak çözmek dört kez denendi, dördü de ekonomiyi
+            // küçülttü (makas 3,4×→4,3× · 5,0× · 4,7×; biri Ziyafet üretimini
+            // 708'den 235'e indirdi). Kısmak yanlış lever'dı: talebin
+            // **yerini** değil **seviyesini** düşürüyordu.
             //
-            // Sebep: mesele miktar değil **fiyat**. Tüketici nakit
-            // tavanından teklif verir, hatta tekel primi öder; fabrikanın
-            // teklifi ise geride kalan baseline'dan türer ve yarışı hep
-            // kaybeder. Fabrikanın teklifini yükseltmek de denenmiş ve
-            // fiyat sarmalı yaratmıştı (`pricing::derived_input_ceiling`).
-            // Gerçek çözüm o tavanın sarmal kurmadan ileri bakmasında.
-            // İstek üretim ölçeğine bağlı. Sabit 10 kalırsa ölçek
-            // büyüdükçe tüketici yuvarlama hatasına dönüşüyor: üretici 10×
-            // mal basıyor, tüketici hâlâ 10 birim istiyor. Ölçümde ×1000'de
-            // Çiftçi 749K'ya fırlarken Alıcı -64K'ya iniyordu.
+            // İstek artık **gereklilik** üstünden. İki farklı mantık var ve
+            // ikisinin ayrılması modelin bel kemiği:
             //
-            // Oran korunuyor — fabrika zaten batch kadar (ölçekli) ister,
-            // tüketici onun yanında küçük kalır. Değişen yalnız birimin
-            // büyüklüğü, taraflar arasındaki denge değil.
-            let want = moneywar_domain::balance::scaled_output(10 * BUY_PERIOD);
+            // - Temel/Konfor: kiler hedefine kadar olan *eksik*. Karnı tok
+            //   hane un çuvalı yığmaz; artan mal fabrikaya kalır.
+            // - Lüks: kiler değil **cep** sınırlar. Temel ihtiyaç doyunca
+            //   artan bütçe buraya akar.
+            //
+            // Lüksün cep-sınırlı kalması şart. Yalnız kiler eksiğine bakan
+            // bir model talebi *yenileme hızına* indiriyor: tüketim 8 tick'te
+            // %10-40, eski iştah 4 tick'te 40 birim — arada ~7× fark var ve
+            // ekonomi o farkın üstünde duruyor. Ölçüldü: her kovayı kiler
+            // eksiğiyle sınırlamak üretimi %15, rol makasını 3,0×→4,7×
+            // götürdü. Basamak modeli talebi kısmıyor, **yukarı taşıyor**.
+            let want = match tier {
+                // Cep-sınırlı: tavanı `affordable_qty` + `bucket_budget`
+                // koyar, kiler değil. Buraya bir miktar tavanı koymak
+                // bütçe akışını kesiyor — ölçüldü: 40 birimlik tavanla
+                // rol makası 3,8×'te takılı kaldı, herkes fakirleşti.
+                NeedTier::Luks => u32::MAX,
+                NeedTier::Temel | NeedTier::Konfor => {
+                    larder_target(product).saturating_sub(player.inventory.get(city, product))
+                }
+            };
+            // Alt basamak açken üst basamağın iştahı kısılır — ama
+            // sıfırlanmaz. Tamamen kapatmak talebi uçurumdan atıyor;
+            // amaç sırayı kurmak, alışverişi durdurmak değil.
+            let want = scale_by_gate(want, gate);
+            if want == 0 {
+                continue;
+            }
             let quantity = affordable_qty(bucket_cash, unit_price, want);
             if quantity == 0 {
                 continue;
@@ -154,6 +188,81 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
     out
 }
 
+/// Kiler hedefi ince ayar düğmesi (%). Taban değerler
+/// [`ProductKind::household_larder`]'da zaten süpürülmüş noktada; bu çarpan
+/// dünyayı topluca gevşetip sıkmak için. Çok dar tutmak talebi yenileme
+/// hızına indirip ekonomiyi küçültüyor — ölçüm defteri modül belgesinde.
+const LARDER_SCALE_PCT: u32 = 100;
+
+/// Bir malın bu dünyadaki kiler hedefi — ölçek ve çarpan uygulanmış.
+fn larder_target(product: ProductKind) -> u32 {
+    let base = product.household_larder() * LARDER_SCALE_PCT / 100;
+    moneywar_domain::balance::scaled_output(base)
+}
+
+/// Alt basamak açken üst basamağa bırakılan asgari iştah payı.
+///
+/// Sıfır olamaz: kapıyı tamamen kapatmak talebi uçurumdan atıyor ve
+/// ölçümde üretim %15 düşüyordu. Hane aç kalsa bile alışverişi büsbütün
+/// kesmez — sadece önceliğini değiştirir.
+const MIN_GATE: f64 = 0.25;
+
+/// Bir basamağın doyumu: elde tutulan stok ÷ o basamağın kiler hedefi.
+///
+/// Kova kova değil **basamak toplamı** üzerinden bakılır; tek bir boş
+/// şehir-mal kovası bütün basamağı "aç" göstermesin diye. 0.0 = hiç yok,
+/// 1.0 = hedef dolu.
+fn tier_satisfaction(player: &Player) -> [f64; NeedTier::ORDER.len()] {
+    let mut have = [0u64; NeedTier::ORDER.len()];
+    let mut target = [0u64; NeedTier::ORDER.len()];
+    for (ti, tier) in NeedTier::ORDER.into_iter().enumerate() {
+        for city in moneywar_domain::CityId::ALL {
+            for product in ProductKind::FINISHED_GOODS {
+                if product.need_tier() != Some(tier) {
+                    continue;
+                }
+                have[ti] += u64::from(player.inventory.get(city, product));
+                target[ti] += u64::from(larder_target(product));
+            }
+        }
+    }
+    let mut out = [1.0; NeedTier::ORDER.len()];
+    for i in 0..NeedTier::ORDER.len() {
+        if target[i] > 0 {
+            #[allow(clippy::cast_precision_loss)]
+            let ratio = have[i] as f64 / target[i] as f64;
+            out[i] = ratio.clamp(0.0, 1.0);
+        }
+    }
+    out
+}
+
+/// Bu basamağın kapısı — **altındaki** basamakların en açı belirler.
+///
+/// Temel için kapı hep açık (1.0): karnını doyurmanın önkoşulu yok.
+fn lower_tier_gate(tier: NeedTier, satisfaction: &[f64; NeedTier::ORDER.len()]) -> f64 {
+    let idx = NeedTier::ORDER
+        .iter()
+        .position(|t| *t == tier)
+        .unwrap_or(0);
+    let mut gate = 1.0_f64;
+    for s in satisfaction.iter().take(idx) {
+        gate = gate.min(*s);
+    }
+    gate.clamp(0.0, 1.0)
+}
+
+/// İştahı kapıya göre ölçekle — `MIN_GATE` tabanıyla.
+fn scale_by_gate(want: u32, gate: f64) -> u32 {
+    if want == 0 {
+        return 0;
+    }
+    let factor = MIN_GATE + (1.0 - MIN_GATE) * gate.clamp(0.0, 1.0);
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let scaled = (f64::from(want) * factor).round() as u32;
+    scaled.max(1)
+}
+
 /// Bir kovanın alışveriş dönemi (tick).
 ///
 /// Alıcı emirlerin %64'ünü tek başına veriyordu: 42.000 emir × 5,4 birim.
@@ -166,7 +275,7 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 const BUY_PERIOD: u32 = 4;
 
 /// Alıcı cash'inin (şehir × mamul) bucket'a bölünmüş payı.
-/// v0.6.0 Bursa+Konya: hardcoded 9 → dinamik (5 şehir × 3 mamul = 15).
+/// v0.6.0 Bursa+Konya: hardcoded 9 → dinamik (5 şehir × 7 mamul = 35).
 /// Eski `/9` 3-şehir tasarımındaydı; 5 şehirde Alıcı her turn 1.67× cash
 /// harcamak istiyordu → cash 40 tick'te bitiyordu.
 fn bucket_budget(player: &Player) -> Money {
@@ -183,26 +292,34 @@ fn bucket_budget(player: &Player) -> Money {
     Money::from_cents(cents.max(0))
 }
 
-/// Stoğa-bağımlı rezerv fiyat. Vic3 pop needs urgency mantığı:
-/// - Stok dolu (≥30 birim): baseline × 1.00 — acelesi yok, tutumlu
-/// - Stok orta (15 birim) : baseline × 1.05 — orta urgency, Sanayici karşılar
-/// - Stok boş (0 birim)   : baseline × 1.10 — kıtlık, max prim öder
+/// Stoğa **ve gerekliliğe** bağlı rezerv fiyat. Vic3 pop needs urgency:
+/// kiler boşaldıkça prim artar, ama tavanı malın basamağı belirler.
 ///
-/// Bu **rezerv tavan**: Alıcı baseline'ın %110'undan fazlasını ödemez.
-/// Sanayici 200₺ asking yazsa hiç eşleşmez, başka Sanayici 105'i kapar →
-/// rekabet doğal şekilde fiyat dengeler.
-const URGENCY_REFERENCE_STOCK: f64 = 30.0;
-const MAX_URGENCY_PREMIUM_PCT: i64 = 10;
-
+/// Referans stok artık malın kendi kiler hedefi ([`ProductKind::household_larder`]),
+/// düz bir 30 değil: hane 40 ekmekle doymuşken 12 unla da doymuş sayılır.
+/// Tavan da basamaktan gelir ([`NeedTier::max_premium_pct`]) — ekmeğe %20,
+/// şaraba %0. Pahalı lüks malın tüketici primiyle yukarı çekilememesi aynı
+/// zamanda fiyat sarmalına karşı fren.
+///
+/// Bu **rezerv tavan**: Sanayici 200₺ asking yazsa hiç eşleşmez, başka
+/// Sanayici 105'i kapar → rekabet doğal şekilde fiyat dengeler.
 fn bid_with_urgency(
     baseline: Money,
     player: &Player,
     city: moneywar_domain::CityId,
     product: ProductKind,
 ) -> Money {
+    let reference = f64::from(larder_target(product));
+    if reference <= 0.0 {
+        return baseline;
+    }
     let stock = f64::from(player.inventory.get(city, product));
-    let urgency = (1.0 - (stock / URGENCY_REFERENCE_STOCK).min(1.0)).clamp(0.0, 1.0);
-    let premium_pct = (urgency * MAX_URGENCY_PREMIUM_PCT as f64) as i64;
+    let urgency = (1.0 - (stock / reference).min(1.0)).clamp(0.0, 1.0);
+    let max_premium = product
+        .need_tier()
+        .map_or(0, NeedTier::max_premium_pct);
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    let premium_pct = (urgency * max_premium as f64) as i64;
     let multiplier = 100 + premium_pct;
     Money::from_cents(baseline.as_cents().saturating_mul(multiplier) / 100)
 }
@@ -336,6 +453,11 @@ mod tests {
         p
     }
 
+    /// Referans artık malın kendi kiler hedefi, düz 30 değil.
+    fn larder(product: ProductKind) -> u32 {
+        larder_target(product)
+    }
+
     #[test]
     fn empty_stock_yields_max_premium_bid() {
         let p = alici_with_stock(0);
@@ -345,13 +467,14 @@ mod tests {
             CityId::Istanbul,
             ProductKind::Kumas,
         );
-        // Stok 0 → urgency 1.0 → 110% × 36 = 39.6 → 3960 cents
-        assert_eq!(bid.as_cents(), 36 * 100 * 110 / 100);
+        // Kiler boş → urgency 1.0 → basamağın tam primi.
+        let pct = 100 + NeedTier::Konfor.max_premium_pct();
+        assert_eq!(bid.as_cents(), 36 * 100 * pct / 100);
     }
 
     #[test]
     fn full_stock_yields_baseline_bid() {
-        let p = alici_with_stock(30);
+        let p = alici_with_stock(larder(ProductKind::Kumas));
         let bid = bid_with_urgency(
             Money::from_lira(36).unwrap(),
             &p,
@@ -363,15 +486,105 @@ mod tests {
 
     #[test]
     fn half_stock_yields_mid_premium() {
-        let p = alici_with_stock(15);
+        let p = alici_with_stock(larder(ProductKind::Kumas) / 2);
         let bid = bid_with_urgency(
             Money::from_lira(36).unwrap(),
             &p,
             CityId::Istanbul,
             ProductKind::Kumas,
         );
-        // 15/30 = 0.5 stock → urgency 0.5 → 105% × 36 = 3780 cents
-        assert_eq!(bid.as_cents(), 36 * 100 * 105 / 100);
+        // Kiler yarı dolu → urgency 0.5 → basamak priminin yarısı.
+        let pct = 100 + NeedTier::Konfor.max_premium_pct() / 2;
+        assert_eq!(bid.as_cents(), 36 * 100 * pct / 100);
+    }
+
+    /// Ekmek ile şarap aynı primi ödemez — gereklilik farkı fiyata yansır.
+    #[test]
+    fn premium_follows_need_tier_not_a_flat_rate() {
+        let base = Money::from_lira(100).unwrap();
+        let empty = alici_with_stock(0);
+        let bread = bid_with_urgency(base, &empty, CityId::Istanbul, ProductKind::Ekmek);
+        let wine = bid_with_urgency(base, &empty, CityId::Istanbul, ProductKind::Sarap);
+        assert!(
+            bread > base,
+            "kiler boşken ekmeğe prim ödenmeli, {bread:?}"
+        );
+        assert_eq!(wine, base, "lüks mal prim ödememeli — sarmal freni");
+        assert!(bread > wine);
+    }
+
+    /// Temel açken lüks iştahı kısılır ama sıfırlanmaz.
+    #[test]
+    fn hungry_basics_damp_luxury_appetite_without_killing_it() {
+        let starving = [0.0, 0.0, 0.0];
+        let fed = [1.0, 1.0, 1.0];
+        let want = 40;
+        let luks_hungry = scale_by_gate(want, lower_tier_gate(NeedTier::Luks, &starving));
+        let luks_fed = scale_by_gate(want, lower_tier_gate(NeedTier::Luks, &fed));
+        assert!(luks_hungry > 0, "kapı tamamen kapanmamalı — talep uçurumu");
+        assert!(
+            luks_hungry < luks_fed,
+            "temel açken lüks iştahı kısılmalı: {luks_hungry} vs {luks_fed}"
+        );
+        // Temel her koşulda tam iştahla gider — doymanın önkoşulu yok.
+        assert_eq!(scale_by_gate(want, lower_tier_gate(NeedTier::Temel, &starving)), want);
+    }
+
+    /// Kiler doyunca temel mal siparişi durur; lüks devam eder (bütçe akışı).
+    #[test]
+    fn full_larder_stops_basics_but_luxury_keeps_flowing() {
+        let (s, p) = alici_with_cash(500_000);
+        let mut p = p;
+        for city in CityId::ALL {
+            for product in ProductKind::FINISHED_GOODS {
+                p.inventory.add(city, product, larder(product)).unwrap();
+            }
+        }
+        let cands = candidates_over_one_period(s, &p);
+        for cand in &cands {
+            let ActionCandidate::SubmitOrder { product, .. } = cand else {
+                panic!("Alıcı sadece SubmitOrder emit etmeli");
+            };
+            assert_eq!(
+                product.need_tier(),
+                Some(NeedTier::Luks),
+                "{product:?} kileri doluyken hâlâ sipariş ediliyor"
+            );
+        }
+        assert!(
+            !cands.is_empty(),
+            "her kiler doluyken bile lüks akmalı — bütçe kaybolmamalı"
+        );
+    }
+
+    /// Temel mal kiler hedefini aşacak kadar istenmez.
+    #[test]
+    fn basics_never_ordered_beyond_the_larder() {
+        let (s, p) = alici_with_cash(500_000);
+        let mut p = p;
+        let have = 3;
+        for city in CityId::ALL {
+            for product in ProductKind::FINISHED_GOODS {
+                p.inventory.add(city, product, have).unwrap();
+            }
+        }
+        let cands = candidates_over_one_period(s, &p);
+        for cand in &cands {
+            let ActionCandidate::SubmitOrder {
+                product, quantity, ..
+            } = cand
+            else {
+                panic!()
+            };
+            if product.need_tier() == Some(NeedTier::Luks) {
+                continue;
+            }
+            assert!(
+                *quantity <= larder(*product).saturating_sub(have),
+                "{product:?}: {quantity} birim istendi, eksik yalnızca {}",
+                larder(*product).saturating_sub(have)
+            );
+        }
     }
 
     #[test]
