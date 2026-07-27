@@ -727,15 +727,20 @@ mod tests {
 
     #[test]
     fn hiring_is_capped_by_the_world_labor_pool() {
-        use moneywar_domain::balance::{EMPLOYEES_PER_FACTORY_L1, LABOR_POOL_SIZE};
+        use moneywar_domain::balance::{EMPLOYEES_PER_FACTORY_L1, labor_pool_at};
         let mut s = staff_state();
         let mut r = TickReport::new(Tick::new(1));
 
+        // Havuz tick'le büyür — testin çapası `LABOR_POOL_SIZE` değil, o
+        // tick'teki gerçek havuz olmalı. Eskiden ikisi eşitti çünkü büyüme
+        // oranı küçükken `tick * oran / 100` tam sayı bölmesinde sıfırlanıyordu;
+        // oran büyüyünce test kırıldı. Sabit değil, fonksiyon doğru çapa.
+        let pool = labor_pool_at(1);
         // Havuzu doldur: tek fabrikayı havuz kadar büyütmeye çalış.
-        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), LABOR_POOL_SIZE + 100)
+        process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), pool + 100)
             .unwrap();
         let employed: u32 = s.factories.values().map(|f| f.employees).sum();
-        assert_eq!(employed, LABOR_POOL_SIZE, "istihdam havuzu aşamaz");
+        assert_eq!(employed, pool, "istihdam havuzu aşamaz");
 
         // İkinci fabrika artık işçi bulamaz.
         let res = process_set_factory_staff(
@@ -766,13 +771,13 @@ mod tests {
 
     #[test]
     fn partial_hire_when_pool_is_nearly_empty() {
-        use moneywar_domain::balance::{EMPLOYEES_PER_FACTORY_L1, LABOR_POOL_SIZE};
+        use moneywar_domain::balance::{EMPLOYEES_PER_FACTORY_L1, labor_pool_at};
         let mut s = staff_state();
         let mut r = TickReport::new(Tick::new(1));
 
         // Havuzda tam 2 kişi bırak. İki fabrika da tam kadro açıldığı için
         // 2. fabrikanın mevcut kadrosu da hesaba katılmalı.
-        let target_f1 = LABOR_POOL_SIZE - 2 - EMPLOYEES_PER_FACTORY_L1;
+        let target_f1 = labor_pool_at(1) - 2 - EMPLOYEES_PER_FACTORY_L1;
         process_set_factory_staff(&mut s, &mut r, Tick::new(1), pid(1), fid(1), target_f1)
             .unwrap();
         let before = s.factories[&fid(2)].employees;

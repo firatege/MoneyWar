@@ -174,10 +174,27 @@ pub const LABOR_POOL_SIZE: u32 = 110;
 ///   Elbise     8699  (%96)   11124 (%102)
 /// ```
 ///
-/// Rol dengesi bozulmadı: makas 3.9× → 3.8× (2. tohum 3.7×), para arzı
-/// -6.0%, Sanayici 85.7K → 90.7K. Bedeli Alıcı'da (-15.4K → -18.3K):
-/// daha çok mal dönüyor, tüketici daha çok harcıyor.
-pub const LABOR_POOL_GROWTH_PER_100_TICKS: u32 = 60;
+/// İşgücü havuzunun 100 tick'te büyümesi (kişi).
+///
+/// 25'ti, sonra 60 oldu, şimdi 200. Her artış canlı oyunda **havuzun
+/// tamamen dolduğu** görülünce yapıldı; son ölçüm canlıyı birebir
+/// doğruladı: t433'te havuz 372, istihdam 374, 42 fabrika tek işçisiz.
+/// Firmalar havuzun kaldıramayacağı kadar bina dikiyordu.
+///
+/// Sezon sonu (500 tick, sim):
+///
+/// ```text
+///   büyüme  fabrika  kadrosuz  doluluk  Sanayici    Tüccar   Alıcı  batch
+///     +60       132   42 (%32)    %100   457.566   309.251  67.587   7855
+///    +120       148   25 (%17)     %98   822.666   341.009  83.042   7792
+///    +200       137   16 (%12)     %65   832.562   334.974  74.794   7520
+/// ```
+///
+/// +200'de havuzda boşluk kalıyor: yeni fabrika işçi bulabiliyor, kadrosuz
+/// oran %32 → %12'ye iniyor. Toplam batch %4 düşüyor ama roller belirgin
+/// zenginleşiyor — kadrolu fabrika kadrosuzdan çok üretiyor; sayı değil
+/// çalışan fabrika önemli.
+pub const LABOR_POOL_GROWTH_PER_100_TICKS: u32 = 200;
 
 /// Bu tick'teki işgücü havuzu. Sezon başında [`LABOR_POOL_SIZE`],
 /// sonra [`LABOR_POOL_GROWTH_PER_100_TICKS`] hızıyla büyür.

@@ -9,10 +9,10 @@ use moneywar_web::driver::SimDriver;
 #[test]
 #[ignore = "ölçüm aracı — `cargo test -p moneywar-web --test labor_probe -- --ignored --nocapture`"]
 fn how_many_factories_stand_unstaffed() {
-    let mut d = SimDriver::new(moneywar_web::DEFAULT_SEED, 350, 3, moneywar_web::DIFFICULTY);
+    let mut d = SimDriver::new(moneywar_web::DEFAULT_SEED, moneywar_web::SEASON_TICKS, 3, moneywar_web::DIFFICULTY);
     let mut rows: Vec<(u32, usize, usize, u32, u32, u32)> = Vec::new();
 
-    for _ in 0..350 {
+    for _ in 0..moneywar_web::SEASON_TICKS {
         d.step();
         let t = d.state.current_tick.value();
         if !t.is_multiple_of(70) {
@@ -21,9 +21,10 @@ fn how_many_factories_stand_unstaffed() {
         let total = d.state.factories.len();
         let empty = d.state.factories.values().filter(|f| f.employees == 0).count();
         let employed: u32 = d.state.factories.values().map(|f| f.employees).sum();
+        let farm_staff: u32 = d.state.private_farms.values().map(|f| f.employees).sum();
         let wanted: u32 = d.state.factories.values().map(|f| f.required_employees()).sum();
         let pool = moneywar_domain::balance::labor_pool_at(t);
-        rows.push((t, total, empty, employed, wanted, pool));
+        rows.push((t, total, empty, employed + farm_staff, wanted, pool));
     }
 
     let growth = moneywar_domain::balance::LABOR_POOL_GROWTH_PER_100_TICKS;
