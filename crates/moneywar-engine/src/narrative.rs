@@ -64,6 +64,18 @@ pub fn story_headline(state: &GameState, event: &LogEvent) -> Option<String> {
     };
     let market =
         |c: CityId, p: ProductKind| format!("{} {}", c.display_name(), p.display_name());
+    /// Parayı manşette okunur biçime çevirir: 9412 cent → "94,12₺".
+    fn lira(m: moneywar_domain::Money) -> String {
+        format!("{:.2}₺", m.as_cents() as f64 / 100.0).replace('.', ",")
+    }
+    /// Kırma yüzdesi — mağdurun fiyatının kaç puan altına inildi.
+    fn discount_pct(victim: moneywar_domain::Money, attacker: moneywar_domain::Money) -> i64 {
+        let v = victim.as_cents();
+        if v <= 0 {
+            return 0;
+        }
+        ((v - attacker.as_cents()) * 100 / v).max(0)
+    }
 
     let text = match event {
         LogEvent::MonopolyFormed { city, product, firm, share_percent } => format!(
@@ -84,17 +96,41 @@ pub fn story_headline(state: &GameState, event: &LogEvent) -> Option<String> {
                 who(*former),
             ),
         },
-        LogEvent::UndercutCampaign { city, product, attacker, victim, ticks } => format!(
-            "{}, {} pazarında {} fiyatını {ticks} tick'tir kırıyor",
+        // Manşetlerde sayı olması bilinçli: "3 tick'tir kırıyor" izleyiciye
+        // ne kadar sert kırdığını söylemiyordu. Fiyatlar tespit anında
+        // zaten elde, olaya da kondu.
+        LogEvent::UndercutCampaign {
+            city,
+            product,
+            attacker,
+            victim,
+            ticks,
+            attacker_ask,
+            victim_ask,
+        } => format!(
+            "{}, {} pazarında {} fiyatını {ticks} tick'tir kırıyor — {} yerine {} (%{} altı)",
             who(*attacker),
             market(*city, *product),
             who(*victim),
+            lira(*victim_ask),
+            lira(*attacker_ask),
+            discount_pct(*victim_ask, *attacker_ask),
         ),
-        LogEvent::PriceWarDeclared { city, product, attacker, target } => format!(
-            "{}, {} pazarında {} firmasına fiyat savaşı açtı",
+        LogEvent::PriceWarDeclared {
+            city,
+            product,
+            attacker,
+            target,
+            attacker_ask,
+            target_ask,
+        } => format!(
+            "{}, {} pazarında {} firmasına fiyat savaşı açtı — {} → {} (%{} altı)",
             who(*attacker),
             market(*city, *product),
             who(*target),
+            lira(*target_ask),
+            lira(*attacker_ask),
+            discount_pct(*target_ask, *attacker_ask),
         ),
         LogEvent::PriceWarWon { city, product, winner, loser } => format!(
             "{} savaşı kazandı — {} {} pazarından çekildi",
@@ -426,6 +462,8 @@ fn detect_undercuts(
                         attacker,
                         victim,
                         ticks: UNDERCUT_CAMPAIGN_TICKS,
+                        attacker_ask: moneywar_domain::Money::from_cents(ask),
+                        victim_ask: moneywar_domain::Money::from_cents(victim_ask),
                     },
                 });
                 form_grudge(state, report, victim, attacker, tick);
@@ -448,6 +486,8 @@ fn detect_undercuts(
                         product: key.1,
                         attacker,
                         target: victim,
+                        attacker_ask: moneywar_domain::Money::from_cents(ask),
+                        target_ask: moneywar_domain::Money::from_cents(victim_ask),
                     },
                 });
             }

@@ -1067,6 +1067,13 @@ pub enum LogEvent {
         attacker: PlayerId,
         victim: PlayerId,
         ticks: u32,
+        /// Saldırganın ve mağdurun o anki satış fiyatı.
+        ///
+        /// Olay eskiden yalnız `ticks` taşıyordu ve manşet "3 turdur fiyatını
+        /// kırıyor" diyordu — izleyici kaçtan kaça indiğini göremiyordu.
+        /// İki fiyat da tespit anında elde olduğu için olaya kondu.
+        attacker_ask: Money,
+        victim_ask: Money,
     },
 
     /// Firma, bir rakibi hedef alan fiyat savaşı başlattı.
@@ -1075,6 +1082,9 @@ pub enum LogEvent {
         product: ProductKind,
         attacker: PlayerId,
         target: PlayerId,
+        /// Savaşın ilan edildiği andaki iki fiyat.
+        attacker_ask: Money,
+        target_ask: Money,
     },
 
     /// Fiyat savaşı bitti — `loser` pazardan çekildi ya da iflas etti.

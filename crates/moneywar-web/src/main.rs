@@ -160,6 +160,7 @@ async fn main() -> std::io::Result<()> {
             .route("/api/city/{slug}", web::get().to(get_city))
             .route("/api/firm/{id}", web::get().to(get_firm))
             .route("/api/factory/{id}", web::get().to(get_factory))
+            .route("/api/relations", web::get().to(get_relations))
             .route("/api/reset", web::post().to(post_reset))
             .route("/ws", web::get().to(ws_handler));
 
@@ -280,6 +281,16 @@ async fn get_factory(state: web::Data<AppState>, path: web::Path<u64>) -> impl R
         Some(detail) => HttpResponse::Ok().json(detail),
         None => HttpResponse::NotFound().json(serde_json::json!({ "error": "fabrika yok" })),
     }
+}
+
+/// İlişki ağı — kim kiminle çalışıyor, kim kime düşman.
+///
+/// Motorda ilişki iki yönlü işliyor (olay kin doğurur, güven teklifi
+/// yükseltir) ama arayüzde görünmüyordu; akışta "KİN" satırı geçip
+/// kayboluyordu. Bu endpoint ağın tamamını tek resimde verir.
+async fn get_relations(state: web::Data<AppState>) -> impl Responder {
+    let d = state.driver.read().await;
+    HttpResponse::Ok().json(moneywar_web::detail::relations_graph(&d.state, &d.ledger))
 }
 
 /// Mevcut sezonu sıfırlar — tick 0'dan başlar, önceki skor geçmişe eklenir.

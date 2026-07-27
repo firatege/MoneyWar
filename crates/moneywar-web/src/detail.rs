@@ -1156,3 +1156,278 @@ mod tests {
         assert_eq!(gini_u32([0u32, 0].into_iter()), 0.0, "boş dağılım 0");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// İlişki ağı
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Firmalar arası ilişki ağı — kim kiminle çalışıyor, kim kime düşman.
+///
+/// # Neden ayrı bir sayfa
+///
+/// İlişki verisi motorda zaten var ve iki yönlü işliyor: olay ilişkiyi
+/// doğuruyor (fiyat kırma → kin), ilişki de olayı etkiliyor (güven → daha
+/// yüksek teklif, kin → sert davranış). Ama arayüzde hiçbiri görünmüyordu;
+/// akışta "KİN" yazan bir satır geçiyor, kimin kime ne yaptığı kayboluyordu.
+///
+/// Bu yapı ağı tek resimde toplar: düğüm firma, kenar ilişki. Ticaret
+/// kenarları bağı, çatışma kenarları husumeti gösterir.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelationsGraph {
+    pub tick: u32,
+    pub window_from_tick: Option<u32>,
+    pub nodes: Vec<GraphNodeDto>,
+    pub edges: Vec<GraphEdgeDto>,
+    pub summary: RelationsSummary,
+}
+
+/// Ağdaki bir firma.
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphNodeDto {
+    pub id: u64,
+    pub name: String,
+    pub role: Option<String>,
+    pub pnl_lira: f64,
+    pub factories: u32,
+    /// Kaç firmayla ticaret bağı, kaç firmayla husumeti var.
+    pub partners: u32,
+    pub rivals: u32,
+    /// Elinde tuttuğu tekel sayısı — ağdaki güç göstergesi.
+    pub monopolies: u32,
+}
+
+/// İki firma arasındaki tek bir ilişki.
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphEdgeDto {
+    pub from: u64,
+    pub to: u64,
+    /// "ticaret" | "kin" | "savas" | "bogma"
+    pub kind: String,
+    /// Çizgi kalınlığı için [0,1] — türü içinde normalize.
+    pub strength: f64,
+    /// Tek cümlelik açıklama; izleyici grafiğe bakıp anlamlandırabilsin.
+    pub label: String,
+    pub city: Option<String>,
+    pub product: Option<String>,
+    /// Ticaret kenarı için hacim ve güven.
+    pub trade_count: Option<u32>,
+    pub units: Option<u64>,
+    pub value_lira: Option<f64>,
+    pub trust: Option<f64>,
+    /// Çatışma kenarı için kalan/geçen tick.
+    pub ticks: Option<u32>,
+}
+
+/// Ağın tek bakışta özeti.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelationsSummary {
+    pub trade_edges: u32,
+    pub conflict_edges: u32,
+    pub grudges: u32,
+    pub price_wars: u32,
+    pub supply_chokes: u32,
+    pub monopolies: u32,
+    /// En çok ortağı olan firma ve en sert husumet.
+    pub most_connected: Option<ActorRef>,
+    pub fiercest_rivalry: Option<(ActorRef, ActorRef)>,
+}
+
+/// İlişki ağını kurar.
+#[must_use]
+pub fn relations_graph(state: &GameState, ledger: &Ledger) -> RelationsGraph {
+    let intrigue = &state.intrigue;
+
+    // ── Ticaret kenarları ────────────────────────────────────────────────────
+    // Güven `relationships`'ten (sezon boyu), hacim defterden (son pencere).
+    let mut flow: BTreeMap<(PlayerId, PlayerId), (u64, i64)> = BTreeMap::new();
+    for t in ledger.trades() {
+        let e = flow.entry(relation_key(t.seller, t.buyer)).or_default();
+        e.0 += u64::from(t.quantity);
+        e.1 += t.value().as_cents();
+    }
+
+    let mut edges: Vec<GraphEdgeDto> = Vec::new();
+    let max_value = flow.values().map(|(_, v)| *v).max().unwrap_or(1).max(1);
+
+    for ((a, b), rel) in &state.relationships {
+        if rel.trade_count == 0 {
+            continue;
+        }
+        let (units, value) = flow.get(&(*a, *b)).copied().unwrap_or((0, 0));
+        // Defterde izi olmayan eski ilişkiyi çizmeye değmez — grafiği boğar.
+        if units == 0 {
+            continue;
+        }
+        let trust = rel.trust_score();
+        edges.push(GraphEdgeDto {
+            from: a.value(),
+            to: b.value(),
+            kind: "ticaret".into(),
+            strength: (value as f64 / max_value as f64).clamp(0.0, 1.0),
+            label: format!(
+                "{} işlem · {} birim · güven {:.2}",
+                rel.trade_count, units, trust
+            ),
+            city: None,
+            product: None,
+            trade_count: Some(rel.trade_count),
+            units: Some(units),
+            value_lira: Some(lira(Money::from_cents(value))),
+            trust: Some(trust),
+            ticks: None,
+        });
+    }
+    let trade_edges = u32::try_from(edges.len()).unwrap_or(u32::MAX);
+
+    // ── Çatışma kenarları ────────────────────────────────────────────────────
+    for ((holder, target), ticks) in &intrigue.grudges {
+        edges.push(GraphEdgeDto {
+            from: holder.value(),
+            to: target.value(),
+            kind: "kin".into(),
+            strength: (f64::from(*ticks) / 30.0).clamp(0.15, 1.0),
+            label: format!("{ticks} tick daha kin tutuyor"),
+            city: None,
+            product: None,
+            trade_count: None,
+            units: None,
+            value_lira: None,
+            trust: None,
+            ticks: Some(*ticks),
+        });
+    }
+
+    for ((attacker, victim, city, product), track) in &intrigue.price_wars {
+        let since = state
+            .current_tick
+            .value()
+            .saturating_sub(track.declared_at.value());
+        edges.push(GraphEdgeDto {
+            from: attacker.value(),
+            to: victim.value(),
+            kind: "savas".into(),
+            strength: 1.0,
+            label: format!(
+                "{} {} pazarında {} tick'tir fiyat savaşı",
+                city.display_name(),
+                product.display_name(),
+                since
+            ),
+            city: Some(city_slug(*city).to_string()),
+            product: Some(product_slug(*product).to_string()),
+            trade_count: None,
+            units: None,
+            value_lira: None,
+            trust: None,
+            ticks: Some(since),
+        });
+    }
+
+    for (choker, victim, city, product) in &intrigue.active_chokes {
+        edges.push(GraphEdgeDto {
+            from: choker.value(),
+            to: victim.value(),
+            kind: "bogma".into(),
+            strength: 0.8,
+            label: format!(
+                "{} {} tedarikini kesiyor",
+                city.display_name(),
+                product.display_name()
+            ),
+            city: Some(city_slug(*city).to_string()),
+            product: Some(product_slug(*product).to_string()),
+            trade_count: None,
+            units: None,
+            value_lira: None,
+            trust: None,
+            ticks: None,
+        });
+    }
+
+    // ── Düğümler ─────────────────────────────────────────────────────────────
+    let scores = leaderboard(state);
+    let pnl: BTreeMap<PlayerId, f64> = scores
+        .iter()
+        .map(|s| (s.player_id, lira(s.total)))
+        .collect();
+
+    let mut partners: BTreeMap<u64, u32> = BTreeMap::new();
+    let mut rivals: BTreeMap<u64, u32> = BTreeMap::new();
+    for e in &edges {
+        let bucket = if e.kind == "ticaret" { &mut partners } else { &mut rivals };
+        *bucket.entry(e.from).or_default() += 1;
+        *bucket.entry(e.to).or_default() += 1;
+    }
+
+    let mut monopolies: BTreeMap<PlayerId, u32> = BTreeMap::new();
+    for firm in intrigue.monopolist.values() {
+        *monopolies.entry(*firm).or_default() += 1;
+    }
+
+    // Ağda yeri olan firmalar — bağı da husumeti de olmayanı çizmeye gerek yok.
+    let mut ids: Vec<u64> = partners.keys().chain(rivals.keys()).copied().collect();
+    ids.sort_unstable();
+    ids.dedup();
+
+    let nodes: Vec<GraphNodeDto> = ids
+        .iter()
+        .map(|id| {
+            let pid = PlayerId::new(*id);
+            let p = state.players.get(&pid);
+            GraphNodeDto {
+                id: *id,
+                name: p.map_or_else(|| format!("#{id}"), |p| p.name.clone()),
+                role: p.and_then(|p| p.npc_kind).map(|k| k.label().to_string()),
+                pnl_lira: pnl.get(&pid).copied().unwrap_or(0.0),
+                factories: u32::try_from(
+                    state.factories.values().filter(|f| f.owner == pid).count(),
+                )
+                .unwrap_or(u32::MAX),
+                partners: partners.get(id).copied().unwrap_or(0),
+                rivals: rivals.get(id).copied().unwrap_or(0),
+                monopolies: monopolies.get(&pid).copied().unwrap_or(0),
+            }
+        })
+        .collect();
+
+    let most_connected = nodes
+        .iter()
+        .max_by_key(|n| n.partners)
+        .filter(|n| n.partners > 0)
+        .map(|n| actor_ref(state, PlayerId::new(n.id)));
+
+    // En sert husumet: savaş varsa o, yoksa en uzun kin.
+    let fiercest = edges
+        .iter()
+        .filter(|e| e.kind == "savas")
+        .max_by_key(|e| e.ticks.unwrap_or(0))
+        .or_else(|| {
+            edges
+                .iter()
+                .filter(|e| e.kind == "kin")
+                .max_by_key(|e| e.ticks.unwrap_or(0))
+        })
+        .map(|e| {
+            (
+                actor_ref(state, PlayerId::new(e.from)),
+                actor_ref(state, PlayerId::new(e.to)),
+            )
+        });
+
+    RelationsGraph {
+        tick: state.current_tick.value(),
+        window_from_tick: ledger.earliest_tick().map(|t| t.value()),
+        summary: RelationsSummary {
+            trade_edges,
+            conflict_edges: u32::try_from(edges.len()).unwrap_or(u32::MAX) - trade_edges,
+            grudges: u32::try_from(intrigue.grudges.len()).unwrap_or(u32::MAX),
+            price_wars: u32::try_from(intrigue.price_wars.len()).unwrap_or(u32::MAX),
+            supply_chokes: u32::try_from(intrigue.active_chokes.len()).unwrap_or(u32::MAX),
+            monopolies: u32::try_from(intrigue.monopolist.len()).unwrap_or(u32::MAX),
+            most_connected,
+            fiercest_rivalry: fiercest,
+        },
+        nodes,
+        edges,
+    }
+}

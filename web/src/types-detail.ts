@@ -223,3 +223,51 @@ export interface FactoryDetail {
   produced_units: number;
   recent_sales: TradeRowDto[];
 }
+
+// ── İlişki ağı ──────────────────────────────────────────────────────────────
+
+export interface GraphNodeDto {
+  id: number;
+  name: string;
+  role: string | null;
+  pnl_lira: number;
+  factories: number;
+  partners: number;
+  rivals: number;
+  monopolies: number;
+}
+
+/** kind: "ticaret" | "kin" | "savas" | "bogma" */
+export interface GraphEdgeDto {
+  from: number;
+  to: number;
+  kind: string;
+  strength: number;
+  label: string;
+  city: string | null;
+  product: string | null;
+  trade_count: number | null;
+  units: number | null;
+  value_lira: number | null;
+  trust: number | null;
+  ticks: number | null;
+}
+
+export interface RelationsSummary {
+  trade_edges: number;
+  conflict_edges: number;
+  grudges: number;
+  price_wars: number;
+  supply_chokes: number;
+  monopolies: number;
+  most_connected: ActorRef | null;
+  fiercest_rivalry: [ActorRef, ActorRef] | null;
+}
+
+export interface RelationsGraph {
+  tick: number;
+  window_from_tick: number | null;
+  nodes: GraphNodeDto[];
+  edges: GraphEdgeDto[];
+  summary: RelationsSummary;
+}
