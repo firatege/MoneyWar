@@ -233,8 +233,16 @@ fn clear_bucket(
             if let Some(baseline) = state.price_baseline.get_mut(&key) {
                 let new_cents = baseline.as_cents().saturating_mul(factor_milli) / 1000;
                 let clamped = if let Some(init) = initial {
-                    let lower = init.as_cents() * 60 / 100;
-                    let upper = init.as_cents() * 160 / 100;
+                    // Aralık [%60, %160] iken fiyat sinyalini öldürüyordu:
+                    // ölçümde 60 kovanın 48'i bir sınıra dayalıydı, yani
+                    // piyasaların %80'inde çapa sabit bir sayıydı. Maliyet
+                    // tarafı hareket edince (endeksli ücret) bu bir
+                    // maliyet-fiyat sıkışması yarattı — fiyat maliyeti
+                    // taşıyamıyordu. Clamp'in işi kaçak artışı durdurmak,
+                    // normal hareketi kısıtlamak değil; tâtonnement zaten
+                    // emir dengesizliğine bakıyor, o gerçek bir sinyal.
+                    let lower = init.as_cents() * 40 / 100;
+                    let upper = init.as_cents() * 500 / 100;
                     new_cents.max(lower).min(upper).max(1)
                 } else {
                     let abs_min = if product.is_raw() { 100 } else { 500 };

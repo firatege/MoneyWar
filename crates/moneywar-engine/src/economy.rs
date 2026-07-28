@@ -27,14 +27,14 @@ use crate::report::{LogEntry, TickReport};
 /// v0.6.0 Faz 1 (talep cliff): 10 → 5. Toplam transfer sabit kalsın diye
 /// `WAGE_PER_FACTORY_LIRA` da yarıya indi. Akışın sıklığı 2× → Alıcı cash'i
 /// daha pürüzsüz akıyor → t40 cliff yumuşaması.
-const WAGE_PERIOD: u32 = 5;
+const WAGE_PERIOD: u32 = moneywar_domain::balance::WAGE_PERIOD_TICKS;
 
 /// Bir kervanın mürettebatı. Tüccar da işçi çalıştırır — kervanı kimse
 /// bedava sürmüyor.
 const CREW_PER_CARAVAN: i64 = 1;
 
 /// Bir Çiftçi'nin tarla ırgadı. Hasat emeksiz olmuyor.
-const CREW_PER_FARMER: i64 = 3;
+const CREW_PER_FARMER: i64 = moneywar_domain::balance::CREW_PER_FARMER;
 
 /// Depolama maliyeti periyodu — her N tick'te stok ücreti kesilir.
 const STORAGE_PERIOD: u32 = 10;
@@ -90,14 +90,14 @@ const MAINTENANCE_PER_FACTORY_LIRA: i64 = 250;
 const CONSUME_PERIOD: u32 = 8;
 
 /// Mahsul refill periyodu — her N tick'te Çiftçi'lere stok inject.
-const HARVEST_PERIOD: u32 = 8;
+const HARVEST_PERIOD: u32 = moneywar_domain::balance::HARVEST_PERIOD_TICKS;
 /// Mahsul miktarı (birim) — her Çiftçi'ye specialty ürünü.
 /// v8.19 (A): 200-400 → 120-240. Esnaf emekli olunca ham BUY tarafı çöktü
 /// (Sanayici 5 + Spek 3 alıcı, Çiftçi 6 × 80 birim/tick = 480 ham/tick arz
 /// emilemiyor). Match eff %12-39, `FactoryIdle` 1260. Mahsul %40 düşürülür
 /// → Çiftçi sezon başına ~3500 birim üretir (eski 5800).
-const HARVEST_QTY_MIN: u32 = 60;
-const HARVEST_QTY_MAX: u32 = 120;
+const HARVEST_QTY_MIN: u32 = moneywar_domain::balance::HARVEST_QTY_MIN;
+const HARVEST_QTY_MAX: u32 = moneywar_domain::balance::HARVEST_QTY_MAX;
 
 /// Vergi periyodu — şu an aktif değil (wages closed loop yeterli).
 const TAX_PERIOD: u32 = 10;

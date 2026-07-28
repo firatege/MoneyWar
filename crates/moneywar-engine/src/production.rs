@@ -262,7 +262,38 @@ pub(crate) fn advance_private_farms(state: &mut GameState, tick: Tick) {
         if free == 0 {
             continue;
         }
-        let hired = (need - have).min(free);
+
+        // **Ödeyemeyeceği ırgatı işe alma.**
+        //
+        // Tarla kadrosu sahibin nakdine bakmadan doluyordu: bordro büyüyor,
+        // sahip ödeyemiyor, kurtarma kredisine düşüyor, temerrütle batıyordu.
+        // Ücret hayat pahalılığına endekslenince bu yol iyice sıklaştı
+        // (ölçüm: Çiftçi iflası 0,1 → 1,5). Sanayici'de karşılığı var —
+        // bordroyu çeviremeyen firma işçi çıkarıyor; tarlada eksikti çünkü
+        // kadro komutla değil otomatik geliyor. Gerçek çiftçi de ödeyemeyeceği
+        // ırgatı tutmaz.
+        let owner_cash = state
+            .players
+            .get(&state.private_farms[fid].owner)
+            .map_or(0, |p| p.cash.as_cents());
+        let wage_per_head_cents = moneywar_domain::balance::wage_per_employee_lira()
+            .saturating_mul(state.cost_of_living_index().max(100));
+        /// Yeni ırgat ancak bu kadar bordro dönemi karşılanıyorsa alınır.
+        const HIRE_COVER_PERIODS: i64 = 3;
+        let affordable = if wage_per_head_cents <= 0 {
+            u32::MAX
+        } else {
+            u32::try_from(owner_cash / wage_per_head_cents / HIRE_COVER_PERIODS)
+                .unwrap_or(u32::MAX)
+        };
+        let room = affordable.saturating_sub(have);
+        if room == 0 {
+            continue;
+        }
+        let hired = (need - have).min(free).min(room);
+        if hired == 0 {
+            continue;
+        }
         if let Some(f) = state.private_farms.get_mut(fid) {
             f.employees += hired;
         }
@@ -325,9 +356,30 @@ pub(crate) fn process_build_private_farm(
     let player = state.players.get(&owner).ok_or_else(|| {
         EngineError::Domain(DomainError::Validation(format!("player {owner} not found")))
     })?;
-    if !matches!(player.role, Role::Sanayici) {
+    // Tarla kurma **Çiftçi'ye de** açık.
+    //
+    // Yalnız Sanayici'ye açıkken piyasanın tek tarafı fiyata tepki
+    // verebiliyordu: talep büyürken (fabrika 10 → 118) arz sabit kalıyordu,
+    // çünkü Çiftçi'nin hasadı yatırımdan bağımsız bir sayıydı. Ham maddeler
+    // 5-7×, mamuller 1,3-3,9× kaymıştı — katma değer eklendikçe mamulün daha
+    // çok pahalanması beklenirken tersi.
+    //
+    // İkinci ve daha önemli sebep: ücret hayat pahalılığına endeksli
+    // (`GameState::cost_of_living_index`). Endeksli ücret **verimlilik artışı
+    // olmadan çalışmaz** — işçi başına üretim sabitken birim maliyet ücretle
+    // birlikte patlar ve emek-yoğun ham madde üretimi kârsızlaşır. Tarla tam
+    // olarak işçi başına üretimi artırır (seviye 1× / 1,75× / 2,75×).
+    //
+    // Dikkat: NPC'ler `role` alanını kimlik olarak kullanmıyor — `world.rs`'te
+    // Çiftçi `Role::Tuccar` ile kurulup gerçek kimliği `npc_kind`'a yazılıyor.
+    let is_farmer = matches!(player.role, Role::Sanayici)
+        || matches!(
+            player.npc_kind,
+            Some(moneywar_domain::NpcKind::Sanayici | moneywar_domain::NpcKind::Ciftci)
+        );
+    if !is_farmer {
         return Err(EngineError::Domain(DomainError::Validation(
-            "BuildPrivateFarm requires Sanayici role".into(),
+            "BuildPrivateFarm requires Sanayici or Ciftci role".into(),
         )));
     }
     if !product.is_raw() {

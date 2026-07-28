@@ -809,3 +809,24 @@ mod tests {
         assert!(NPC_SELL_MARKUP_PCT > NPC_BUY_MARKDOWN_PCT);
     }
 }
+
+/// Ücret ödeme periyodu (tick) — motor bu sıklıkta bordro keser.
+pub const WAGE_PERIOD_TICKS: u32 = 5;
+/// Bir Çiftçi'nin sabit ırgadı. Hasat emeksiz olmuyor.
+///
+/// Değer 3 iken ücret **düz 60₺** idi. Ücret hayat pahalılığına endekslenince
+/// (bkz. `GameState::cost_of_living_index`) aynı kadro 2,5 kat pahalandı ve
+/// Çiftçi'nin birim işçilik maliyeti 8₺'ye çıktı — ham maddenin kendisi
+/// 5₺ ederken. Sonuç yapısal zarardı: kurtarma kredisini işletme giderine
+/// yedirip vade geldiğinde sıfır nakitle temerrüde düşüyordu (ölçümde
+/// iflasların 5'te 4'ü Çiftçi, hepsi `seized: 0`).
+///
+/// Kadro, endeksleme sonrası toplam emek yükünü koruyacak şekilde yeniden
+/// ayarlandı. Tarla kuran Çiftçi zaten ek ırgat tutuyor — sabit kadro
+/// geçimlik üretimin kendisi, ölçek tarladan geliyor.
+pub const CREW_PER_FARMER: i64 = 1;
+/// Mahsul periyodu (tick).
+pub const HARVEST_PERIOD_TICKS: u32 = 8;
+/// Periyot başına mahsul aralığı (birim).
+pub const HARVEST_QTY_MIN: u32 = 60;
+pub const HARVEST_QTY_MAX: u32 = 120;

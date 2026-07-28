@@ -216,7 +216,13 @@ pub fn decide_behavior(
 /// Faz B: Çiftçi pilot. Faz C+'da diğer roller eklenecek.
 fn enumerate_for_kind(state: &GameState, player: &moneywar_domain::Player, brain: Option<&brain::AgentBrain>) -> Vec<ActionCandidate> {
     match player.npc_kind {
-        Some(NpcKind::Ciftci) => roles::ciftci::enumerate(state, player),
+        Some(NpcKind::Ciftci) => {
+            // Satış adaylarının yanına tarla kurma/büyütme: arz fiyata tepki
+            // versin ve işçi başına üretim artsın (bkz. `ciftci::enumerate_farm`).
+            let mut out = roles::ciftci::enumerate(state, player);
+            out.extend(roles::ciftci::enumerate_farm(state, player));
+            out
+        }
         Some(NpcKind::Alici) => roles::alici::enumerate(state, player),
         Some(NpcKind::Sanayici) => roles::sanayici::enumerate_with_brain(state, player, brain),
         Some(NpcKind::Esnaf) => roles::esnaf::enumerate(state, player),

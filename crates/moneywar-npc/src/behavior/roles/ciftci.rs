@@ -64,10 +64,36 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         // `effective_baseline` sezon başı çapasının [%60, %160] aralığına
         // clamp'li. Çiftçi zincirin **tabanındaki** fiyatı koyduğu için bu
         // çapa yukarı doğru tüm katmanlara taşınır.
-        let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
+        let anchor = state.effective_baseline(city, product).unwrap_or_else(|| {
             // Baseline yoksa fallback — sim her zaman init eder, prod CLI de.
             Money::from_lira(default_raw_price(product)).unwrap_or(Money::ZERO)
         });
+
+        // **Taban maliyetin altına inemez.**
+        //
+        // Çapa tek başına yetmiyordu: clamp'li olduğu için ölçümde 60 kovanın
+        // 48'i bir sınıra dayalıydı — çapa fiyat sinyali değil sabit sayıydı.
+        // Ücret hayat pahalılığına endekslenince maliyet tırmandı, fiyat
+        // çakılı kaldı, marj sıfıra indi ve Çiftçi batmaya başladı.
+        //
+        // Gerçek hayatta hiçbir üretici maliyetinin altına satmaz.
+        // Sanayici'de bu zaten böyle (`derived_input_ceiling` tarif
+        // maliyetinden hesaplıyor); Çiftçi'de eksikti.
+        // Taban piyasadan tamamen kopamaz. Maliyet çapanın çok üstündeyse
+        // ısrar etmek satmamak demek: tarlası olmayan Çiftçi'nin birim
+        // maliyeti yüksek kalıyor ve sınırsız taban onu pazardan tamamen
+        // çıkarıyordu (ölçüm: Çiftçi iflas 2,0, Spekülatör fill 0,47 → 0,15).
+        // Gerçek üretici de maliyetinin üstünde ısrar edip hiç satmaz —
+        // zararına satar, sonra küçülür ya da çıkar.
+        let raw_floor = farmer_unit_cost_cents(state, player)
+            .saturating_mul(100 + FARMER_MARGIN_PCT)
+            / 100;
+        let ceiling = anchor
+            .as_cents()
+            .saturating_mul(COST_FLOOR_MAX_PCT)
+            / 100;
+        let cost_floor = Money::from_cents(raw_floor.min(ceiling));
+        let reference = if cost_floor > anchor { cost_floor } else { anchor };
         // Stok-baskısı indirim: Çiftçi'nin bu (city, raw)'da stok'u büyükse
         // SELL fiyatı agresif düşür — pazar onu emsin. Aksi takdirde prime
         // şehir over-supply pattern'inde stok kilitlenir.
@@ -110,6 +136,60 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
         });
     }
     out
+}
+
+/// Çiftçi'nin maliyetin üstüne koyduğu marj (yüzde). Üretici kâr etmeden
+/// tohum alamaz; Sanayici'nin `FACTORY_TARGET_MARGIN_PCT`'i ile aynı fikir.
+const FARMER_MARGIN_PCT: i64 = 25;
+
+/// Maliyet tabanı çapanın en fazla bu kadarına çıkabilir (yüzde). Üstü
+/// "maliyetim yüksek" diye pazardan çıkmak olur; fiyat sinyali kalkar.
+const COST_FLOOR_MAX_PCT: i64 = 140;
+
+/// Çiftçi'nin birim mahsul maliyeti (kuruş) — **kendi kapasitesine göre**.
+///
+/// İki gider var: tohum (birim başına sabit) ve işçilik (kadro × endeksli
+/// ücret). İşçilik döngü başına üretilen birime bölünür.
+///
+/// Kritik nokta bölen: üretim yalnız sabit hasat değil, **tarla çıktısı
+/// dahil**. Tarla kuran Çiftçi'nin işçi başına üretimi arttığı için birim
+/// maliyeti düşer ve fiyatı rekabetçi kalır. Endeksli ücret ancak böyle
+/// sürdürülebilir — verimlilik artmadan ücret artışı üreticiyi öldürür.
+fn farmer_unit_cost_cents(state: &GameState, player: &Player) -> i64 {
+    use moneywar_domain::balance as b;
+
+    let cpi = state.cost_of_living_index().max(100);
+    let wage_per_head_cents = b::wage_per_employee_lira().saturating_mul(cpi);
+
+    let farm_heads: i64 = state
+        .private_farms
+        .values()
+        .filter(|f| f.owner == player.id)
+        .map(|f| i64::from(f.employees))
+        .sum();
+    let heads = b::CREW_PER_FARMER.saturating_add(farm_heads);
+
+    // Bir hasat döngüsünde kesilen bordro sayısı.
+    let wage_periods_x100 =
+        i64::from(b::HARVEST_PERIOD_TICKS) * 100 / i64::from(b::WAGE_PERIOD_TICKS).max(1);
+    let labor_cents = heads
+        .saturating_mul(wage_per_head_cents)
+        .saturating_mul(wage_periods_x100)
+        / 100;
+
+    // Döngü başına üretim: sabit hasat + tarlaların o süredeki çıktısı.
+    let harvest = i64::from(b::HARVEST_QTY_MIN + b::HARVEST_QTY_MAX) / 2;
+    let farm_output: i64 = state
+        .private_farms
+        .values()
+        .filter(|f| f.owner == player.id)
+        .map(|f| i64::from(f.output_per_tick()))
+        .sum::<i64>()
+        .saturating_mul(i64::from(b::HARVEST_PERIOD_TICKS));
+    let units = harvest.saturating_add(farm_output).max(1);
+
+    let seed_cents = b::SEED_COST_PER_RAW_LIRA.saturating_mul(100);
+    seed_cents.saturating_add(labor_cents / units)
 }
 
 const fn default_raw_price(_product: ProductKind) -> i64 {
@@ -201,5 +281,115 @@ mod tests {
         let (s, p) = ciftci_with_stock(10);
         let cands = enumerate(&s, &p);
         assert!(!cands.is_empty(), "eşikte satış başlamalı");
+    }
+}
+
+/// Çiftçi'nin tarla kurma/büyütme adayları — **arzın fiyata tepkisi**.
+///
+/// Çiftçi'nin hasadı yatırımdan bağımsız sabitti: buğday yedi kat pahalansa da
+/// bir gram fazla üretilmiyordu. Piyasanın tek tarafı fiyata tepki
+/// verebildiği için ham madde tarafı tıkanıyordu (ham 5-7×, mamul 1,3-3,9×).
+///
+/// Tarlanın ikinci ve daha kritik işi: **işçi başına üretimi artırmak.** Ücret
+/// hayat pahalılığına endeksli olduğu için sabit kapasiteyle birim maliyet
+/// ücretle birlikte patlıyor ve ham madde üretimi kârsızlaşıyor. Tarla
+/// seviyesi (1× / 1,75× / 2,75×) bunu telafi eder — `farmer_unit_cost_cents`
+/// bölenine doğrudan girer.
+///
+/// Karar: sezon başı çapasına göre **en çok pahalanmış** ham madde, yani
+/// piyasanın "bundan daha çok istiyorum" dediği mal. Elde tarla varsa önce
+/// yükseltme — yeni tarla kurmaktan ucuz ve kadro şartı aynı.
+#[must_use]
+pub fn enumerate_farm(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
+    use moneywar_domain::CityId;
+    use moneywar_domain::balance::PRIVATE_FARM_BUILD_COOLDOWN;
+
+    /// Nakdin **yüzde kaçı** işletme sermayesi olarak yatırıma kapalı.
+    /// Tarlaya yatırıp tohum/bordro parasız kalan Çiftçi krediye düşüp
+    /// temerrütle batıyordu; yatırım yalnız bu payın üstündeki paradan.
+    const RESERVE_PCT: i64 = 65;
+    /// Bu kadar pahalanmadan tarla kurmaya değmez (sezon başının yüzdesi).
+    const BUILD_SIGNAL_PCT: i64 = 130;
+
+    let reserve = player.cash.as_cents().saturating_mul(RESERVE_PCT) / 100;
+
+    // Önce yükseltme: mevcut tarlayı büyütmek yeni tarla kurmaktan ucuz ve
+    // işçi başına üretimi doğrudan artırır.
+    for farm in state.private_farms.values().filter(|f| f.owner == player.id) {
+        if farm.level >= moneywar_domain::PrivateFarm::FARM_MAX_LEVEL {
+            continue;
+        }
+        let Some(cost) = moneywar_domain::PrivateFarm::upgrade_cost(farm.level) else {
+            continue;
+        };
+        if player.cash.as_cents().saturating_sub(cost.as_cents()) >= reserve {
+            return vec![ActionCandidate::UpgradeFarm { farm_id: farm.id }];
+        }
+    }
+
+    // Kurulum beklemesi — motor da aynı kuralı uygular; burada bakmak
+    // reddedilecek komut üretmemek için.
+    let last_built = state
+        .private_farms
+        .values()
+        .filter(|f| f.owner == player.id)
+        .map(|f| f.built_at)
+        .max();
+    if let Some(last) = last_built
+        && state.current_tick.value().saturating_sub(last) < PRIVATE_FARM_BUILD_COOLDOWN
+    {
+        return Vec::new();
+    }
+
+    // Fiyat sinyali: sezon başı çapasına göre en çok pahalanan ham madde.
+    // Uzmanlık şartı yok — `output_per_tick` yalnız seviyeye ve kadroya bakar.
+    let mut best: Option<(i64, CityId, ProductKind)> = None;
+    for city in CityId::ALL {
+        for &raw in &ProductKind::RAW_MATERIALS {
+            if state
+                .private_farms
+                .values()
+                .any(|f| f.owner == player.id && f.city == city && f.product == raw)
+            {
+                continue;
+            }
+            let Some(anchor) = state.price_baseline_initial.get(&(city, raw)) else {
+                continue;
+            };
+            if anchor.as_cents() <= 0 {
+                continue;
+            }
+            let Some(now) = state.reference_price(city, raw) else {
+                continue;
+            };
+            let climb = now.as_cents() * 100 / anchor.as_cents();
+            if best.is_none_or(|(b, _, _)| climb > b) {
+                best = Some((climb, city, raw));
+            }
+        }
+    }
+
+    match best {
+        Some((climb, city, product)) if climb >= BUILD_SIGNAL_PCT => {
+            // Maliyet sahip olunan tarla ve slot kalabalığıyla büyüyor.
+            let owned = state
+                .private_farms
+                .values()
+                .filter(|f| f.owner == player.id)
+                .count();
+            let slot_taken = state
+                .private_farms
+                .values()
+                .filter(|f| f.city == city && f.product == product)
+                .count();
+            let Some(cost) = moneywar_domain::PrivateFarm::build_cost(owned, slot_taken) else {
+                return Vec::new();
+            };
+            if player.cash.as_cents().saturating_sub(cost.as_cents()) < reserve {
+                return Vec::new();
+            }
+            vec![ActionCandidate::BuildPrivateFarm { city, product }]
+        }
+        _ => Vec::new(),
     }
 }
