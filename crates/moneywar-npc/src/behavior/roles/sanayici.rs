@@ -1074,6 +1074,54 @@ fn enumerate_staffing(state: &GameState, player: &Player) -> Vec<ActionCandidate
         }];
     }
 
+    // Bordroyu çeviremeyen firma **işçi çıkarır** — gerçek hayatta da nakit
+    // sıkışan işletmenin ilk hamlesi budur.
+    //
+    // Eskiden çıkarma yalnız fabrika **atıl** kaldığında tetikleniyordu.
+    // Üretimi süren ama nakdi biten firmanın böyle bir refleksi yoktu: tam
+    // kadro maaş ödemeye devam ediyor, nakit bitince kurtarma kredisine
+    // düşüyor, yapılandırmaya rağmen ödeyemeyip temerrütle batıyordu. Ücret
+    // hayat pahalılığına endekslenince (bkz. `GameState::cost_of_living_index`)
+    // bordro yükü sezon boyunca büyüdüğü için bu yol daha da sık işledi:
+    // Sanayici iflası 0,2'den 1,2'ye çıktı.
+    //
+    // Kesme tam kapatma değil **yarıya indirme**: `staffing_pct` hasadı/üretimi
+    // kadroyla orantılı düşürdüğü için hat yaşamaya devam eder, yalnız
+    // küçülür. Sıfırlamak fabrikayı atıl yapar ve yukarıdaki kilide düşer.
+    {
+        /// Firma bu kadar bordro dönemini karşılayacak nakdi tutmalı.
+        const PAYROLL_COVER_PERIODS: i64 = 3;
+
+        let my_heads: i64 = mine().map(|f| i64::from(f.employees)).sum::<i64>()
+            + state
+                .private_farms
+                .values()
+                .filter(|f| f.owner == player.id)
+                .map(|f| i64::from(f.employees))
+                .sum::<i64>();
+        if my_heads > 0 {
+            let wage_per_head = moneywar_domain::balance::wage_per_employee_lira()
+                .saturating_mul(state.cost_of_living_index())
+                / 100;
+            let payroll_cents = wage_per_head
+                .saturating_mul(my_heads)
+                .saturating_mul(100)
+                .saturating_mul(PAYROLL_COVER_PERIODS);
+            if player.cash.as_cents() < payroll_cents {
+                // En kalabalık fabrikadan kes — en büyük anlık rahatlama.
+                if let Some(f) = mine()
+                    .filter(|f| f.employees > 1)
+                    .max_by_key(|f| f.employees)
+                {
+                    return vec![ActionCandidate::SetStaff {
+                        factory_id: f.id,
+                        employees: f.employees / 2,
+                    }];
+                }
+            }
+        }
+    }
+
     // Sonra çalışan ama eksik kadrolu fabrikayı doldur.
     //
     // # Bilinen kilitlenme — ve düzeltmesinin neden geri alındığı

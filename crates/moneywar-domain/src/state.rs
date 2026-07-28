@@ -359,6 +359,73 @@ impl GameState {
     /// mantığı içindir (engine `effective_baseline`'ı pay-as-bid için
     /// kullanır, oraya dokunmuyoruz).
     #[must_use]
+    /// Hane sepetine göre hayat pahalılığı endeksi — 100 = sezon başı.
+    ///
+    /// # Neden var
+    ///
+    /// Ücret, ekonomideki **tek piyasa dışı fiyattı**. Buğdayın da ekmeğin de
+    /// fiyatı arz-talebe göre oynarken işçinin fiyatı (`WAGE_PER_EMPLOYEE_LIRA`)
+    /// sabit çakılıydı. Sezon boyunca mamul fiyatları 2-3 katına çıktığı için
+    /// hanenin **reel** geliri sürekli eriyordu: 500 tick'lik sezonda Alıcı
+    /// 51.293₺'ye, üretim büyüdükçe 5.319₺'ye kadar iniyor, 10 haneden 4'ü zarara
+    /// geçiyordu. Ekonomi ne kadar büyürse hane o kadar fakirleşiyordu.
+    ///
+    /// Bu, üretim zincirinin tepesini büyüten **her** denemeyi bozan şeydi:
+    /// Ziyafet fabrikası hanenin temel gıdası olan Ekmek'i girdi olarak alıyor ve
+    /// sabit ücretli hane fiyatta fabrikaya asla yetişemiyordu. Yedi ayrı deneme
+    /// (fabrika skorlaması, zincir dengesi, doygunluk cezası…) hep aynı imzayla
+    /// battı — çünkü hepsi sonucu tedavi ediyordu, sebebi değil.
+    ///
+    /// # Ne yapıyor
+    ///
+    /// Gerçek ekonomide nominal ücret hayat pahalılığıyla birlikte pazarlık
+    /// edilir. Endeks bunu yapar: ödemeyi yine firma yapar (kapalı döngü, para
+    /// basılmıyor), yalnız tutar hanenin **aldığı malların** fiyatıyla birlikte
+    /// hareket eder. Firmanın ücret yükü de fiyatla büyüdüğü için aşırı
+    /// genişleme kendi kendini frenler.
+    ///
+    /// Sepet: hane halkının gerçekten satın aldığı mallar (ihtiyaç basamağı olan
+    /// mamuller), tüm şehirlerde. Ara mal ve ham madde sepette yok — hane onları
+    /// tüketmiyor.
+    ///
+    /// Taban 100'ün altına inmez: gerçek ekonomilerde de nominal ücret aşağı
+    /// yapışkandır. Tavan enflasyon-ücret sarmalına karşı.
+    pub fn cost_of_living_index(&self) -> i64 {
+        /// Endeksin tabanı — nominal ücret aşağı yapışkan.
+        const INDEX_FLOOR: i64 = 100;
+        /// Endeksin tavanı — ücret-fiyat sarmalına fren.
+        const INDEX_CAP: i64 = 400;
+    
+        let (mut current, mut base) = (0i64, 0i64);
+        for city in CityId::ALL {
+            for product in ProductKind::FINISHED_GOODS {
+                // Hanenin sepetinde olmayan malı endekse katma.
+                if product.need_tier().is_none() {
+                    continue;
+                }
+                // **Sezon başı** çapasına göre ölç. `price_baseline` tâtonnement
+                // ile her tick kayıyor; ona göre ölçmek yalnız anlık farkı görür,
+                // sezon boyunca biriken enflasyonu değil — yani endeks hiç
+                // hareket etmez (ölçüldü: Alıcı 5.319 → 13.097'de takıldı).
+                let Some(baseline) = self.price_baseline_initial.get(&(city, product)) else {
+                    continue;
+                };
+                if baseline.as_cents() <= 0 {
+                    continue;
+                }
+                let Some(now) = self.reference_price(city, product) else {
+                    continue;
+                };
+                current = current.saturating_add(now.as_cents());
+                base = base.saturating_add(baseline.as_cents());
+            }
+        }
+        if base <= 0 {
+            return INDEX_FLOOR;
+        }
+        (current * 100 / base).clamp(INDEX_FLOOR, INDEX_CAP)
+    }
+
     pub fn reference_price(&self, city: CityId, product: ProductKind) -> Option<Money> {
         if let Some(rolling) = self.rolling_avg_price(city, product, 5) {
             return Some(rolling);
