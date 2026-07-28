@@ -53,7 +53,18 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
             continue;
         }
         let quantity = (qty / 2).min(30);
-        let reference = state.reference_price(city, product).unwrap_or_else(|| {
+        // **Çapa `effective_baseline`, yürüyen ortalama değil.**
+        //
+        // `reference_price` son 5 işlemin ortalamasıdır; ona göre fiyatlamak
+        // kendi kendini besleyen bir sarmal kurar — yüksek fill → yüksek
+        // ortalama → yüksek taban → daha yüksek teklif. Ölçümde sezon boyunca
+        // fiyatlar 3,74 katına çıkıyordu; para arzı ise yalnız +%1,5. Yani
+        // enflasyon parasal değil, fiyat kuralının artefaktıydı.
+        //
+        // `effective_baseline` sezon başı çapasının [%60, %160] aralığına
+        // clamp'li. Çiftçi zincirin **tabanındaki** fiyatı koyduğu için bu
+        // çapa yukarı doğru tüm katmanlara taşınır.
+        let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
             // Baseline yoksa fallback — sim her zaman init eder, prod CLI de.
             Money::from_lira(default_raw_price(product)).unwrap_or(Money::ZERO)
         });

@@ -44,7 +44,10 @@ pub fn enumerate(state: &GameState, player: &Player) -> Vec<ActionCandidate> {
 
     for city in CityId::ALL {
         for &product in &moneywar_domain::ProductKind::RAW_MATERIALS {
-            let Some(reference) = state.reference_price(city, product) else {
+            // Çapa `effective_baseline` — yürüyen ortalamaya göre fiyatlamak
+            // sarmal kurar (bkz. ciftci.rs'teki aynı gerekçe). Spekülatör'ün
+            // devir hızı %89 olduğu için sarmalı en hızlı yayan o.
+            let Some(reference) = state.effective_baseline(city, product) else {
                 continue;
             };
             if reference.as_cents() <= 0 {
