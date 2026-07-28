@@ -106,6 +106,56 @@ fn do_prices_ever_fall() {
         "",
         f64::from(tot_up) / f64::from(moves.max(1)) * 100.0
     );
+    // Arzın fiyata tepki verip vermediğini görmek için: kim kaç tarla kurdu?
+    let mut farms_by_kind: BTreeMap<String, (usize, u32)> = BTreeMap::new();
+    for f in d.state.private_farms.values() {
+        let kind = d
+            .state
+            .players
+            .get(&f.owner)
+            .and_then(|p| p.npc_kind)
+            .map_or_else(|| "?".to_string(), |k| format!("{k:?}"));
+        let e = farms_by_kind.entry(kind).or_insert((0, 0));
+        e.0 += 1;
+        e.1 += u32::from(f.level);
+    }
+    // Çapa (price_baseline) clamp sınırına yapıştı mı? Yapıştıysa maliyet
+    // çapası fiyat sinyali olmaktan çıkar ve ona göre satan rol piyasanın
+    // altında kalır.
+    let (mut at_ceiling, mut at_floor, mut total_b) = (0u32, 0u32, 0u32);
+    for city in CityId::ALL {
+        for product in ProductKind::ALL {
+            let (Some(b), Some(i)) = (
+                d.state.price_baseline.get(&(city, product)),
+                d.state.price_baseline_initial.get(&(city, product)),
+            ) else {
+                continue;
+            };
+            if i.as_cents() <= 0 {
+                continue;
+            }
+            total_b += 1;
+            let pct = b.as_cents() * 100 / i.as_cents();
+            if pct >= 159 {
+                at_ceiling += 1;
+            } else if pct <= 61 {
+                at_floor += 1;
+            }
+        }
+    }
+    println!("\n── Çapa clamp durumu (sezon sonu) ──────────────────────────");
+    println!(
+        "  {at_ceiling}/{total_b} kova tavanda (%160) · {at_floor}/{total_b} tabanda (%60)"
+    );
+
+    println!("\n── Tarla sahipliği (sezon sonu) ────────────────────────────");
+    if farms_by_kind.is_empty() {
+        println!("  (hiç tarla yok)");
+    }
+    for (kind, (n, lvl_sum)) in &farms_by_kind {
+        println!("  {kind:<12} {n:>3} tarla · ort. seviye {:.1}", f64::from(*lvl_sum) / *n as f64);
+    }
+
     println!("\n  «yukarı%» 50 civarı = dengeli salınım · 50'nin çok üstü = tek yönlü tırmanış");
     println!("  «net kayma» sezon sonu ÷ sezon başı fiyat");
 }
