@@ -14,16 +14,19 @@ import { DetailShell } from "./DetailShell";
  * arbitraj boşlukları dahil). O yüzden ızgara silinmek yerine kendi
  * sayfasına taşındı.
  *
- * Hücre seçimi burada yerel: ızgara zaten tek başına bir sayfa, seçili
- * hücre yalnız vurgulama için — dashboard'un odak durumunu kirletmiyor.
+ * Hücre seçimi burada yerel (vurgulama için), ama **tıklama ürün sayfasını
+ * açar**: hücre tek başına yalnız anlık fiyatı gösteriyordu ve "26₺ pahalı mı
+ * ucuz mu" sorusunu cevaplamıyordu. Cevap üç referans gerektiriyor — sezon
+ * başı, pazar ortalaması, kendi seyri — ve üçü de ürün sayfasında.
  */
 interface Props {
   snapshot: Snapshot | null;
   bucketHistory: BucketHistory;
   onClose: () => void;
+  onOpenBucket: (city: string, product: string) => void;
 }
 
-export function MarketGridPanel({ snapshot, bucketHistory, onClose }: Props) {
+export function MarketGridPanel({ snapshot, bucketHistory, onClose, onOpenBucket }: Props) {
   const [selected, setSelected] = useState({ city: "istanbul", product: "pamuk" });
 
   return (
@@ -39,7 +42,10 @@ export function MarketGridPanel({ snapshot, bucketHistory, onClose }: Props) {
         snapshot={snapshot}
         bucketHistory={bucketHistory}
         selected={selected}
-        onSelect={(city, product) => setSelected({ city, product })}
+        onSelect={(city, product) => {
+          setSelected({ city, product });
+          onOpenBucket(city, product);
+        }}
       />
       <p className="dt__note">
         Yeşil hücre baz fiyatın üstünde, kırmızı altında. Aynı ürünün

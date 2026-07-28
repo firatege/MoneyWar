@@ -828,3 +828,52 @@
     display: none;
   }
 }
+
+/* ── Ürün sayfası (BucketPanel) ─────────────────────────────────────────── */
+
+/* Zincir açıklaması: tek satırlık düz cümle, tablo değil. */
+.dt__line {
+  margin: 0 0 0.35rem;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.dt__line:last-child {
+  margin-bottom: 0;
+}
+
+.dt__line strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Yön sayacı (↑12 ↓9) — yorumun yanında ikincil kalsın. */
+.dt__dim {
+  color: var(--text-ghost);
+  font-size: var(--text-xs);
+}
+
+/* Tıklanan hücrenin şehri — göz onu bulsun. */
+.dt__table tr.dt__row--active td {
+  background: var(--surface-hi);
+  color: var(--text);
+}
+
+/* Kayma ve pazar farkı renkleri — yeşil kazanç yönü, kırmızı kayıp yönü. */
+.dt__table td.dt__up {
+  color: var(--gain);
+}
+
+.dt__table td.dt__down {
+  color: var(--loss);
+}
+
+/* Şehir satırları tıklanabilir: şehir sayfasına götürüyor. */
+.dt__table tbody tr {
+  cursor: pointer;
+}
+
+.dt__table tbody tr:hover td {
+  background: var(--surface-hi);
+}

@@ -17,7 +17,10 @@ export const STORY_FEED_CAP = 40;
 /** Oyuncu başına PnL geçmişi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
 export const HISTORY_CAP = 350;
 /** Bucket başına sparkline geçmişi üst sınırı (tick). */
-export const BUCKET_HIST_CAP = 26;
+// Sunucudan gelen tohum 60 noktaya kadar olabiliyor (bkz. `build_all_history`);
+// üstüne canlı tick'ler eklenecek. Eski değer 26'ydı ve geçmiş yalnız
+// tarayıcıda biriktiği için grafik sayfayı açtığın tick'ten başlıyordu.
+export const BUCKET_HIST_CAP = 90;
 /** Genel piyasa serisi üst sınırı (tick). Sezon uzunluğuyla eşleşir. */
 export const MARKET_CAP = 350;
 

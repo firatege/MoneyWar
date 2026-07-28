@@ -1125,3 +1125,38 @@ mod tests {
         }));
     }
 }
+
+/// Izgara sparkline'ları için tüm kovaların seyri — `"city/product"` → fiyatlar.
+///
+/// İstemci bağlanınca bir kez çeker ve grafiği sezon başından çizer; sonrasını
+/// WebSocket tick'leri üstüne ekler. Eskiden geçmiş yalnız tarayıcıda
+/// birikiyordu, yani sayfayı ne zaman açtıysan grafik oradan başlıyordu.
+///
+/// Nokta sayısı [`HISTORY_POINTS`] ile sınırlanır: 60 kova × tüm sezon ağır
+/// bir yük, sparkline ise o çözünürlüğü zaten göstermiyor.
+#[must_use]
+pub fn build_all_history(state: &GameState) -> std::collections::BTreeMap<String, Vec<f64>> {
+    /// Kova başına gönderilen en fazla nokta.
+    const HISTORY_POINTS: usize = 60;
+
+    let mut out = std::collections::BTreeMap::new();
+    for ((city, product), hist) in &state.price_history {
+        if hist.is_empty() {
+            continue;
+        }
+        // Seyrelt: baştan sona eşit aralıklı örnekle, son nokta hep dursun.
+        let step = hist.len().div_ceil(HISTORY_POINTS).max(1);
+        let mut values: Vec<f64> = hist.iter().step_by(step).map(|(_, p)| lira(*p)).collect();
+        if let Some((_, last)) = hist.last() {
+            let last_lira = lira(*last);
+            if values.last() != Some(&last_lira) {
+                values.push(last_lira);
+            }
+        }
+        out.insert(
+            format!("{}/{}", city_slug(*city), product_slug(*product)),
+            values,
+        );
+    }
+    out
+}

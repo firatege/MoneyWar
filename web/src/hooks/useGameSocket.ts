@@ -4,6 +4,7 @@ import {
   appendBucketHistory,
   appendHistory,
   appendMarket,
+  BUCKET_HIST_CAP,
   appendTradeStats,
   computeMarketPoint,
   mergeFeed,
@@ -87,6 +88,34 @@ export function useGameSocket(): GameSocket {
     // Ticker: her TICKER_UPDATE_EVERY tick'te bir güncelle.
   }, []);
 
+  // Sezon geçmişini sunucudan tohumla.
+  //
+  // Sparkline'lar yalnız WebSocket'ten gelen tick'lerle doluyordu, yani
+  // sayfayı hangi tick'te açtıysan grafik oradan başlıyordu. Sunucu geçmişi
+  // zaten tutuyor; bağlanınca bir kez çekip üstüne canlı tick ekliyoruz.
+  const seededSeason = useRef<number | null>(null);
+  const seedHistory = useCallback(async (season: number) => {
+    if (seededSeason.current === season) return;
+    seededSeason.current = season;
+    try {
+      const res = await fetch("/api/history");
+      if (!res.ok) return;
+      const seed = (await res.json()) as Record<string, number[]>;
+      setBucketHistory((old) => {
+        const next = { ...old };
+        for (const [key, values] of Object.entries(seed)) {
+          // Canlı tick'ler tohumdan önce gelmiş olabilir; tohumu **önüne**
+          // koyup mevcut kuyruğu koru.
+          const live = old[key] ?? [];
+          next[key] = [...values, ...live].slice(-BUCKET_HIST_CAP);
+        }
+        return next;
+      });
+    } catch {
+      // Tohum başarısızsa grafik eskisi gibi canlıdan dolar — kırılma yok.
+    }
+  }, []);
+
   const connect = useCallback(() => {
     setStatus("connecting");
     const ws = new WebSocket(wsUrl());
@@ -137,9 +166,10 @@ export function useGameSocket(): GameSocket {
   useEffect(() => {
     if (snapshot && snapshot.season !== lastSeasonForFetch.current) {
       lastSeasonForFetch.current = snapshot.season;
+      void seedHistory(snapshot.season);
       void fetchSeasons();
     }
-  }, [snapshot?.season, fetchSeasons]);
+  }, [snapshot?.season, fetchSeasons, seedHistory]);
 
   useEffect(() => {
     closedByUs.current = false;

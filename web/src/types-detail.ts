@@ -295,3 +295,39 @@ export interface RelationsGraph {
   role_flows: RoleFlowDto[];
   summary: RelationsSummary;
 }
+
+/** `/api/bucket/{city}/{product}` — bir ürünün şehir bazlı fiyat karnesi. */
+export interface BucketCityRow {
+  city: string;
+  label: string;
+  initial_lira: number;
+  now_lira: number;
+  drift_pct: number;
+  low_lira: number;
+  high_lira: number;
+  up_ticks: number;
+  down_ticks: number;
+  up_share_pct: number;
+  /** Beş şehir ortalamasına göre konum: artı = burada pahalı. */
+  vs_market_pct: number;
+  bid_qty: number;
+  ask_qty: number;
+  producers: number;
+}
+
+export interface BucketDetail {
+  product: string;
+  label: string;
+  tick: number;
+  focus_city: string;
+  tier: number;
+  is_raw: boolean;
+  /** (ürün adı, batch yüzdesi) */
+  inputs: [string, number][];
+  feeds_into: string | null;
+  need_tier: string | null;
+  market_now_lira: number;
+  market_initial_lira: number;
+  market_drift_pct: number;
+  cities: BucketCityRow[];
+}

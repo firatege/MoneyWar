@@ -1570,3 +1570,216 @@ pub fn relations_graph(state: &GameState, ledger: &Ledger) -> RelationsGraph {
         edges,
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kova (şehir × ürün) detayı
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bir ürünün tek şehirdeki fiyat karnesi.
+///
+/// Izgaradaki hücreye tıklanınca açılır. Sparkline "son 26 tick"i gösteriyor
+/// ve o da yalnız tarayıcı açıkken biriktiği için "bu fiyat normal mi?"
+/// sorusuna cevap vermiyordu. Bu yapı sezon başından beri olan her şeyi
+/// sunucudan veriyor.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BucketCityRow {
+    pub city: String,
+    pub label: String,
+    /// Sezon başı çapası — kaymanın ölçüldüğü sıfır noktası.
+    pub initial_lira: f64,
+    pub now_lira: f64,
+    /// Sezon başına göre yüzde kayma.
+    pub drift_pct: f64,
+    pub low_lira: f64,
+    pub high_lira: f64,
+    /// Fiyatın yukarı hareket ettiği tick sayısı.
+    pub up_ticks: u32,
+    /// Aşağı hareket ettiği tick sayısı.
+    pub down_ticks: u32,
+    /// Yukarı hareketlerin toplam hareket içindeki payı. 50 = dengeli
+    /// salınım, 50'nin üstü = tek yönlü tırmanış.
+    pub up_share_pct: f64,
+    /// Bu ürünün **tüm şehir ortalamasına** göre konumu. Pozitif = burada
+    /// pahalı (Tüccar için arbitraj fırsatı), negatif = burada ucuz.
+    pub vs_market_pct: f64,
+    /// Kitapta bekleyen alış / satış miktarı.
+    pub bid_qty: u32,
+    pub ask_qty: u32,
+    /// Bu şehirde bu üründen kaç fabrika var (ham maddede tarla).
+    pub producers: u32,
+}
+
+/// Ürünün tüm şehirlerdeki karnesi + zincirdeki yeri.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BucketDetail {
+    pub product: String,
+    pub label: String,
+    pub tick: u32,
+    /// Tıklanan şehir — panel onu vurgular.
+    pub focus_city: String,
+    /// Ham madde mi, hangi katman.
+    pub tier: u8,
+    pub is_raw: bool,
+    /// Bu ürünü yapmak için gerekenler (ürün, batch yüzdesi).
+    pub inputs: Vec<(String, u32)>,
+    /// Bu ürünün girdi olduğu üst katman ürünü.
+    pub feeds_into: Option<String>,
+    /// Hane halkının ihtiyaç basamağı — yoksa hane bu malı almıyor.
+    pub need_tier: Option<String>,
+    /// Beş şehir ortalaması (şimdi) ve sezon başı ortalaması.
+    pub market_now_lira: f64,
+    pub market_initial_lira: f64,
+    pub market_drift_pct: f64,
+    /// Şehir kırılımı — pahalıdan ucuza.
+    pub cities: Vec<BucketCityRow>,
+}
+
+/// Izgara hücresi detayını kurar.
+#[must_use]
+pub fn bucket_detail(
+    state: &moneywar_domain::GameState,
+    focus_city: moneywar_domain::CityId,
+    product: moneywar_domain::ProductKind,
+) -> BucketDetail {
+    use moneywar_domain::{CityId, OrderSide};
+
+    let price_of = |city: CityId| -> Option<f64> {
+        state.reference_price(city, product).map(lira)
+    };
+    let initial_of = |city: CityId| -> Option<f64> {
+        state
+            .price_baseline_initial
+            .get(&(city, product))
+            .map(|m| lira(*m))
+    };
+
+    // Pazar ortalaması — "burası pahalı mı?" sorusunun ölçütü.
+    let (mut now_sum, mut init_sum, mut n) = (0.0, 0.0, 0u32);
+    for city in CityId::ALL {
+        if let (Some(now), Some(init)) = (price_of(city), initial_of(city)) {
+            now_sum += now;
+            init_sum += init;
+            n += 1;
+        }
+    }
+    let market_now = if n == 0 { 0.0 } else { now_sum / f64::from(n) };
+    let market_initial = if n == 0 { 0.0 } else { init_sum / f64::from(n) };
+
+    let mut cities: Vec<BucketCityRow> = Vec::new();
+    for city in CityId::ALL {
+        let now = price_of(city).unwrap_or(0.0);
+        let initial = initial_of(city).unwrap_or(0.0);
+
+        // Seyir: en dip, en tepe ve yön sayımı — `price_trend_probe`'un
+        // ölçtüğü şeyin aynısı, burada canlı veriden.
+        let hist = state.price_history.get(&(city, product));
+        let (mut low, mut high) = (f64::MAX, 0.0f64);
+        let (mut up, mut down) = (0u32, 0u32);
+        let mut prev: Option<i64> = None;
+        if let Some(h) = hist {
+            for (_, p) in h {
+                let c = p.as_cents();
+                let v = lira(*p);
+                if v < low {
+                    low = v;
+                }
+                if v > high {
+                    high = v;
+                }
+                if let Some(b) = prev {
+                    match c.cmp(&b) {
+                        std::cmp::Ordering::Greater => up += 1,
+                        std::cmp::Ordering::Less => down += 1,
+                        std::cmp::Ordering::Equal => {}
+                    }
+                }
+                prev = Some(c);
+            }
+        }
+        if low == f64::MAX {
+            low = now;
+        }
+        if high == 0.0 {
+            high = now;
+        }
+
+        let (mut bid_qty, mut ask_qty) = (0u32, 0u32);
+        if let Some(orders) = state.order_book.get(&(city, product)) {
+            for o in orders {
+                match o.side {
+                    OrderSide::Buy => bid_qty += o.quantity,
+                    OrderSide::Sell => ask_qty += o.quantity,
+                }
+            }
+        }
+
+        let producers = if product.is_raw() {
+            state
+                .private_farms
+                .values()
+                .filter(|f| f.city == city && f.product == product)
+                .count()
+        } else {
+            state
+                .factories
+                .values()
+                .filter(|f| f.city == city && f.product == product)
+                .count()
+        };
+
+        let moves = up + down;
+        cities.push(BucketCityRow {
+            city: crate::dto::city_slug(city).to_string(),
+            label: city.display_name().to_string(),
+            initial_lira: initial,
+            now_lira: now,
+            drift_pct: if initial > 0.0 {
+                (now / initial - 1.0) * 100.0
+            } else {
+                0.0
+            },
+            low_lira: low,
+            high_lira: high,
+            up_ticks: up,
+            down_ticks: down,
+            up_share_pct: if moves == 0 {
+                0.0
+            } else {
+                f64::from(up) / f64::from(moves) * 100.0
+            },
+            vs_market_pct: if market_now > 0.0 {
+                (now / market_now - 1.0) * 100.0
+            } else {
+                0.0
+            },
+            bid_qty,
+            ask_qty,
+            producers: u32::try_from(producers).unwrap_or(u32::MAX),
+        });
+    }
+    cities.sort_by(|a, b| b.now_lira.partial_cmp(&a.now_lira).unwrap_or(std::cmp::Ordering::Equal));
+
+    BucketDetail {
+        product: crate::dto::product_slug(product).to_string(),
+        label: product.display_name().to_string(),
+        tick: state.current_tick.value(),
+        focus_city: crate::dto::city_slug(focus_city).to_string(),
+        tier: product.tier(),
+        is_raw: product.is_raw(),
+        inputs: product
+            .recipe()
+            .into_iter()
+            .map(|(p, pct)| (p.display_name().to_string(), pct))
+            .collect(),
+        feeds_into: product.finished_output().map(|p| p.display_name().to_string()),
+        need_tier: product.need_tier().map(|t| format!("{t:?}")),
+        market_now_lira: market_now,
+        market_initial_lira: market_initial,
+        market_drift_pct: if market_initial > 0.0 {
+            (market_now / market_initial - 1.0) * 100.0
+        } else {
+            0.0
+        },
+        cities,
+    }
+}

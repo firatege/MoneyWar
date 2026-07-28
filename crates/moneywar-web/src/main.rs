@@ -158,6 +158,8 @@ async fn main() -> std::io::Result<()> {
             .route("/api/seasons", web::get().to(get_seasons))
             .route("/api/audit", web::get().to(get_audit))
             .route("/api/city/{slug}", web::get().to(get_city))
+            .route("/api/bucket/{city}/{product}", web::get().to(get_bucket))
+            .route("/api/history", web::get().to(get_history))
             .route("/api/firm/{id}", web::get().to(get_firm))
             .route("/api/factory/{id}", web::get().to(get_factory))
             .route("/api/relations", web::get().to(get_relations))
@@ -263,6 +265,36 @@ async fn get_city(state: web::Data<AppState>, path: web::Path<String>) -> impl R
     };
     let d = state.driver.read().await;
     HttpResponse::Ok().json(moneywar_web::detail::city_detail(&d.state, &d.ledger, city))
+}
+
+/// Izgara hücresi detayı — bir ürünün tüm şehirlerdeki fiyat karnesi.
+async fn get_bucket(
+    state: web::Data<AppState>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (city_slug, product_slug) = path.into_inner();
+    let (Some(city), Some(product)) = (
+        moneywar_web::dto::parse_city(&city_slug),
+        moneywar_web::dto::parse_product(&product_slug),
+    ) else {
+        return HttpResponse::NotFound()
+            .json(serde_json::json!({ "error": "bilinmeyen şehir/ürün" }));
+    };
+    let d = state.driver.read().await;
+    HttpResponse::Ok().json(moneywar_web::detail::bucket_detail(&d.state, city, product))
+}
+
+/// Tüm kovaların fiyat geçmişi — tek istekte.
+///
+/// Izgaradaki sparkline'lar tarayıcıda birikiyordu: sayfayı açtığın tick'ten
+/// itibaren dolduğu için "sezon boyunca ne oldu" görünmüyordu. Sunucu geçmişi
+/// zaten tutuyor (`state.price_history`); bu endpoint bağlanan istemcinin onu
+/// bir kerede alıp grafiği **sezon başından** çizmesini sağlar.
+///
+/// 60 kova × yüzlerce tick ağır olacağı için nokta sayısı seyreltilir.
+async fn get_history(state: web::Data<AppState>) -> impl Responder {
+    let d = state.driver.read().await;
+    HttpResponse::Ok().json(moneywar_web::dto::build_all_history(&d.state))
 }
 
 /// Firma detay sayfası — fabrikalar, envanter, son işlemler, güven ilişkileri.

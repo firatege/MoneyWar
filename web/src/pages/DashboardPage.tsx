@@ -8,6 +8,7 @@ import { ChartStrip } from "../components/chart-strip/ChartStrip";
 import { CityPanel } from "./CityPanel";
 import { FirmPanel } from "./FirmPanel";
 import { FactoryPanel } from "./FactoryPanel";
+import { BucketPanel } from "./BucketPanel";
 import { RelationsPanel } from "./RelationsPanel";
 import { MarketGridPanel } from "./MarketGridPanel";
 import { Footer } from "../components/footer/Footer";
@@ -28,7 +29,8 @@ export type Focus =
   | { kind: "firm"; id: number }
   | { kind: "factory"; id: number }
   | { kind: "relations" }
-  | { kind: "grid" };
+  | { kind: "grid" }
+  | { kind: "bucket"; city: string; product: string };
 
 export function DashboardPage() {
   const { snapshot, prev, feed, status, market, history, bucketHistory, seasons, resetSeason } =
@@ -129,6 +131,17 @@ export function DashboardPage() {
               snapshot={snapshot}
               bucketHistory={bucketHistory}
               onClose={() => setFocus({ kind: "none" })}
+              onOpenBucket={(city, product) => setFocus({ kind: "bucket", city, product })}
+            />
+          )}
+          {focus.kind === "bucket" && (
+            <BucketPanel
+              city={focus.city}
+              product={focus.product}
+              tick={tick}
+              bucketHistory={bucketHistory}
+              onClose={() => setFocus({ kind: "grid" })}
+              onSelectCity={(slug) => setFocus({ kind: "city", slug })}
             />
           )}
           {focus.kind === "relations" && (
