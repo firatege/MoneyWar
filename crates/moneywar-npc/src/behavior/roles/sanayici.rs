@@ -165,7 +165,11 @@ fn enumerate_inner(state: &GameState, player: &Player, brain: Option<&crate::beh
         let bucket_cash = Money::from_cents((player.cash.as_cents() / 6).max(0));
         for city in CityId::ALL {
             let product = city.cheap_raw();
-            let reference = state.reference_price(city, product).unwrap_or_else(|| {
+            // Çapa `effective_baseline` — pay-as-bid'de işlem **alıcının**
+            // limit fiyatından geçtiği için alım tavanı yürüyen ortalamaya
+            // bağlıyken her tur prim kadar çarpılıyordu (bileşik enflasyon:
+            // sezonda 3,74×, para arzı ise +%1,5). Bkz. alici.rs'te aynı ders.
+            let reference = state.effective_baseline(city, product).unwrap_or_else(|| {
                 Money::from_lira(moneywar_domain::balance::npc_base_price_raw_lira())
                     .unwrap_or(Money::ZERO)
             });
@@ -573,7 +577,8 @@ fn enumerate_contract_proposals(state: &GameState, player: &Player) -> Vec<Actio
 
     // Fiyat: bu şehrin mamul baseline × 1.05 (Sanayici margin).
     // Tüccar zaten %95 markdown ile başka şehre satar, kâr fırsatı.
-    let Some(reference) = state.reference_price(city, product) else {
+    // Çapa `effective_baseline` — yürüyen ortalama sarmal kurar.
+    let Some(reference) = state.effective_baseline(city, product) else {
         return Vec::new();
     };
     let unit_price_cents = reference.as_cents().saturating_mul(105) / 100;
@@ -692,6 +697,190 @@ fn scale_pct(price: Money, pct: i64) -> Money {
 /// 2. **Sonraki fab**: en yüksek **profit margin** (`mamul_price` - `raw_price`).
 ///    Lüks talep şehirleri (Ist-Kumas 36₺, Ank-Un 36₺) çekici çünkü mamul
 ///    pahalı + ham aynı baseline. Sezgisel kârlı yatırım kararı.
+/// Bir fabrikanın batch başına ana girdi ihtiyacı (katman ölçeğine göre).
+fn intake_per_batch(product: ProductKind) -> i64 {
+    (i64::from(moneywar_domain::balance::FACTORY_BATCH_SIZE)
+        * i64::from(product.batch_scale_pct())
+        / 100)
+        .max(1)
+}
+
+/// Bir fabrikanın batch başına çıktısı.
+fn output_per_batch(product: ProductKind) -> i64 {
+    (intake_per_batch(product) * i64::from(product.output_ratio_pct()) / 100).max(1)
+}
+
+/// O şehirdeki kitapta bu ürün için açık miktar (verilen tarafta).
+fn book_volume(state: &GameState, city: CityId, product: ProductKind, side: OrderSide) -> i64 {
+    state
+        .order_book
+        .get(&(city, product))
+        .map_or(0, |orders| {
+            orders
+                .iter()
+                .filter(|o| o.side == side)
+                .map(|o| i64::from(o.quantity))
+                .sum()
+        })
+}
+
+/// Doyuma giden oran: `have`'in `need`'e göre yüzdesi, 0-100 arası.
+///
+/// `have == 0` → 0, `have == need` → 50, `have == 3·need` → 75. Ne sıfıra ne
+/// yüze tam ulaşır: hiçbir sinyal tek başına kararı kilitlemesin.
+fn saturating_pct(have: i64, need: i64) -> i64 {
+    let need = need.max(1);
+    have.max(0) * 100 / (have.max(0) + need)
+}
+
+/// Bu üründen dünyada kaç batch'lik **satılmamış** stok var.
+///
+/// Hane talebini otomatik içerir: hane o malı alıyor olsaydı stok birikmezdi.
+/// Ölçümde Kumaş'ın 36 fabrikaya çıkıp kimsenin istemediğinin 4 katını
+/// üretmesini (depoda 20.709 birim) tek başına bu terim düzeltti.
+fn chain_glut_batches(state: &GameState, product: ProductKind) -> i64 {
+    let unsold: i64 = state
+        .players
+        .values()
+        .flat_map(|p| p.inventory.entries())
+        .filter(|(_, prod, qty)| *prod == product && *qty > 0)
+        .map(|(_, _, qty)| i64::from(qty))
+        .sum();
+    unsold / output_per_batch(product)
+}
+
+/// Fabrika kurma kararının tek kuralı: **"burada kurarsam çalışır mı?"**
+///
+/// # Neden tek kural
+///
+/// Eskiden iki ayrı yol vardı. Dünyadaki 35 (şehir, ürün) slotu doluncaya
+/// kadar marj bazlı skorlama, dolduktan sonra `CityId::ALL × FINISHED_GOODS`
+/// listesinde **ilk boş kombinasyonu** seçen bir `find()`. Sezonda 80+ fabrika
+/// kurulduğu için çoğunluk ikinci yoldan geçiyordu ve dağılım kararın değil
+/// **iterasyon sırasının** eseri oluyordu. Ölçümde iki yüzü de görünüyordu:
+///
+///   şehir  Istanbul %52,4 · Ankara %15,9 · Izmir %12,5 · Bursa %11,4 · Konya %7,8
+///   ürün   Kumaş 36 · Zeytinyağı 13 · Elbise 8 · Un 7 · Ekmek 7 · Şarap 6 · Ziyafet 5
+///
+/// İkisi de liste sırası. 8 seed'in 8'inde İstanbul birinciydi ama en kalabalık
+/// şehrin uzmanlığı her seferinde farklıydı — yani hammadde çekimi değil,
+/// sıra. Aynı şekilde Kumaş listenin başında, Ziyafet sonunda.
+///
+/// # Sinyaller
+///
+/// Dördü de **yerel ve gözlemlenebilir**; her şehirde farklı değer aldıkları
+/// için bütün firmaların aynı "en kârlı" seçeneği görüp yığılması engellenir:
+///
+/// 1. **Gerçekleşebilir marj** — ham marj değil, girdiyi bulma ihtimaliyle
+///    çarpılmış hâli. Girdisi olmayan fabrikanın marjı kâğıt üstündedir.
+/// 2. **Yerel talep** — o şehirde bu mala açık BUY miktarı. Alıcısı olmayan
+///    şehre fabrika kurmak stok biriktirmektir.
+/// 3. **Yerel rekabet + şehir doygunluğu** — aynı pazarda kaç rakip var, o
+///    şehirde toplam kaç fabrika var. Her şehrin kitabı ayrıdır; 70 fabrikayı
+///    tek şehre yığmak hepsini aynı ince arza mahkûm eder.
+/// 4. **Zincir fazlası** — bu maldan dünyada kaç batch'lik satılmamış stok var.
+///
+/// Karar deterministik: aynı state → aynı seçim. Jitter yalnız aynı tick'te
+/// aynı skoru gören firmaları ayırmak için var ve **skora** oranlı (ham marja
+/// değil — öyleyken doygunluk cezalarından kaçıyordu).
+fn score_factory_site(
+    state: &GameState,
+    player: &Player,
+    brain: Option<&crate::behavior::brain::AgentBrain>,
+    city: CityId,
+    product: ProductKind,
+) -> i64 {
+    /// Şehirdeki her fabrika kadar caydırıcılık — pazar inceliyor.
+    const CITY_CROWD_WEIGHT: i64 = 2;
+    /// Aynı pazardaki her rakip fabrika kadar caydırıcılık.
+    const RIVAL_WEIGHT: i64 = 10;
+    /// Aynı pazardaki kendi fabrikan kadar caydırıcılık.
+    const OWN_WEIGHT: i64 = 3;
+    /// Zincir fazlası cezasının tavanı — ürünü ölü listeye almasın.
+    const MAX_GLUT: i64 = 40;
+
+    let mamul_cents = state
+        .reference_price(city, product)
+        .map_or(0, moneywar_domain::Money::as_cents);
+    let raw = product.raw_input();
+    let raw_cents = raw
+        .and_then(|r| state.reference_price(city, r))
+        .map_or(0, moneywar_domain::Money::as_cents);
+
+    let batch = intake_per_batch(product);
+    let gross = mamul_cents * output_per_batch(product);
+    let margin = ((gross - raw_cents * batch).max(0) / batch).max(0);
+    if margin == 0 {
+        return 0;
+    }
+
+    // 1) Gerçekleşebilir marj: girdiyi o şehirde bulabilme oranıyla çarp.
+    let input_avail = raw.map_or(100, |r| {
+        let on_book = book_volume(state, city, r, OrderSide::Sell);
+        let own_stock = i64::from(player.inventory.get(city, r));
+        saturating_pct(on_book + own_stock, batch)
+    });
+    let expected = margin * input_avail / 100;
+    if expected == 0 {
+        return 0;
+    }
+
+    // 2) Yerel talep: alıcısı olan şehir kazanır (100 = talep yok, 200 = bol).
+    let demand = book_volume(state, city, product, OrderSide::Buy);
+    let demand_factor = 100 + saturating_pct(demand, output_per_batch(product));
+
+    // 3) Rekabet: aynı pazardaki rakipler + o şehrin genel doluluğu.
+    let (mut rival, mut own) = (0i64, 0i64);
+    let mut city_factories = 0i64;
+    for f in state.factories.values() {
+        if f.city == city {
+            city_factories += 1;
+            if f.product == product {
+                if f.owner == player.id {
+                    own += 1;
+                } else {
+                    rival += 1;
+                }
+            }
+        }
+    }
+
+    // 4) Zincir fazlası.
+    let glut = chain_glut_batches(state, product).min(MAX_GLUT);
+
+    let resistance = 1
+        + RIVAL_WEIGHT * rival
+        + OWN_WEIGHT * own
+        + CITY_CROWD_WEIGHT * city_factories
+        + glut;
+    let base = expected * demand_factor / 100 / resistance;
+
+    // Aynı tick'te aynı skoru gören firmaları ayır — yönü değiştirmez.
+    let hash = player
+        .id
+        .value()
+        .wrapping_mul(31)
+        .wrapping_add(u64::from(state.current_tick.value()))
+        .wrapping_mul(17)
+        .wrapping_add(city as u64)
+        .wrapping_mul(7)
+        .wrapping_add(product as u64);
+    let jitter = ((hash % 100) as i64) * base.max(1) / 500;
+
+    // Corner/PriceWar hedefi varsa o ürüne odaklan.
+    let corner = brain.map_or(0, |b| {
+        use crate::behavior::brain::Goal;
+        match &b.goal {
+            Goal::Corner { product: t, .. } | Goal::PriceWar { product: t, .. } if t == &product => {
+                base * 10
+            }
+            _ => 0,
+        }
+    });
+
+    base + jitter + corner
+}
+
 fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate::behavior::brain::AgentBrain>) -> Option<(CityId, ProductKind)> {
     let world_taken: std::collections::BTreeSet<(CityId, ProductKind)> = state
         .factories
@@ -705,7 +894,7 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
     // v8.7: filtre kaldırıldı. Çiftçi demand qty/8 üretir → fab kısmi ham
     // bulur (~%27 zaman üretim). Geri kalan FactoryIdle, ama mamul SELL
     // emirleri çıkar → mamul bucket aktif kalır.
-    let candidates: Vec<(CityId, ProductKind)> = CityId::ALL
+    let mut candidates: Vec<(CityId, ProductKind)> = CityId::ALL
         .iter()
         .flat_map(|c| ProductKind::FINISHED_GOODS.iter().map(move |p| (*c, *p)))
         .filter(|cp| !world_taken.contains(cp))
@@ -769,17 +958,25 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
         // hane ile aynı mala talip olmaması gerekir (tarif ayrımı) ya da
         // hanenin fiyatta yarışabilmesi. Skorlamayla çözülmüyor — altı deneme.
         //
-        // Tüm 9 dolmuş — kendi sahibi olmadığı bir kombinasyon (overlap)
+        // Dünyada boş slot kalmadı: aday listesi kendi sahibi olmadığı
+        // kombinasyonlara genişler ve **aynı skorlamadan** geçer. Eskiden
+        // burada `find()` vardı ve seçimi liste sırası yapıyordu; sezondaki
+        // fabrikaların çoğunluğu bu yoldan geçtiği için dağılımı da o
+        // belirliyordu (bkz. `score_factory_site` dokümanı).
         let own_taken: std::collections::BTreeSet<(CityId, ProductKind)> = state
             .factories
             .values()
             .filter(|f| f.owner == player.id)
             .map(|f| (f.city, f.product))
             .collect();
-        return CityId::ALL
+        candidates = CityId::ALL
             .iter()
             .flat_map(|c| ProductKind::FINISHED_GOODS.iter().map(move |p| (*c, *p)))
-            .find(|cp| !own_taken.contains(cp));
+            .filter(|cp| !own_taken.contains(cp))
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
     }
 
     let own_count = state
@@ -842,114 +1039,11 @@ fn pick_factory_target(state: &GameState, player: &Player, brain: Option<&crate:
     // Kurulamayan zincirin gerçek çözümü kurma kararında değil, girdinin
     // bulunabilirliğinde — fabrika girdisini bulabilseydi ölmezdi.
     //
-    // Sonraki fab — multi-faktör skorlama + player_id jitter.
-    //   1. Margin (mamul - raw fiyatı)         → ağırlık +
-    //   2. Rakip fab sayısı                     → ağırlık -
-    //   3. Kendi fab sayısı (aynı çiftte)       → ağırlık -
-    //   4. Player-id jitter                     → tick içi çakışma kırma
-    //
-    // Tick içinde state immutable — 5 NPC aynı anda aynı "en kârlı" seçeneği
-    // görüyordu → yığılıyordu. Her NPC kendi player_id × tick hash'i ile
-    // küçük rastgele jitter alır → farklı NPC'ler farklı seçer.
-    let current_tick = state.current_tick.value();
-    candidates.into_iter().max_by_key(|(city, product)| {
-        let mamul_cents = state
-            .reference_price(*city, *product)
-            .map_or(0, moneywar_domain::Money::as_cents);
-        // Gerçek kâr: (mamul_fiyat × çıktı_adedi) - (ham_fiyat × batch_size)
-        // Çıktı oranı: Kumaş %80, Un %90, Zeytinyağı %100
-        let output_pct = i64::from(product.output_ratio_pct());
-        let batch = i64::from(moneywar_domain::balance::FACTORY_BATCH_SIZE);
-        let gross_revenue = mamul_cents * (batch * output_pct / 100);
-        let raw_cents = product
-            .raw_input()
-            .and_then(|raw| state.reference_price(*city, raw))
-            .map_or(0, moneywar_domain::Money::as_cents);
-        let raw_cost = raw_cents * batch;
-        let margin = (gross_revenue - raw_cost).max(0) / batch; // normalize
-
-        let rival_count = state
-            .factories
-            .values()
-            .filter(|f| f.city == *city && f.product == *product && f.owner != player.id)
-            .count() as i64;
-        let own_count = state
-            .factories
-            .values()
-            .filter(|f| f.city == *city && f.product == *product && f.owner == player.id)
-            .count() as i64;
-        // Aynı mamulün tüm sahipler/tüm şehirlerdeki toplam fab sayısı.
-        // (city, product) bazlı own/rival, farklı şehirlerde aynı mamulü
-        // istiflemeyi engellemiyordu — Zeytinyağı margin (60) Un (17) ve
-        // Kumaş'ı (30) her zaman yenip 5 şehre Zeytinyağı dağıtıyordu, Un
-        // hiç kurulmuyordu → Buğday talep tarafı sıfıra düşüyordu.
-        // Global product penalty ürün çeşitliliği için pressure ekler.
-        // v0.6.0 Faz 4 (Bugday arz fazla): 2× → 3×. Math:
-        //   1. fab Zeytinyağı: 60/1=60 → kurulur
-        //   2. fab Zeytinyağı: 60/(1+3)=15 ← Kumaş 30/1=30 kazanır
-        //   3. fab Un: 17/1=17 ← Zeytinyağı 60/(1+6)=8.5, Kumaş 30/(1+3)=7.5
-        // 3 fab dağılımı garantili: Zeytinyağı, Kumaş, Un. Un fab → Bugday
-        // talebi 3× → 4 Bugday Çiftçi'si mal birikmesi azalır.
-        let same_product_global = state
-            .factories
-            .values()
-            .filter(|f| f.product == *product)
-            .count() as i64;
-        // Zeytinyağı için ek global penalty — Zeytin kıt, fazla Zeyt.yağı fab
-        // kurulmasın. Global same_product yerine ürün bazlı ek ağırlık.
-        let product_bias = 0; // Zeytinyagi bias kaldırıldı — eşit fırsat
-        // Rakip ağırlığını artır: kendi slot'una girmek çok pahalı → uzmanlaşma zorlar.
-        // Sadece slot bazlı rekabet cezası — global ürün sayısı kaldırıldı.
-        // Zeytinyağı yüksek marjıyla doğal seçilsin, yapay kısıtlama olmasın.
-        let competition_factor = 1 + 10 * rival_count + 3 * own_count + product_bias;
-        let base_score = margin / competition_factor;
-
-        // Specialty bonus: şehrin prime hammaddesi bu ürünün girdisiyle eşleşirse
-        // +%50 bonus. Sanayici hammadde bol olan şehre fabrika kurmayı tercih eder
-        // → idle azalır, üretim artar.
-        let city_prime = state.city_specialty.get(city).copied();
-        let product_raw = product.raw_input();
-        // Specialty bonus sadece hammadde gerçekten bol ve ucuzsa geçerli.
-        // Zeytin fiyatı 2× baseline'ı geçtiyse (kıtlık) bonus sıfır —
-        // Sanayici o şehre daha fazla Zeytinyağı fabrikası kurmamalı.
-        let raw_supply_ok = product_raw.is_none_or(|raw| {
-            let ref_price = state.reference_price(*city, raw)
-                .map_or(0, moneywar_domain::Money::as_cents);
-            let baseline = state.price_baseline.get(&(*city, raw))
-                .map_or(1, |m| m.as_cents()).max(1);
-            ref_price > 0 && ref_price < baseline * 2
-        });
-        let specialty_bonus = if city_prime.is_some() && city_prime == product_raw && raw_supply_ok {
-            base_score / 2 / (1 + same_product_global / 2)
-        } else {
-            0
-        };
-
-        // Jitter: NPC × tick × (city, product) hash'i ile. Marjın %20'si
-        // kadar varyans → kararı sallar ama yön kaybetmez.
-        let hash_seed = player
-            .id
-            .value()
-            .wrapping_mul(31)
-            .wrapping_add(u64::from(current_tick))
-            .wrapping_mul(17)
-            .wrapping_add(*city as u64)
-            .wrapping_mul(7)
-            .wrapping_add(*product as u64);
-        let jitter = ((hash_seed % 100) as i64) * margin.max(1) / 500;
-
-        // Goal bonus: Corner modunda hedef ürüne büyük bonus → o ürüne odaklan.
-        let corner_bonus: i64 = if let Some(b) = brain {
-            match &b.goal {
-                crate::behavior::brain::Goal::Corner { product: target_prod, .. }
-                | crate::behavior::brain::Goal::PriceWar { product: target_prod, .. }
-                    if target_prod == product => base_score * 10, // 10× → güçlü odak
-                _ => 0,
-            }
-        } else { 0 };
-
-        base_score + specialty_bonus + jitter + corner_bonus
-    })
+    // Karar tek kuralda: `score_factory_site`. İki yol da (dünyada boş slot
+    // varken ve dolduktan sonra) aynı skorlamadan geçer.
+    candidates
+        .into_iter()
+        .max_by_key(|(city, product)| score_factory_site(state, player, brain, *city, *product))
 }
 
 /// Kadro adayları — hangi fabrikaya işçi konacak, hangisinden çekilecek.
